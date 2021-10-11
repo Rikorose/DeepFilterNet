@@ -9,11 +9,11 @@ import torchaudio
 from loguru import logger
 from torch import Tensor, nn
 
-from df.modules import get_device
 from df import DF, config, erb, erb_norm, unit_norm
 from df.logger import init_logger
 from df.loss import as_complex, as_real
 from df.model import ModelParams
+from df.modules import get_device
 from df.train import get_norm_alpha, load_model
 
 

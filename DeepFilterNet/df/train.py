@@ -6,6 +6,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import torchaudio
+from loguru import logger
+from torch import Tensor, nn
+from torch.optim import Adam, AdamW, Optimizer, RMSprop
+from torch.types import Number
+
 from df import DF
 from df.checkpoint import read_cp, write_cp
 from df.config import Csv, config
@@ -24,10 +29,6 @@ from df.utils import (
     get_norm_alpha,
     make_np,
 )
-from loguru import logger
-from torch import Tensor, nn
-from torch.optim import Adam, AdamW, Optimizer, RMSprop
-from torch.types import Number
 
 should_stop = False
 debug = False

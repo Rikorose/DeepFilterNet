@@ -5,12 +5,13 @@ import librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
 import soundfile as sf
+from icecream import ic
+
 from df import DF
 from df.config import config
 from df.dataloader import DataLoader
 from df.model import ModelParams
 from df.utils import _calculate_norm_alpha
-from icecream import ic
 
 ic.includeContext = True
 

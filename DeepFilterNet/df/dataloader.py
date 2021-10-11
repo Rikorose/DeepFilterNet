@@ -7,11 +7,12 @@ from typing import Iterator, Optional, Tuple
 
 import numpy as np
 import torch
-from df.model import ModelParams
 from loguru import logger
 from pydf import _FdDataLoader, _TdDataLoader
 from torch._utils import ExceptionWrapper
 from torch.utils.data._utils.pin_memory import _pin_memory_loop
+
+from df.model import ModelParams
 
 
 class Batch:

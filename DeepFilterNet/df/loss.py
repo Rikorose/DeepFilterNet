@@ -4,14 +4,15 @@ from typing import Dict, Final, List, Optional
 
 import torch
 import torch.nn.functional as F
+from torch import Tensor, nn
+from torch.autograd import Function
+
 from df import DF
 from df.config import Csv, config
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
 from df.utils import as_complex, as_real
-from torch import Tensor, nn
-from torch.autograd import Function
 
 
 def wg(S: Tensor, X: Tensor, eps: float = 1e-10) -> Tensor:
@@ -450,6 +451,7 @@ def test_local_snr():
     import matplotlib.pyplot as plt
     import numpy as np
     import soundfile as sf
+
     from df import DF
     from df.modules import local_snr
 

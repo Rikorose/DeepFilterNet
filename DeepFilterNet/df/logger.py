@@ -3,9 +3,10 @@ import sys
 from typing import Dict, Optional
 
 import torch
-from df.utils import get_branch_name, get_commit_hash, get_host
 from loguru import logger
 from torch.types import Number
+
+from df.utils import get_branch_name, get_commit_hash, get_host
 
 
 def init_logger(file: Optional[str] = None, level: str = "INFO"):
@@ -50,6 +51,7 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
 def log_model_summary(model: torch.nn.Module):
     import ptflops
     import torchinfo
+
     from df.model import ModelParams
 
     # Generate input of 1 second audio

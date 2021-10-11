@@ -4,9 +4,10 @@ import re
 from typing import Union
 
 import torch
-from df.utils import check_finite_module
 from loguru import logger
 from torch import nn
+
+from df.utils import check_finite_module
 
 
 def get_epoch(cp) -> int:

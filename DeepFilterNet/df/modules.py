@@ -3,15 +3,16 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from df import unit_norm_init
-from df.config import config
-from df.model import ModelParams
-from df.utils import as_complex, as_real, get_norm_alpha
 from icecream import ic
 from torch import Tensor, nn
 from torch.fx import wrap as fx_wrap
 from torch.nn import functional as F
 from typing_extensions import Final
+
+from df import unit_norm_init
+from df.config import config
+from df.model import ModelParams
+from df.utils import as_complex, as_real, get_norm_alpha
 
 
 def get_device():

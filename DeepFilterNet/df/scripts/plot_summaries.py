@@ -6,8 +6,9 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import torchaudio
-from df.visualization import spec_figure
 from icecream import ic
+
+from df.visualization import spec_figure
 
 should_stop = False
 

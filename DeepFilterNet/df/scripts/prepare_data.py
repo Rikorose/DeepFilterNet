@@ -14,9 +14,10 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-from df.logger import init_logger
 from loguru import logger
 from torch.utils.data import DataLoader, Dataset
+
+from df.logger import init_logger
 
 
 def write_to_h5(

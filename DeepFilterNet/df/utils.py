@@ -7,11 +7,12 @@ from typing import Any, Set, Union
 
 import numpy as np
 import torch
-from df.model import ModelParams
 from loguru import logger
 from torch import Tensor
 from torch._six import string_classes
 from torch.types import Number
+
+from df.model import ModelParams
 
 
 def as_complex(x: Tensor):

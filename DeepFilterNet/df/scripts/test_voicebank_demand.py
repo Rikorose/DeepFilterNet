@@ -7,6 +7,10 @@ import pesq as pypesq
 import pystoi
 import torch
 import torchaudio
+from icecream import ic
+from loguru import logger
+from pystoi.utils import resample_oct
+
 from df import DF, config
 from df.enhance import df_features, save_audio
 from df.logger import init_logger
@@ -14,9 +18,6 @@ from df.model import ModelParams
 from df.modules import get_device
 from df.train import load_model
 from df.utils import as_complex
-from icecream import ic
-from loguru import logger
-from pystoi.utils import resample_oct
 
 
 def main():
