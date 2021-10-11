@@ -1,0 +1,37 @@
+[package]
+name = "df"
+version = "0.1.0"
+authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
+edition = "2018"
+
+[lib]
+name = "df"
+path = "src/lib.rs"
+
+[features]
+default = ["transforms", "dataset"]
+
+transforms = ["rubato", "rand_xoshiro", "thiserror", "hound", "ndarray"]
+dataset = ["hound", "hdf5", "ndarray", "rayon", "serde_json", "serde", "lewton", "ogg", "sled", "bincode"]
+
+[dependencies]
+once_cell = "1.4.0"
+rustfft = "^6.0.1"
+realfft = "^2.0.1"
+rand = "0.8"
+rubato = { version="0.8", optional=true }
+rand_xoshiro = { version="0.6", optional=true }
+thiserror = { version="1.0", optional=true }
+hound = { version="3.4", optional=true }
+hdf5 = { git="https://github.com/aldanor/hdf5-rust/", rev="40654f1", optional=true }
+sled = { version="^0.34", optional=true }
+bincode = { version="^1.3", optional=true }
+ndarray = { version="^0.15", optional=true, features=["serde"] }
+rayon = { version="1.5", optional=true }
+serde_json = { version="1.0", optional=true }
+serde = { version = "1.0", features = ["derive"], optional=true }
+lewton = { version = "^0.10", optional=true }
+ogg = { version = "^0.8", optional=true }
+
+[dev-dependencies]
+dirs = "3.0"

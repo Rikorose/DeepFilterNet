@@ -1,0 +1,22 @@
+[project]
+name = "DeepFilterNet"
+
+[build-system]
+requires = ["maturin>=0.10,<0.11"]
+build-backend = "maturin"
+
+[tool.maturin]
+manylinux = "off"
+sdist-include = ["Cargo.lock"]
+strip = "on"
+
+[tool.black]
+line-length = 100
+target-version = ['py37', 'py38']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+known_first_party = "df"

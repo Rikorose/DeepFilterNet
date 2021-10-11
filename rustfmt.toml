@@ -1,0 +1,4 @@
+comment_width = 100
+chain_width = 80
+max_width = 100
+group_imports = "StdExternalCrate"
