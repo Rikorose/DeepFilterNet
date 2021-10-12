@@ -1,4 +1,3 @@
-use std::backtrace::Backtrace;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fs;
@@ -57,11 +56,7 @@ pub enum DfDatasetError {
     #[error("DF Utils Error")]
     UtilsError(#[from] crate::util::UtilsError),
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError {
-        #[from]
-        source: ndarray::ShapeError,
-        backtrace: Backtrace,
-    },
+    NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Hdf5 Error")]
     Hdf5Error(#[from] hdf5::Error),
     #[error("Hdf5 Error Detail")]
