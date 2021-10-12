@@ -287,7 +287,7 @@ fn pydf(_py: Python, m: &PyModule) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "unit_norm_init")]
-    fn unit_norm_init<'py>(py: Python<'py>, num_freq_bins: usize) -> PyResult<&'py PyArray2<f32>> {
+    fn unit_norm_init(py: Python, num_freq_bins: usize) -> PyResult<&PyArray2<f32>> {
         let arr = Array1::<f32>::linspace(UNIT_NORM_INIT[0], UNIT_NORM_INIT[1], num_freq_bins)
             .into_shape([1, num_freq_bins])
             .to_py_err()?;

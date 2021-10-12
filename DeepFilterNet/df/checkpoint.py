@@ -51,6 +51,8 @@ def read_cp(
         for key in missing:
             logger.warning(f"Missing key: '{key}'")
         for key in unexpected:
+            if key.endswith(".h0"):
+                continue
             logger.warning(f"Unexpected key: {key}")
         return epoch
     obj.load_state_dict(latest)

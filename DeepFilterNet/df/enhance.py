@@ -11,15 +11,15 @@ from torch import Tensor, nn
 
 from df import DF, config, erb, erb_norm, unit_norm
 from df.logger import init_logger
-from df.loss import as_complex, as_real
 from df.model import ModelParams
 from df.modules import get_device
 from df.train import get_norm_alpha, load_model
+from df.utils import as_complex, as_real
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("base_dir", type=str, help="Directory e.g. for checkpoint loading.")
+    parser.add_argument("model_base_dir", type=str, help="Model directory containing checkpoints and config.")
     parser.add_argument(
         "noisy_audio_files",
         type=str,
@@ -29,10 +29,10 @@ def main():
     parser.add_argument("--pf", action="store_true")
     parser.add_argument("--output-dir", "-o", type=str, default=None)
     args = parser.parse_args()
-    if not os.path.isdir(args.base_dir):
-        NotADirectoryError("Base directory not found at {}".format(args.base_dir))
-    init_logger(file=os.path.join(args.base_dir, "enhance.log"))
-    config.load(os.path.join(args.base_dir, "config.ini"), doraise=True)
+    if not os.path.isdir(args.model_base_dir):
+        NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
+    init_logger(file=os.path.join(args.model_base_dir, "enhance.log"))
+    config.load(os.path.join(args.model_base_dir, "config.ini"), doraise=True)
     if args.pf:
         config.set(ModelParams().section, "mask_pf", True, bool)
     p = ModelParams()
@@ -43,11 +43,13 @@ def main():
         nb_bands=p.nb_erb,
         min_nb_erb_freqs=p.min_nb_freqs,
     )
-    checkpoint_dir = os.path.join(args.base_dir, "checkpoints")
+    checkpoint_dir = os.path.join(args.model_base_dir, "checkpoints")
     model, _ = load_model(checkpoint_dir, df_state)
     model = model.to(get_device())
-    model_n = os.path.basename(os.path.abspath(args.base_dir))
+    model_n = os.path.basename(os.path.abspath(args.model_base_dir))
     logger.info("Model loaded")
+    if not os.path.isdir(args.output_dir):
+        os.mkdir(args.output_dir)
     for file in args.noisy_audio_files:
         audio = enhance(model, df_state, file, log=True)
         save_audio(file, audio, p.sr, args.output_dir, model_n, log=True)
