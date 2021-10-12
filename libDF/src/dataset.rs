@@ -22,7 +22,7 @@ use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{common, init_global, is_init, transforms::*, util::*, Complex32, DenoiseState};
+use crate::{transforms::*, util::*, Complex32, DFState};
 
 type Result<T> = std::result::Result<T, DfDatasetError>;
 
@@ -679,14 +679,6 @@ impl<'a> DatasetBuilder<'a> {
         let fft_size = self.fft_size.unwrap();
         let hop_size = self.hop_size.unwrap_or(fft_size / 2);
         let nb_erb = self.nb_erb.unwrap_or(32);
-        let min_nb_freqs = self.min_nb_freqs.unwrap_or(1);
-        if !is_init() {
-            init_global(self.sr, fft_size, hop_size, nb_erb, min_nb_freqs)
-        } else {
-            assert_eq!(fft_size, common().fft_size);
-            assert_eq!(hop_size, common().frame_size);
-            assert_eq!(nb_erb, common().nb_bands);
-        }
         if let Some(b) = self.nb_spec {
             let nfreqs = fft_size / 2 + 1;
             if b > nfreqs {
@@ -698,9 +690,10 @@ impl<'a> DatasetBuilder<'a> {
             ds,
             fft_size,
             hop_size,
-            nb_erb: self.nb_erb,
+            nb_erb: Some(nb_erb),
             nb_spec: self.nb_spec,
             norm_alpha: self.norm_alpha,
+            min_nb_freqs: self.min_nb_freqs,
         })
     }
     pub fn build_td_dataset(mut self) -> Result<TdDataset> {
@@ -830,16 +823,18 @@ pub struct FftDataset {
     nb_erb: Option<usize>,
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
+    min_nb_freqs:Option<usize>,
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize) -> Result<Sample<Complex32>> {
         let sample: Sample<f32> = self.ds.get_sample(idx)?;
-        let mut state = DenoiseState::new(self.fft_size, self.hop_size);
-        let speech = stft(sample.get_speech_view()?, &mut state, false, None);
-        let noise = stft(sample.get_noise_view()?, &mut state, true, None);
-        let noisy = stft(sample.get_noisy_view()?, &mut state, true, None);
+        let nb_erb = self.nb_erb.unwrap_or(1);
+        let mut state = DFState::new(self.sr(), self.fft_size, self.hop_size, nb_erb, 1);
+        let speech = stft(sample.get_speech_view()?, &mut state, false);
+        let noise = stft(sample.get_noise_view()?, &mut state, true);
+        let noisy = stft(sample.get_noisy_view()?, &mut state, true);
         let erb = if let Some(_b) = self.nb_erb {
-            let mut erb = erb(&noisy.view(), true, None)?;
+            let mut erb = erb(&noisy.view(), true, &state.erb)?;
             if let Some(alpha) = self.norm_alpha {
                 erb_norm(&mut erb.view_mut(), None, alpha)?;
             }

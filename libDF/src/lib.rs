@@ -1,9 +1,8 @@
-#![feature(once_cell)]
 #![allow(dead_code)]
 
+use std::ops::MulAssign;
 use std::sync::Arc;
 use std::vec::Vec;
-use std::{lazy::SyncOnceCell, ops::MulAssign};
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
@@ -28,110 +27,26 @@ pub(crate) fn erb2freq(n_erb: f32) -> f32 {
 }
 
 #[derive(Clone)]
-pub struct CommonState {
-    sr: usize,
-    fft_size: usize,
-    frame_size: usize,
-    nb_bands: usize,
-    erb: Vec<usize>, // frequencies bandwidth (in bands) per ERB band
-    window: Vec<f32>,
-    wnorm: f32,
-}
-
-#[derive(Clone)]
-pub struct DenoiseState {
+pub struct DFState {
+    pub sr: usize,
     pub frame_size: usize,  // hop_size
     pub window_size: usize, // Same as fft_size
     pub freq_size: usize,   // fft_size / 2 + 1
     pub fft_forward: Arc<dyn RealToComplex<f32>>,
     pub fft_inverse: Arc<dyn ComplexToReal<f32>>,
+    pub window: Vec<f32>,
+    pub wnorm: f32,
+    pub erb: Vec<usize>, // frequencies bandwidth (in bands) per ERB band
     analysis_mem: Vec<f32>,
     analysis_scratch: Vec<Complex32>,
     synthesis_mem: Vec<f32>,
     synthesis_scratch: Vec<Complex32>,
 }
 
-static COMMON: SyncOnceCell<CommonState> = SyncOnceCell::new();
-
-#[inline]
-pub fn is_init() -> bool {
-    COMMON.get().is_some()
-}
-
-pub fn frame_size() -> Option<usize> {
-    if is_init() {
-        Some(common().frame_size)
-    } else {
-        None
-    }
-}
-pub fn window_size() -> Option<usize> {
-    if is_init() {
-        Some(common().fft_size)
-    } else {
-        None
-    }
-}
-pub fn freq_size() -> Option<usize> {
-    if is_init() {
-        Some(common().fft_size / 2 + 1)
-    } else {
-        None
-    }
-}
-pub fn nb_bands() -> Option<usize> {
-    if is_init() {
-        Some(common().nb_bands)
-    } else {
-        None
-    }
-}
-pub fn erb_widths() -> Option<Vec<usize>> {
-    if is_init() {
-        Some(common().erb.clone())
-    } else {
-        None
-    }
-}
-pub fn fft_window<'a>() -> Option<&'a Vec<f32>> {
-    if is_init() {
-        Some(&common().window)
-    } else {
-        None
-    }
-}
-pub fn init_global(
-    sr: usize,
-    fft_size: usize,
-    hop_size: usize,
-    nb_bands: usize,
-    min_nb_freqs: usize,
-) {
-    if COMMON.get().is_some() {
-        return;
-    }
-    let _ = COMMON.set(init(sr, fft_size, hop_size, nb_bands, min_nb_freqs));
-}
-
-pub fn init(
-    sr: usize,
-    fft_size: usize,
-    hop_size: usize,
-    nb_bands: usize,
-    min_nb_freqs: usize,
-) -> CommonState {
-    if fft_size / 2 < hop_size {
-        panic!(
-            "FFT size of {} must be at least twice as large as the hop size of {}",
-            fft_size, hop_size
-        );
-    }
+pub fn erb_fb(sr: usize, fft_size: usize, nb_bands: usize, min_nb_freqs: usize) -> Vec<usize> {
+    // Init ERB filter bank
     let nyq_freq = sr / 2;
-    let frame_size = hop_size;
     let freq_width = sr as f32 / fft_size as f32;
-    let window_size_h = fft_size / 2;
-
-    // Init ERB bank
     let erb_low: f32 = freq2erb(0.);
     let erb_high: f32 = freq2erb(nyq_freq as f32);
     let mut erb = vec![0; nb_bands];
@@ -159,41 +74,23 @@ pub fn init(
         erb[nb_bands - 1] -= too_large;
     }
     debug_assert!(erb.iter().sum::<usize>() == fft_size / 2 + 1);
-
-    let pi = std::f64::consts::PI;
-    let mut window = vec![0.0; fft_size];
-    for (i, w) in window.iter_mut().enumerate() {
-        let sin = (0.5 * pi * (i as f64 + 0.5) / window_size_h as f64).sin();
-        *w = (0.5 * pi * sin * sin).sin() as f32;
-    }
-    let wnorm =
-        1_f32 / window.iter().map(|x| x * x).sum::<f32>() * frame_size as f32 / fft_size as f32;
-
-    CommonState {
-        sr,
-        fft_size,
-        frame_size,
-        nb_bands,
-        erb,
-        window,
-        wnorm,
-    }
-}
-
-fn common() -> &'static CommonState {
-    match COMMON.get() {
-        None => panic!("FFT params not set. Initialize first using init()."),
-        Some(c) => c,
-    }
+    erb
 }
 
 // TODO Check delay for diferent hop sizes
-impl DenoiseState {
-    pub fn new(fft_size: usize, hop_size: usize) -> Self {
+impl DFState {
+    pub fn new(
+        sr: usize,
+        fft_size: usize,
+        hop_size: usize,
+        nb_bands: usize,
+        min_nb_freqs: usize,
+    ) -> Self {
         assert!(hop_size * 2 <= fft_size);
         let mut fft = RealFftPlanner::<f32>::new();
         let frame_size = hop_size;
         let window_size = fft_size;
+        let window_size_h = fft_size / 2;
         let freq_size = fft_size / 2 + 1;
         let forward = fft.plan_fft_forward(fft_size);
         let backward = fft.plan_fft_inverse(fft_size);
@@ -202,16 +99,31 @@ impl DenoiseState {
         let analysis_scratch = forward.make_scratch_vec();
         let synthesis_scratch = backward.make_scratch_vec();
 
-        DenoiseState {
+        let erb = erb_fb(sr, fft_size, nb_bands, min_nb_freqs);
+
+        let pi = std::f64::consts::PI;
+        let mut window = vec![0.0; fft_size];
+        for (i, w) in window.iter_mut().enumerate() {
+            let sin = (0.5 * pi * (i as f64 + 0.5) / window_size_h as f64).sin();
+            *w = (0.5 * pi * sin * sin).sin() as f32;
+        }
+        let wnorm =
+            1_f32 / window.iter().map(|x| x * x).sum::<f32>() * frame_size as f32 / fft_size as f32;
+
+        DFState {
+            sr,
             frame_size,
             window_size,
             freq_size,
             fft_forward: forward,
             fft_inverse: backward,
+            erb,
             analysis_mem,
             analysis_scratch,
             synthesis_mem,
             synthesis_scratch,
+            window,
+            wnorm,
         }
     }
 
@@ -228,18 +140,18 @@ impl DenoiseState {
 
     pub fn analysis(&mut self, input: &[f32], output: &mut [Complex32]) {
         debug_assert_eq!(input.len(), self.frame_size);
-        frame_analysis(input, output, self, common())
+        frame_analysis(input, output, self)
     }
 
     pub fn synthesis(&mut self, input: &mut [Complex32], output: &mut [f32]) {
         debug_assert_eq!(output.len(), self.frame_size);
-        frame_synthesis(input, output, self, common())
+        frame_synthesis(input, output, self)
     }
 }
 
-impl Default for DenoiseState {
+impl Default for DFState {
     fn default() -> Self {
-        Self::new(960, 480)
+        Self::new(48000, 960, 480, 32, 2)
     }
 }
 
@@ -270,20 +182,14 @@ pub fn band_unit_norm(xs: &mut [Complex32], state: &mut [f32], alpha: f32) {
     }
 }
 
-pub fn compute_band_corr(
-    out: &mut [f32],
-    x: &[Complex32],
-    p: &[Complex32],
-    c: Option<&CommonState>,
-) {
+pub fn compute_band_corr(out: &mut [f32], x: &[Complex32], p: &[Complex32], erb_fb: &[usize]) {
     for y in out.iter_mut() {
         *y = 0.0;
     }
-    let c = c.unwrap_or_else(|| common());
-    debug_assert_eq!(c.nb_bands, out.len());
+    debug_assert_eq!(erb_fb.len(), out.len());
 
     let mut bcsum = 0;
-    for (&band_size, out_b) in c.erb.iter().zip(out.iter_mut()) {
+    for (&band_size, out_b) in erb_fb.iter().zip(out.iter_mut()) {
         let k = 1. / band_size as f32;
         for j in 0..band_size {
             let idx = bcsum + j;
@@ -293,15 +199,14 @@ pub fn compute_band_corr(
     }
 }
 
-pub fn band_compr(out: &mut [f32], x: &[f32], c: Option<&CommonState>) {
+pub fn band_compr(out: &mut [f32], x: &[f32], erb_fb: &[usize]) {
     for y in out.iter_mut() {
         *y = 0.0;
     }
-    let c = c.unwrap_or_else(|| common());
-    debug_assert_eq!(c.nb_bands, out.len());
+    debug_assert_eq!(erb_fb.len(), out.len());
 
     let mut bcsum = 0;
-    for (&band_size, out_b) in c.erb.iter().zip(out.iter_mut()) {
+    for (&band_size, out_b) in erb_fb.iter().zip(out.iter_mut()) {
         let k = 1. / band_size as f32;
         for j in 0..band_size {
             let idx = bcsum + j;
@@ -311,13 +216,12 @@ pub fn band_compr(out: &mut [f32], x: &[f32], c: Option<&CommonState>) {
     }
 }
 
-fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], c: Option<&CommonState>)
+fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], erb_fb: &[usize])
 where
     T: MulAssign<f32>,
 {
-    let c = c.unwrap_or_else(|| common());
     let mut bcsum = 0;
-    for (&band_size, &b) in c.erb.iter().zip(band_e.iter()) {
+    for (&band_size, &b) in erb_fb.iter().zip(band_e.iter()) {
         for j in 0..band_size {
             let idx = bcsum + j;
             out[idx] *= b;
@@ -326,10 +230,9 @@ where
     }
 }
 
-fn interp_band_gain(out: &mut [f32], band_e: &[f32], c: Option<&CommonState>) {
-    let c = c.unwrap_or_else(|| common());
+fn interp_band_gain(out: &mut [f32], band_e: &[f32], erb_fb: &[usize]) {
     let mut bcsum = 0;
-    for (&band_size, &b) in c.erb.iter().zip(band_e.iter()) {
+    for (&band_size, &b) in erb_fb.iter().zip(band_e.iter()) {
         for j in 0..band_size {
             let idx = bcsum + j;
             out[idx] = b;
@@ -338,10 +241,9 @@ fn interp_band_gain(out: &mut [f32], band_e: &[f32], c: Option<&CommonState>) {
     }
 }
 
-fn apply_band_gain(out: &mut [Complex32], band_e: &[f32], c: Option<&CommonState>) {
-    let c = c.unwrap_or_else(|| common());
+fn apply_band_gain(out: &mut [Complex32], band_e: &[f32], erb_fb: &[usize]) {
     let mut bcsum = 0;
-    for (&band_size, b) in c.erb.iter().zip(band_e.iter()) {
+    for (&band_size, b) in erb_fb.iter().zip(band_e.iter()) {
         for j in 0..band_size {
             let idx = bcsum + j;
             out[idx] *= *b;
@@ -350,25 +252,20 @@ fn apply_band_gain(out: &mut [Complex32], band_e: &[f32], c: Option<&CommonState
     }
 }
 
-fn process_frame(input: &[f32], output: &mut [f32], state: &mut DenoiseState) {
+fn process_frame(input: &[f32], output: &mut [f32], state: &mut DFState) {
     let mut freq_mem = vec![Complex32::default(); state.freq_size];
-    frame_analysis(input, &mut freq_mem, state, common());
-    frame_synthesis(&mut freq_mem, output, state, common());
+    frame_analysis(input, &mut freq_mem, state);
+    frame_synthesis(&mut freq_mem, output, state);
 }
 
-fn frame_analysis(
-    input: &[f32],
-    output: &mut [Complex32],
-    state: &mut DenoiseState,
-    c: &CommonState,
-) {
+fn frame_analysis(input: &[f32], output: &mut [Complex32], state: &mut DFState) {
     debug_assert_eq!(input.len(), state.frame_size);
     debug_assert_eq!(output.len(), state.freq_size);
 
     let mut buf = state.fft_forward.make_input_vec();
     // First part of the window on the previous frame
     let (buf_first, buf_second) = buf.split_at_mut(state.window_size - state.frame_size);
-    let (window_first, window_second) = c.window.split_at(state.window_size - state.frame_size);
+    let (window_first, window_second) = state.window.split_at(state.window_size - state.frame_size);
     let analysis_split = state.analysis_mem.len() - state.frame_size;
     for ((&y, &w), x) in
         state.analysis_mem.iter().zip(window_first.iter()).zip(buf_first.iter_mut())
@@ -393,24 +290,19 @@ fn frame_analysis(
         .process_with_scratch(&mut buf, output, &mut state.analysis_scratch)
         .unwrap();
     // Apply normalization in analysis only
-    let norm = c.wnorm;
+    let norm = state.wnorm;
     for x in output.iter_mut() {
         *x *= norm;
     }
 }
 
-fn frame_synthesis(
-    input: &mut [Complex32],
-    output: &mut [f32],
-    state: &mut DenoiseState,
-    c: &CommonState,
-) {
+fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFState) {
     let mut x = state.fft_inverse.make_output_vec();
     state
         .fft_inverse
         .process_with_scratch(input, &mut x[..], &mut state.synthesis_scratch)
         .unwrap();
-    apply_window_in_place(&mut x, &c.window);
+    apply_window_in_place(&mut x, &state.window);
     let (x_first, x_second) = x.split_at(state.frame_size);
     for ((&xi, &mem), out) in x_first.iter().zip(state.synthesis_mem.iter()).zip(output.iter_mut())
     {
@@ -455,18 +347,6 @@ mod tests {
     use rand::distributions::{Distribution, Uniform};
 
     use super::*;
-
-    #[test]
-    fn print_erb_bands() {
-        let sr = 48000;
-        let n_fft = 480;
-        let hop = n_fft / 2;
-        let nb_bands = 16;
-        init_global(sr, n_fft, hop, nb_bands);
-        let c = common();
-        println!("{:?}", c.erb);
-        assert_eq!(c.erb.iter().sum::<usize>(), n_fft / 2 + 1);
-    }
 
     #[test]
     fn test_erb_inout() {

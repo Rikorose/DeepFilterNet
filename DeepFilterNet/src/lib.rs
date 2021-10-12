@@ -3,12 +3,12 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use df::dataset::{DfDatasetError, DataLoader, DatasetBuilder, DatasetConfig, Datasets};
+use df::dataset::{DataLoader, DatasetBuilder, DatasetConfig, Datasets, DfDatasetError};
 use df::transforms::{
-    self, erb_compr_with_output as erb_compress, erb_inv_with_output as erb_inv_transform,
-    erb_with_output as erb_transform, seed_from_u64, TransformError,
+    self, erb_inv_with_output as erb_inv_transform, erb_with_output as erb_transform,
+    seed_from_u64, TransformError,
 };
-use df::{init_global, nb_bands, Complex32, DenoiseState, UNIT_NORM_INIT};
+use df::{Complex32, DFState, UNIT_NORM_INIT};
 use ndarray::{Array1, Array2, Array3, Array4, ArrayD, ArrayView4, Axis, ShapeError};
 use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyArrayDyn, PyReadonlyArray2,
@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 
 #[pyclass]
 struct DF {
-    state: DenoiseState,
+    state: DFState,
 }
 
 #[pymethods]
@@ -33,15 +33,14 @@ impl DF {
         nb_bands: Option<usize>,
         min_nb_erb_freqs: Option<usize>,
     ) -> Self {
-        init_global(
-            sr,
-            fft_size,
-            hop_size,
-            nb_bands.unwrap_or(32),
-            min_nb_erb_freqs.unwrap_or(1),
-        );
         DF {
-            state: DenoiseState::new(fft_size, hop_size),
+            state: DFState::new(
+                sr,
+                fft_size,
+                hop_size,
+                nb_bands.unwrap_or(32),
+                min_nb_erb_freqs.unwrap_or(1),
+            ),
         }
     }
 
@@ -108,16 +107,11 @@ impl DF {
     }
 
     fn erb_widths<'py>(&self, py: Python<'py>) -> PyResult<&'py PyArray1<usize>> {
-        Ok(df::erb_widths()
-            .ok_or_else(|| PyValueError::new_err("DF not initialized. Call init first."))?
-            .into_pyarray(py))
+        Ok(self.state.erb.clone().into_pyarray(py))
     }
 
     fn fft_window<'py>(&self, py: Python<'py>) -> PyResult<&'py PyArray1<f32>> {
-        Ok(df::fft_window()
-            .ok_or_else(|| PyValueError::new_err("DF not initialized. Call init first."))?
-            .clone()
-            .into_pyarray(py))
+        Ok(self.state.window.clone().into_pyarray(py))
     }
 
     fn reset(&mut self) {
@@ -136,33 +130,13 @@ fn pydf(_py: Python, m: &PyModule) -> PyResult<()> {
     fn erb<'py>(
         py: Python<'py>,
         input: PyReadonlyArrayDyn<Complex32>,
-        erb_bands: usize,
+        erb_fb: Vec<usize>,
         db: Option<bool>,
     ) -> PyResult<&'py PyArrayDyn<f32>> {
         // Input shape [B, C, T, F]
         let indim = input.ndim();
-        match nb_bands() {
-            None => {
-                return Err(PyValueError::new_err("DF not initalized"));
-            }
-            Some(b) => {
-                if b != erb_bands {
-                    return Err(PyValueError::new_err(format!(
-                        "Number of ERB bands do not match with initalization: {}, {}",
-                        erb_bands, b,
-                    )));
-                }
-            }
-        }
         let input = input.as_array();
         let &f = input.shape().last().unwrap();
-        if f != df::freq_size().unwrap() {
-            return Err(PyValueError::new_err(format!(
-                "Number of frequency bands do not match with input: {}, {}",
-                f,
-                df::freq_size().unwrap()
-            )));
-        }
         let (bs, ch, t) = match indim {
             2 => (1, 1, input.len_of(Axis(0))),
             3 => (1, input.len_of(Axis(0)), input.len_of(Axis(1))),
@@ -183,91 +157,19 @@ fn pydf(_py: Python, m: &PyModule) -> PyResult<()> {
             .to_py_err()?
             .into_dimensionality()
             .to_py_err()?;
-        let mut output = Array4::zeros((bs, ch, t, erb_bands));
+        let mut output = Array4::zeros((bs, ch, t, erb_fb.len()));
 
         for (in_b, mut out_b) in input.outer_iter().zip(output.outer_iter_mut()) {
-            erb_transform(&in_b, db.unwrap_or(true), &mut out_b, None).to_py_err()?;
+            erb_transform(&in_b, db.unwrap_or(true), &mut out_b, &erb_fb).to_py_err()?;
         }
         let output: ArrayD<f32> = match indim {
             2 => output
-                .into_shape((t, erb_bands))
+                .into_shape((t, erb_fb.len()))
                 .to_py_err()?
                 .into_dimensionality()
                 .to_py_err()?,
             3 => output
-                .into_shape((ch, t, erb_bands))
-                .to_py_err()?
-                .into_dimensionality()
-                .to_py_err()?,
-            _ => output.into_dimensionality().to_py_err()?,
-        };
-        Ok(output.into_pyarray(py))
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "erb_compr")]
-    fn erb_compr<'py>(
-        py: Python<'py>,
-        input: PyReadonlyArrayDyn<f32>,
-        erb_bands: usize,
-    ) -> PyResult<&'py PyArrayDyn<f32>> {
-        // Input shape [B, C, T, F]
-        let indim = input.ndim();
-        match nb_bands() {
-            None => {
-                return Err(PyValueError::new_err("DF not initalized"));
-            }
-            Some(b) => {
-                if b != erb_bands {
-                    return Err(PyValueError::new_err(format!(
-                        "Number of ERB bands do not match with initalization: {}, {}",
-                        erb_bands, b,
-                    )));
-                }
-            }
-        }
-        let input = input.as_array();
-        let &f = input.shape().last().unwrap();
-        if f != df::freq_size().unwrap() {
-            return Err(PyValueError::new_err(format!(
-                "Number of frequency bands do not match with input: {}, {}",
-                f,
-                df::freq_size().unwrap()
-            )));
-        }
-        let (bs, ch, t) = match indim {
-            2 => (1, 1, input.len_of(Axis(0))),
-            3 => (1, input.len_of(Axis(0)), input.len_of(Axis(1))),
-            4 => (
-                input.len_of(Axis(0)),
-                input.len_of(Axis(1)),
-                input.len_of(Axis(2)),
-            ),
-            n => {
-                return Err(PyValueError::new_err(format!(
-                    "Dimension not supported for erb: {}",
-                    n,
-                )))
-            }
-        };
-        let input: ArrayView4<f32> = input
-            .into_shape((bs, ch, t, f))
-            .to_py_err()?
-            .into_dimensionality()
-            .to_py_err()?;
-        let mut output = Array4::zeros((bs, ch, t, erb_bands));
-
-        for (in_b, mut out_b) in input.outer_iter().zip(output.outer_iter_mut()) {
-            erb_compress(&in_b, &mut out_b, None).to_py_err()?;
-        }
-        let output: ArrayD<f32> = match indim {
-            2 => output
-                .into_shape((t, erb_bands))
-                .to_py_err()?
-                .into_dimensionality()
-                .to_py_err()?,
-            3 => output
-                .into_shape((ch, t, erb_bands))
+                .into_shape((ch, t, erb_fb.len()))
                 .to_py_err()?
                 .into_dimensionality()
                 .to_py_err()?,
@@ -281,16 +183,17 @@ fn pydf(_py: Python, m: &PyModule) -> PyResult<()> {
     fn erb_inv<'py>(
         py: Python<'py>,
         input: PyReadonlyArrayDyn<f32>,
+        erb_fb: Vec<usize>,
     ) -> PyResult<&'py PyArrayDyn<f32>> {
         // Input shape [B, C, T, E]
         let indim = input.ndim();
         let input = input.as_array();
         let &e = input.shape().last().unwrap();
-        if e != df::nb_bands().unwrap() {
+        if e != erb_fb.len() {
             return Err(PyValueError::new_err(format!(
                 "Number of erb bands do not match with input: {}, {}",
                 e,
-                df::nb_bands().unwrap()
+                erb_fb.len()
             )));
         }
         let (bs, ch, t) = match indim {
@@ -313,10 +216,10 @@ fn pydf(_py: Python, m: &PyModule) -> PyResult<()> {
             .to_py_err()?
             .into_dimensionality()
             .to_py_err()?;
-        let freq_size = df::freq_size().unwrap();
+        let freq_size = erb_fb.iter().sum();
         let mut output = Array4::zeros((bs, ch, t, freq_size));
         for (in_b, mut out_b) in input.outer_iter().zip(output.outer_iter_mut()) {
-            erb_inv_transform(&in_b, &mut out_b, None).to_py_err()?;
+            erb_inv_transform(&in_b, &mut out_b, &erb_fb).to_py_err()?;
         }
         let output: ArrayD<f32> = match indim {
             2 => output

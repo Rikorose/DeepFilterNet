@@ -193,10 +193,9 @@ impl Transform for RandEQ {
         Ok(())
     }
     fn default_with_prob(p: f32) -> Self {
-        let sr = if is_init() { Some(common().sr) } else { None };
         RandEQ {
             prob: p,
-            sr,
+            sr: None,
             n_freqs: 3,
             f_low: 40,
             f_high: 8000,
@@ -313,10 +312,9 @@ impl Transform for RandResample {
         Ok(())
     }
     fn default_with_prob(p: f32) -> Self {
-        let sr = if is_init() { Some(common().sr) } else { None };
         RandResample {
             prob: p,
-            sr,
+            sr: None,
             r_low: 0.9,
             r_high: 1.1,
             chunk_size: 1024,
@@ -506,8 +504,7 @@ impl RandReverbSim {
         self.pad(&mut rir_noise, fft_size - cur_len)?;
         // DF state for convolve FFT
         let hop_size = fft_size / 4;
-        let c = init(self.sr, fft_size, hop_size, 1, 1);
-        let mut state = DenoiseState::new(fft_size, hop_size);
+        let mut state = DFState::new(self.sr, fft_size, hop_size, 1, 1);
 
         let apply_speech = true;
         let apply_noise = false;
@@ -518,7 +515,7 @@ impl RandReverbSim {
             // Pad since STFT will truncate at the end
             self.pad(speech, fft_size)?;
             if !apply_noise {
-                speech_rev = match self.convolve(speech, rir_noise.view(), &mut state, &c) {
+                speech_rev = match self.convolve(speech, rir_noise.view(), &mut state) {
                     Ok(mut s) => {
                         s.slice_collapse(s![.., ..orig_len]);
                         if s.len_of(Axis(1)) != noise.len_of(Axis(1)) {
@@ -538,7 +535,7 @@ impl RandReverbSim {
             }
             // Speech should be a slightly dereverberant signal as target
             let rir_speech = self.supress_late(rir_noise.clone(), self.sr, 5., 0.2, false)?;
-            *speech = match self.convolve(speech, rir_speech.view(), &mut state, &c) {
+            *speech = match self.convolve(speech, rir_speech.view(), &mut state) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("speech {}", e);
@@ -550,7 +547,7 @@ impl RandReverbSim {
         if apply_noise {
             // Noisy contains reverberant noise
             self.pad(noise, fft_size)?;
-            *noise = match self.convolve(noise, rir_noise.view(), &mut state, &c) {
+            *noise = match self.convolve(noise, rir_noise.view(), &mut state) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("noise {}", e);
@@ -566,10 +563,9 @@ impl RandReverbSim {
         &self,
         x: &Array2<f32>,
         rir: ArrayView2<f32>,
-        state: &mut DenoiseState,
-        c: &CommonState,
+        state: &mut DFState,
     ) -> Result<Array2<f32>> {
-        let mut x_ = stft(x.as_standard_layout().view(), state, true, Some(c));
+        let mut x_ = stft(x.as_standard_layout().view(), state, true);
         let rir = fft(rir.view(), state)?;
         let rir: ArrayView3<Complex32> = match rir.broadcast(x_.shape()) {
             Some(r) => r.into_dimensionality()?,
@@ -582,8 +578,8 @@ impl RandReverbSim {
             }
         };
         x_ = x_ * rir;
-        let mut out = istft(x_.view_mut(), state, true, Some(c));
-        out.slice_collapse(s![.., (c.fft_size - c.frame_size)..]);
+        let mut out = istft(x_.view_mut(), state, true);
+        out.slice_collapse(s![.., (state.window_size - state.frame_size)..]);
         Ok(out)
     }
     pub fn new(p: f32, sr: usize) -> Self
@@ -600,7 +596,7 @@ impl RandReverbSim {
     }
 }
 
-pub fn fft(input: ArrayView2<f32>, state: &mut DenoiseState) -> Result<Array2<Complex32>> {
+pub fn fft(input: ArrayView2<f32>, state: &mut DFState) -> Result<Array2<Complex32>> {
     let mut output = Array2::zeros((input.len_of(Axis(0)), state.freq_size));
     for (input_ch, mut output_ch) in input.outer_iter().zip(output.outer_iter_mut()) {
         state
@@ -615,16 +611,10 @@ pub fn fft(input: ArrayView2<f32>, state: &mut DenoiseState) -> Result<Array2<Co
     Ok(output)
 }
 
-pub fn stft(
-    input: ArrayView2<f32>,
-    state: &mut DenoiseState,
-    reset: bool,
-    c: Option<&CommonState>,
-) -> Array3<Complex32> {
+pub fn stft(input: ArrayView2<f32>, state: &mut DFState, reset: bool) -> Array3<Complex32> {
     if reset {
         state.reset();
     }
-    let c = c.unwrap_or_else(|| common());
     let ch = input.len_of(Axis(0));
     let ttd = input.len_of(Axis(1));
     let tfd = ttd / state.frame_size;
@@ -638,23 +628,16 @@ pub fn stft(
                 ichunk.as_slice().unwrap(),
                 ochunk.as_slice_mut().unwrap(),
                 state,
-                c,
             )
         }
     }
     output
 }
 
-pub fn istft(
-    mut input: ArrayViewMut3<Complex32>,
-    state: &mut DenoiseState,
-    reset: bool,
-    c: Option<&CommonState>,
-) -> Array2<f32> {
+pub fn istft(mut input: ArrayViewMut3<Complex32>, state: &mut DFState, reset: bool) -> Array2<f32> {
     if reset {
         state.reset();
     }
-    let c = c.unwrap_or_else(|| common());
     let ch = input.len_of(Axis(0));
     let tfd = input.len_of(Axis(1));
     let ttd = tfd * state.frame_size;
@@ -667,7 +650,6 @@ pub fn istft(
                 &mut ichunk.as_slice_mut().unwrap(),
                 &mut ochunk.as_slice_mut().unwrap(),
                 state,
-                c,
             )
         }
     }
@@ -677,14 +659,13 @@ pub fn istft(
 pub fn erb_compr_with_output(
     input: &ArrayView3<f32>,
     output: &mut ArrayViewMut3<f32>,
-    c: Option<&CommonState>,
+    erb_fb: &[usize],
 ) -> Result<()> {
-    let c = c.unwrap_or_else(|| common());
     for (in_ch, mut out_ch) in input.outer_iter().zip(output.outer_iter_mut()) {
         for (in_t, mut out_t) in in_ch.outer_iter().zip(out_ch.outer_iter_mut()) {
             let ichunk = in_t.as_slice().unwrap();
             let ochunk = out_t.as_slice_mut().unwrap();
-            band_compr(ochunk, ichunk, Some(c));
+            band_compr(ochunk, ichunk, erb_fb);
         }
     }
     Ok(())
@@ -694,14 +675,13 @@ pub fn erb_with_output(
     input: &ArrayView3<Complex32>,
     db: bool,
     output: &mut ArrayViewMut3<f32>,
-    c: Option<&CommonState>,
+    erb_fb: &[usize],
 ) -> Result<()> {
-    let c = c.unwrap_or_else(|| common());
     for (in_ch, mut out_ch) in input.outer_iter().zip(output.outer_iter_mut()) {
         for (in_t, mut out_t) in in_ch.outer_iter().zip(out_ch.outer_iter_mut()) {
             let ichunk = in_t.as_slice().unwrap();
             let ochunk = out_t.as_slice_mut().unwrap();
-            compute_band_corr(ochunk, ichunk, ichunk, Some(c));
+            compute_band_corr(ochunk, ichunk, ichunk, erb_fb);
         }
     }
     if db {
@@ -710,40 +690,30 @@ pub fn erb_with_output(
     Ok(())
 }
 
-pub fn erb(
-    input: &ArrayView3<Complex32>,
-    db: bool,
-    c: Option<&CommonState>,
-) -> Result<Array3<f32>> {
+pub fn erb(input: &ArrayView3<Complex32>, db: bool, erb_fb: &[usize]) -> Result<Array3<f32>> {
     // input shape: [C, T, F]
     let ch = input.len_of(Axis(0));
     let t = input.len_of(Axis(1));
-    if !is_init() {
-        return Err(TransformError::NotInitialized {
-            transform: "erb".into(),
-            msg: "DF common state was not initialized. Please call init() first.".into(),
-        });
-    }
-    let mut output = Array3::<f32>::zeros((ch, t, common().nb_bands));
+    let mut output = Array3::<f32>::zeros((ch, t, erb_fb.len()));
 
-    erb_with_output(input, db, &mut output.view_mut(), c)?;
+    erb_with_output(input, db, &mut output.view_mut(), erb_fb)?;
     Ok(output)
 }
 
 pub fn apply_erb_gains(
     gains: &ArrayView3<f32>,
     input: &mut ArrayViewMut3<Complex32>,
-    c: Option<&CommonState>,
+    erb_fb: &[usize],
 ) -> Result<()> {
     // gains shape: [C, T, E]
     // input shape: [C, T, F]
-    let c = c.unwrap_or_else(|| common());
+    // erb_fb shape: [N_erb]
     for (g_ch, mut in_ch) in gains.outer_iter().zip(input.outer_iter_mut()) {
         for (g_t, mut in_t) in g_ch.outer_iter().zip(in_ch.outer_iter_mut()) {
             apply_interp_band_gain(
                 in_t.as_slice_mut().unwrap(),
                 g_t.as_slice().unwrap(),
-                Some(c),
+                erb_fb,
             );
         }
     }
@@ -753,18 +723,14 @@ pub fn apply_erb_gains(
 pub fn erb_inv_with_output(
     gains: &ArrayView3<f32>,
     output: &mut ArrayViewMut3<f32>,
-    c: Option<&CommonState>,
+    erb_fb: &[usize],
 ) -> Result<()> {
     // gains shape: [C, T, E]
     // output shape: [C, T, F]
-    let c = c.unwrap_or_else(|| common());
+    // erb_fb shape: [N_erb]
     for (g_ch, mut o_ch) in gains.outer_iter().zip(output.outer_iter_mut()) {
         for (g_t, mut o_t) in g_ch.outer_iter().zip(o_ch.outer_iter_mut()) {
-            interp_band_gain(
-                o_t.as_slice_mut().unwrap(),
-                g_t.as_slice().unwrap(),
-                Some(c),
-            );
+            interp_band_gain(o_t.as_slice_mut().unwrap(), g_t.as_slice().unwrap(), erb_fb);
         }
     }
     Ok(())
