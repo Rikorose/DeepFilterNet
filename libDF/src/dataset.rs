@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration};
+use std::time::Duration;
 
 pub use hdf5::silence_errors as hdf5_silence_errors;
 use hdf5::{types::VarLenUnicode, File};
@@ -17,6 +17,7 @@ use ndarray::prelude::*;
 use ndarray::Slice;
 use ogg::reading::PacketReader as OggPacketReader;
 use rand::prelude::{IteratorRandom, SliceRandom};
+use rand::Rng;
 use rayon::prelude::*;
 use realfft::num_traits::Zero;
 use serde::Deserialize;
@@ -51,9 +52,9 @@ pub enum DfDatasetError {
     DataProcessingError(String),
     #[error("Multithreading Send Error: {0:?}")]
     SendError(String),
-    #[error("ClC Transforms Error")]
+    #[error("DF Transforms Error")]
     TransformError(#[from] crate::transforms::TransformError),
-    #[error("ClC Utils Error")]
+    #[error("DF Utils Error")]
     UtilsError(#[from] crate::util::UtilsError),
     #[error("Ndarray Shape Error")]
     NdarrayShapeError {
@@ -362,7 +363,7 @@ where
                 idcs.clone_from(&(0..bs).cycle().take(self.dataset_len(split)).collect());
             } else {
                 idcs.clone_from(&(0..self.dataset_len(split)).collect());
-                idcs.make_contiguous().shuffle(&mut rng()?);
+                idcs.make_contiguous().shuffle(&mut thread_rng()?);
             }
         }
         // Start thread to submit dataset jobs for the pool workers
@@ -423,9 +424,8 @@ where
         // Drop out_receiver so that parallel iter in fill thread will return
         drop(self.out_receiver.take());
         if let Some(thread) = self.fill_thread.take() {
-            if let Err(e) = thread
-                .join()
-                .map_err(|e| DfDatasetError::ThreadJoinError(format!("{:?}", e)))?
+            if let Err(e) =
+                thread.join().map_err(|e| DfDatasetError::ThreadJoinError(format!("{:?}", e)))?
             {
                 match e {
                     DfDatasetError::SendError(_) => (),
@@ -926,7 +926,7 @@ impl TdDataset {
             let max_len = sample_len.min(l_sr);
             let s = sample_len as i64 - max_len as i64;
             if s > 0 {
-                let s = rng_gen_range(0..(s as usize))?;
+                let s = thread_rng()?.gen_range(0..(s as usize));
                 Some(s..s + l_sr)
             } else {
                 None
@@ -962,7 +962,7 @@ impl TdDataset {
                 eprintln!("Error during speech reading get_data(): {:?}", e);
                 if e.to_string().contains("inflate") {
                     // Get a different speech then
-                    let idx = rng_gen_range(0..self.len())?;
+                    let idx = thread_rng()?.gen_range(0..self.len());
                     let (sp_idx, sp_key) = &self.sp_keys[idx];
                     eprintln!(
                         "Returning a different speech sample from {}",
@@ -998,16 +998,17 @@ impl TdDataset {
 impl Dataset<f32> for TdDataset {
     fn get_sample(&self, idx: usize) -> Result<Sample<f32>> {
         seed_from_u64(idx as u64 + self.seed);
+        let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
         self.sp_transforms.transform(&mut speech)?;
         let mut max_freq = self.max_freq(*sp_idx)?;
         while speech.len_of(Axis(1)) < self.max_sample_len()
             && self.p_fill_speech > 0.0
-            && self.p_fill_speech > rng_gen_range(0f32..1f32)?
+            && self.p_fill_speech > rng.gen_range(0f32..1f32)
         {
             // If too short, maybe sample another speech sample
-            let (sp_idx, sp_key) = &self.sp_keys.choose(&mut rng()?).unwrap();
+            let (sp_idx, sp_key) = &self.sp_keys.choose(&mut rng).unwrap();
             let mut another_speech = self.read_max_len(*sp_idx, sp_key)?;
             self.sp_transforms.transform(&mut another_speech)?;
             speech.append(Axis(1), another_speech.view())?;
@@ -1036,8 +1037,8 @@ impl Dataset<f32> for TdDataset {
             ch = 1;
         }
         // Sample 2-5 noises and augment each
-        let n_noises = rng_gen_range(2..6)?;
-        let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng()?, n_noises);
+        let n_noises = rng.gen_range(2..6);
+        let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng, n_noises);
         let mut noises = Vec::with_capacity(n_noises);
         let mut noise_gains = Vec::with_capacity(n_noises);
         for (ns_idx, ns_key) in &ns_ids {
@@ -1056,17 +1057,15 @@ impl Dataset<f32> for TdDataset {
                 ns.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
             }
             noises.push(ns);
-            noise_gains.push(self.gains.choose(&mut rng()?).unwrap());
+            noise_gains.push(self.gains.choose(&mut rng).unwrap());
         }
         let noise_gains_f32: Vec<f32> = noise_gains.iter().map(|x| **x as f32).collect();
         // Sample SNR and gain
-        let &snr = self.snrs.choose(&mut rng()?).unwrap();
-        let &gain = self.gains.choose(&mut rng()?).unwrap();
+        let &snr = self.snrs.choose(&mut rng).unwrap();
+        let &gain = self.gains.choose(&mut rng).unwrap();
         // Sample attenuation limiting during training
-        let atten = if self.p_atten_lim > 0. && self.p_atten_lim > rng_gen_range(0f32..1f32)? {
-            Some(rng_gen_range(
-                self.attenuation_range.0..self.attenuation_range.1,
-            )?)
+        let atten = if self.p_atten_lim > 0. && self.p_atten_lim > rng.gen_range(0f32..1f32) {
+            Some(rng.gen_range(self.attenuation_range.0..self.attenuation_range.1))
         } else {
             None
         };
@@ -1075,7 +1074,7 @@ impl Dataset<f32> for TdDataset {
         // Apply reverberation using a randomly sampled RIR
         let speech_rev = if !self.rir_keys.is_empty() {
             self.reverb.transform(&mut speech, &mut noise, || {
-                let (rir_idx, rir_key) = self.rir_keys.iter().choose(&mut rng()?).unwrap();
+                let (rir_idx, rir_key) = self.rir_keys.iter().choose(&mut rng).unwrap();
                 let rir = self.read(*rir_idx, rir_key)?;
                 Ok(rir)
             })?
@@ -1306,7 +1305,7 @@ impl Hdf5Dataset {
         } else {
             let ch = arr.len_of(Axis(0));
             if ch > 1 {
-                let idx = rng_gen_range(0..ch)?;
+                let idx = thread_rng()?.gen_range(0..ch);
                 arr.slice_axis_inplace(Axis(0), Slice::from(idx..idx + 1));
             }
             arr.into_dimensionality()?
@@ -1333,7 +1332,7 @@ impl Hdf5Dataset {
         }
         let mut out: Array2<i16> = Array2::from_shape_vec((out.len() / ch, ch), out)?;
         if ch > 1 {
-            let idx = rng_gen_range(0..ch)?;
+            let idx = thread_rng()?.gen_range(0..ch);
             out.slice_axis_inplace(Axis(1), Slice::from(idx..idx + 1));
         }
         debug_assert_eq!(1, out.len_of(Axis(1)));
@@ -1371,6 +1370,7 @@ fn combine_noises(
     noises: &mut [Array2<f32>],
     noise_gains: Option<&[f32]>,
 ) -> Result<Signal> {
+    let mut rng = thread_rng()?;
     // Adjust length of noises to clean length
     for ns in noises.iter_mut() {
         loop {
@@ -1383,17 +1383,17 @@ fn combine_noises(
         }
         let too_large = ns.len_of(Axis(1)).checked_sub(len);
         if let Some(too_large) = too_large {
-            let start: usize = rng_gen_range(0..too_large)?;
+            let start: usize = rng.gen_range(0..too_large);
             ns.slice_collapse(s![.., start..start + len]);
         }
     }
     // Adjust number of noise channels to clean channels
     for ns in noises.iter_mut() {
         while ns.len_of(Axis(0)) > ch {
-            ns.remove_index(Axis(0), rng_gen_range(0..ns.len_of(Axis(0)))?)
+            ns.remove_index(Axis(0), rng.gen_range(0..ns.len_of(Axis(0))))
         }
         while ns.len_of(Axis(0)) < ch {
-            let r = rng_gen_range(0..ns.len_of(Axis(0)))?;
+            let r = rng.gen_range(0..ns.len_of(Axis(0)));
             let slc = ns.slice(s![r..r + 1, ..]).to_owned();
             ns.append(Axis(0), slc.view())?;
         }

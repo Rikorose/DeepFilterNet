@@ -1,4 +1,4 @@
-#![feature(once_cell, thread_local, backtrace)]
+#![feature(once_cell, backtrace)]
 #![allow(dead_code)]
 
 use std::sync::Arc;
