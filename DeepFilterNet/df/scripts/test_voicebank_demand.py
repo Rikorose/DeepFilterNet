@@ -7,7 +7,6 @@ import pesq as pypesq
 import pystoi
 import torch
 import torchaudio
-from icecream import ic
 from loguru import logger
 from pystoi.utils import resample_oct
 

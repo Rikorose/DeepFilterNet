@@ -3,4 +3,4 @@ torchaudio>=0.8
 numpy
 icecream
 loguru
-torchinfo
+ptflops

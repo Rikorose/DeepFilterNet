@@ -1,7 +1,5 @@
 import atexit
 import queue
-import shutil
-import tempfile
 import threading
 from typing import Iterator, Optional, Tuple
 

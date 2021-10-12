@@ -8,11 +8,11 @@ from torch import Tensor, nn
 from torch.autograd import Function
 
 from df import DF
-from df.config import Csv, config
+from df.config import config
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
-from df.utils import as_complex, as_real
+from df.utils import as_complex
 
 
 def wg(S: Tensor, X: Tensor, eps: float = 1e-10) -> Tensor:
@@ -65,7 +65,7 @@ class Istft(nn.Module):
         # Input shape: [B (C) T, F, (2)]
         input = as_complex(input)
         t, f = input.shape[-2:]
-        # Even though this is not the CLC implementation, it numerical sufficiently close.
+        # Even though this is not the DF implementation, it numerical sufficiently close.
         # Pad one extra step at the end to get original signal length
         return torch.istft(
             F.pad(input.view(-1, t, f).transpose(1, 2), (0, 1)),
@@ -108,7 +108,6 @@ class SpectralLoss(nn.Module):
             loss_c = (
                 F.mse_loss(torch.view_as_real(input), target=torch.view_as_real(target)) * self.f_c
             )
-            ic(loss_c.item())
             loss = loss + loss_c
         return loss
 
@@ -377,27 +376,14 @@ class Loss(nn.Module):
         if self.cal_f != 0 and self.cal is not None:
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
-        if self.store_losses:
+        if self.store_losses and self.istft is not None:
             enhanced_td = self.istft(enhanced)
             clean_td = self.istft(clean)
-            self.store_summaries(enhanced_td, clean_td, snrs, ml, cel, frl, sdrl, sl, lsnrl, cal)
+            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, cal)
         return ml + sl + cal
 
     def reset_summaries(self):
         self.summaries = defaultdict(list)
-        # summaries = {
-        #     "MaskLoss": [],
-        #     "DfEnergyLoss": [],
-        #     "FreqResponseLoss": [],
-        #     "SdrLoss": [],
-        #     "SpectralLoss": [],
-        #     "LocalSnrLoss": [],
-        #     "DfAlphaLoss": [],
-        # }
-        # for snr in (-5, 0, 5, 10, 20, 40):
-        #     summaries[f"sdr_snr_{snr}"] = []
-        #     summaries[f"stoi_snr_{snr}"] = []
-        # self.summaries = summaries
         return self.summaries
 
     @torch.jit.ignore
@@ -412,25 +398,13 @@ class Loss(nn.Module):
         clean_td: Tensor,
         snrs: Tensor,
         ml: Tensor,
-        cel: Tensor,
-        frl: Tensor,
-        sdrl: Tensor,
         sl: Tensor,
-        lsnrl: Tensor,
         cal: Tensor,
     ):
         if ml != 0:
             self.summaries["MaskLoss"].append(ml.detach())
-        if cel != 0:
-            self.summaries["DfEnergyLoss"].append(cel.detach())
-        if frl != 0:
-            self.summaries["FreqResponseLoss"].append(frl.detach())
-        if sdrl != 0:
-            self.summaries["SdrLoss"].append(sdrl.detach())
         if sl != 0:
             self.summaries["SpectralLoss"].append(sl.detach())
-        if lsnrl != 0:
-            self.summaries["LocalSnrLoss"].append(lsnrl.detach())
         if cal != 0:
             self.summaries["DfAlphaLoss"].append(cal.detach())
         sdr = SiSdr()
@@ -465,7 +439,7 @@ def test_local_snr():
     noisy = df.analysis((noise + clean).reshape(1, -1))
     clean = df.analysis(clean.reshape(1, -1))
     noise = df.analysis(noise.reshape(1, -1))
-    f, ax = plt.subplots(2)
+    _, ax = plt.subplots(2)
     librosa.display.specshow(
         librosa.amplitude_to_db(np.abs(noisy.squeeze().T)),
         sr=sr,

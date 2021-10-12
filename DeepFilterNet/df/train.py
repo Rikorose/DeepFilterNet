@@ -89,11 +89,9 @@ def main():
     opt = load_opt(checkpoint_dir, model, mask_only, train_df_only)
     lrs = torch.optim.lr_scheduler.StepLR(opt, 3, 0.9, last_epoch=epoch - 1)
     try:
-        log_model_summary(model)
+        log_model_summary(model, verbose=args.debug)
     except Exception as e:
-        raise e
         logger.warning(f"Failed to print model summary: {e}")
-    exit()
 
     bs: int = config("BATCH_SIZE", 1, int, section="train")
     bs_eval: int = config("BATCH_SIZE_EVAL", 0, int, section="train")

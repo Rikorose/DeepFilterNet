@@ -7,7 +7,7 @@ import numpy as np
 import soundfile as sf
 from icecream import ic
 
-from df import DF
+from df import DF, erb
 from df.config import config
 from df.dataloader import DataLoader
 from df.model import ModelParams
@@ -31,7 +31,7 @@ def test_analysis_synthesis():
     sf.write("out.wav", x.T, sr)
 
 
-def test_erb():
+def plot_erb_spec():
     sr, fft, hop, nb_bands = 48000, 960, 480, 32
     df = DF(sr, fft, hop, nb_bands)
     x, sr = librosa.load(librosa.ex("trumpet"), sr=48000)

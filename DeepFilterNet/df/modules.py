@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from icecream import ic
+from icecream import ic  # noqa
 from torch import Tensor, nn
 from torch.fx import wrap as fx_wrap
 from torch.nn import functional as F
@@ -638,8 +638,6 @@ def local_snr(
 
 
 def test_grouped_gru():
-    import icecream as ic
-
     g = 2  # groups
     h = 4  # hidden_size
     i = 2  # input_size

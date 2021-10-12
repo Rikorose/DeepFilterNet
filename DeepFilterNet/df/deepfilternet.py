@@ -22,7 +22,7 @@ class ModelParams(DfParams):
         self.conv_k_dec: int = config("CONV_K_DEC", cast=int, default=1, section=self.section)
         self.conv_ch: int = config("CONV_CH", cast=int, default=16, section=self.section)
         self.conv_width_f: int = config(
-            "CONV_WIDTH_FACTOR", cast=int, default=2, section=self.section
+            "CONV_WIDTH_FACTOR", cast=int, default=1, section=self.section
         )
         self.conv_dec_mode: str = config(
             "CONV_DEC_MODE", default="transposed", section=self.section
@@ -167,7 +167,7 @@ class ErbDecoder(nn.Module):
 
     def forward(self, emb, e3, e2, e1, e0) -> Tensor:
         # Estimates erb mask
-        b, c8, t, f8 = e3.shape
+        b, _, t, f8 = e3.shape
         emb = self.fc_emb(emb)
         emb = emb.view(b, t, -1, f8).transpose(1, 2)  # [B, C*8, T, F/8]
         e3 = self.convt3(self.conv3p(e3) + emb)  # [B, C*4, T, F/4]

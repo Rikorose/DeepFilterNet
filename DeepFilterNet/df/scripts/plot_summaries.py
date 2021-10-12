@@ -6,7 +6,6 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import torchaudio
-from icecream import ic
 
 from df.visualization import spec_figure
 
@@ -14,6 +13,7 @@ should_stop = False
 
 
 def main():
+    """Poor man's tensorboard summaries"""
     global should_stop
     parser = argparse.ArgumentParser()
     parser.add_argument("summary_dir")

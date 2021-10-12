@@ -3,6 +3,7 @@ import sys
 from typing import Dict, Optional
 
 import torch
+from icecream import ic
 from loguru import logger
 from torch.types import Number
 
@@ -48,9 +49,9 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
     logger.info(msg)
 
 
-def log_model_summary(model: torch.nn.Module):
+def log_model_summary(model: torch.nn.Module, verbose=False):
+    ic(verbose)
     import ptflops
-    import torchinfo
 
     from df.model import ModelParams
 
@@ -59,42 +60,19 @@ def log_model_summary(model: torch.nn.Module):
     #   spec: [B, 1, T, F, 2], F: freq bin
     #   feat_erb: [B, 1, T, E], E: ERB bands
     #   feat_spec: [B, 2, T, C*2], C: Complex features
-    #
     p = ModelParams()
     b = 1
     t = p.sr // p.hop_size
     spec = torch.randn([b, 1, t, p.fft_size // 2 + 1, 2])
     feat_erb = torch.randn([b, 1, t, p.nb_erb])
     feat_spec = torch.randn([b, 1, t, p.nb_df, 2])
-    inputs = (spec, feat_erb, feat_spec)
-    # s = torchinfo.summary(
-    #    model,
-    #    input_data=inputs,
-    #    col_names=("input_size", "output_size", "num_params", "mult_adds"),
-    #    batch_dim=1,
-    #    depth=12,
-    #    verbose=0,
-    # )
-    # s.summary_list = [x for x in s.summary_list if "act" not in x.var_name.lower()]
-    # ic(s)
 
-    # macs, params = ptflops.get_model_complexity_info(
-    #    model.enc,
-    #    (t,),
-    #    input_constructor=lambda _: {"feat_erb": feat_erb, "feat_spec": feat_spec},
-    #    as_strings=True,
-    #    print_per_layer_stat=True,
-    #    verbose=True,
-    # )
-    # ic(macs, params)
-
-    # model.run_df=False
     macs, params = ptflops.get_model_complexity_info(
         model,
         (t,),
         input_constructor=lambda _: {"spec": spec, "feat_erb": feat_erb, "feat_spec": feat_spec},
-        as_strings=True,
-        print_per_layer_stat=True,
-        verbose=True,
+        as_strings=False,
+        print_per_layer_stat=verbose,
+        verbose=verbose,
     )
-    ic(macs, params)
+    logger.info(f"Model complexity: {params/1e6:.3f}M #Params, {macs/1e6:.1f}M MACS")
