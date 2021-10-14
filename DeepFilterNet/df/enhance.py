@@ -19,7 +19,9 @@ from df.utils import as_complex, as_real
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("model_base_dir", type=str, help="Model directory containing checkpoints and config.")
+    parser.add_argument(
+        "model_base_dir", type=str, help="Model directory containing checkpoints and config."
+    )
     parser.add_argument(
         "noisy_audio_files",
         type=str,
@@ -50,6 +52,9 @@ def main():
     logger.info("Model loaded")
     if not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
+    suffix = "DeepFilterNet"
+    if args.pf:
+        suffix += "_pf"
     for file in args.noisy_audio_files:
         audio = enhance(model, df_state, file, log=True)
         save_audio(file, audio, p.sr, args.output_dir, model_n, log=True)
