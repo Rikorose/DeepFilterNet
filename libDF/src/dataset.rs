@@ -748,7 +748,11 @@ impl<'a> DatasetBuilder<'a> {
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
         let ns_transforms = sp_transforms.clone();
-        let reverb = RandReverbSim::new(self.p_reverb.unwrap_or(0.), self.sr);
+        let p_reverb = self.p_reverb.unwrap_or(0.);
+        if p_reverb > 0. && rir_keys.is_empty() {
+            eprintln!("Warning: Reverb augmentation enabled but no RIRs provided!");
+        }
+        let reverb = RandReverbSim::new(p_reverb, self.sr);
         let seed = self.seed.unwrap_or(0);
         Ok(TdDataset {
             config,
@@ -823,7 +827,7 @@ pub struct FftDataset {
     nb_erb: Option<usize>,
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
-    min_nb_freqs:Option<usize>,
+    min_nb_freqs: Option<usize>,
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize) -> Result<Sample<Complex32>> {

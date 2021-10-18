@@ -361,8 +361,8 @@ pub fn low_pass(x: &mut Array2<f32>, freq: f32, sr: usize, q: Option<f32>) -> Re
     let a1 = -2. * w0_cos;
     let a2 = 1. - alpha;
 
-    let mut mem = [0.; 2];
     for x_ch in x.axis_iter_mut(Axis(0)) {
+        let mut mem = [0.; 2];
         biquad_inplace(x_ch, &mut mem, &[b0, b1, b2], &[a0, a1, a2]);
     }
     Ok(())
@@ -432,22 +432,22 @@ impl RandReverbSim {
         Ok(rir)
     }
     fn good_fft_size(&self, rir: &Array2<f32>) -> usize {
-        // Zero pad RIR for better FFT efficiency: len = 2**a + 3**b + 5**c + 7**d
+        // Zero pad RIR for better FFT efficiency by finding prime factors up to a limit of 11.
         let len = rir.len_of(Axis(1));
-        let mut missing = len as i32;
-        let d = (missing as f32).log(7.).floor() as u32;
-        missing -= 7i32.pow(d);
-        let c = (missing as f32).log(5.).floor() as u32;
-        missing -= 5i32.pow(c);
-        let b = (missing as f32).log(3.).floor() as u32;
-        missing -= 3i32.pow(b);
-        let mut a = (missing as f32).log2().floor() as u32;
-        missing -= 2i32.pow(a);
-        if missing > 0 {
-            a += 1
-        };
-        let fft_size = (2u32.pow(a) + 3u32.pow(b) + 5u32.pow(c) + 7u32.pow(d)) as usize + 1;
-        assert!(fft_size >= len);
+        let mut missing = len;
+        let primes = [2, 3, 5, 7, 11];
+        let mut factors = [0u32; 5];
+        for (p, f) in primes.iter().zip(factors.iter_mut()) {
+            while missing % p == 0 {
+                missing /= p;
+                *f += 1;
+            }
+        }
+        if missing > 1 {
+            factors[0] += (missing as f32).log2().ceil() as u32;
+        }
+        let fft_size = primes.iter().zip(factors).fold(1, |acc, (p, f)| acc * p.pow(f));
+        debug_assert!(fft_size >= len);
         fft_size
     }
     fn pad(&self, x: &mut Array2<f32>, npad: usize) -> Result<()> {
@@ -505,9 +505,6 @@ impl RandReverbSim {
         // DF state for convolve FFT
         let hop_size = fft_size / 4;
         let mut state = DFState::new(self.sr, fft_size, hop_size, 1, 1);
-
-        let apply_speech = true;
-        let apply_noise = false;
 
         // speech_rev contains reverberant speech for mixing with noise
         let mut speech_rev = None;
