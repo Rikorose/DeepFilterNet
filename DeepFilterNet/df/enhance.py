@@ -64,7 +64,8 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     p = ModelParams()
     spec = df.analysis(audio.numpy())  # [C, Tf] -> [C, Tf, F]
     a = get_norm_alpha(False)
-    erb_feat = torch.as_tensor(erb_norm(erb(spec, p.nb_erb), a)).unsqueeze(0)
+    erb_fb = df.erb_widths()
+    erb_feat = torch.as_tensor(erb_norm(erb(spec, erb_fb), a)).unsqueeze(0)
     spec_feat = as_real(torch.as_tensor(unit_norm(spec[..., : p.nb_df], a)).unsqueeze(0))
     spec = as_real(torch.as_tensor(spec).unsqueeze(0))
     if device is not None:
