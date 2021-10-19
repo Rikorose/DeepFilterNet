@@ -4,7 +4,8 @@ import torch
 from torch import Tensor, nn
 
 from df.config import DfParams, config
-from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
+from df.dfop import get_df_op
+from df.modules import GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
 from libdf import DF
 
 
@@ -43,7 +44,7 @@ class ModelParams(DfParams):
             "DF_HIDDEN_DIM", cast=int, default=256, section=self.section
         )
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
-        self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
+        self.gru_groups: int = config("GRU_GROUPS", cast=int, default=4, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
         self.group_shuffle: bool = config(
             "GROUP_SHUFFLE", cast=bool, default=True, section=self.section
@@ -247,13 +248,13 @@ class DfNet(nn.Module):
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.df_dec = DfDecoder()
+        op = get_df_op(p.dfop_method)
         self.df_op = torch.jit.script(
-            DfOp(
-                p.nb_df,
+            op(
                 p.df_order,
                 p.df_lookahead,
-                freq_bins=self.freq_bins,
-                method=p.dfop_method,
+                n_df_bins=p.nb_df,
+                n_freq_bins=self.freq_bins,
             )
         )
 
