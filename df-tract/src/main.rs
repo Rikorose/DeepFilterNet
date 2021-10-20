@@ -143,7 +143,7 @@ fn init_dfop_delayspec(dfopinit: &Path, df_cfg: &ini::Properties) -> Result<Puls
 
     let n_freq = df_cfg.get("fft_size").unwrap().parse::<usize>()? / 2 + 1;
 
-    let spec = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(1, 1, s, n_freq, 2));
+    let spec = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(s, n_freq, 2));
     let mut dfopinit = tract_onnx::onnx().model_for_path(dfopinit)?.with_input_fact(0, spec)?;
 
     dfopinit = dfopinit.with_input_names(&["spec"])?.with_output_names(&["spec_d"])?;

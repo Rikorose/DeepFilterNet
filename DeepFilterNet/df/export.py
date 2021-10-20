@@ -170,11 +170,11 @@ def export(
     #     verbose=False,
     # )
     dfop_delayspec = DfDelaySpec(p.df_lookahead)
-    spec_d = dfop_delayspec(spec)
+    spec_d = dfop_delayspec(spec[0, 0])
     ic(spec.shape, spec_d.shape)
     torch.onnx.export(
         model=dfop_delayspec,
-        args=spec,
+        args=spec[0, 0],
         input_names=["spec"],
         f=os.path.join(output_dir, "dfop_delayspec.onnx"),
         do_constant_folding=constant_folding,
@@ -187,7 +187,7 @@ def export(
         verbose=False,
     )
     dfop_initbuf = DfOpInitSpecBuf(p.df_order, p.df_lookahead, p.nb_df, p.fft_size // 2 + 1)
-    spec_buf = dfop_initbuf(spec)
+    spec_buf = dfop_initbuf(spec[0, 0])
     # Let's skip initialization since it only affects a few time steps
     # torch.onnx.export(
     #     model=dfop_initbuf,
@@ -207,7 +207,7 @@ def export(
     dfop_step = torch.jit.script(dfop_step)
     spec_f = torch.zeros_like(spec)
     for t in range(spec.shape[2]):
-        args = [spec_d[0, 0, t + p.df_lookahead], coefs[0, t], alpha[0, t], spec_buf]
+        args = [spec_d[t + p.df_lookahead], coefs[0, t], alpha[0, t], spec_buf]
         spec_f[:, :, t], spec_buf = dfop_step(*args)
     # torch.testing.assert_allclose(spec_f_net, spec_f)
     ic(torch.allclose(spec_f, spec_f_net))
@@ -216,7 +216,7 @@ def export(
     t = 1
     torch.onnx.export(
         model=dfop_step,
-        args=(spec_d[0, 0, t + p.df_lookahead], coefs[0, t], alpha[0, t], spec_buf),
+        args=(spec_d[t + p.df_lookahead], coefs[0, t], alpha[0, t], spec_buf),
         input_names=["spec", "coefs", "alpha", "spec_buf_in"],
         f=os.path.join(output_dir, "dfop_step.onnx"),
         do_constant_folding=constant_folding,
@@ -230,13 +230,13 @@ def export(
     onnx.checker.check_model(dfop_onnx)
     print("running dfop onnx")
     sess = onnxruntime.InferenceSession(os.path.join(output_dir, "dfop_step.onnx"))
-    spec_d = dfop_delayspec(spec)
-    spec_buf = dfop_initbuf(spec).numpy()
+    spec_d = dfop_delayspec(spec[0, 0])
+    spec_buf = dfop_initbuf(spec[0, 0]).numpy()
     for t in range(spec.shape[2]):
         out = sess.run(
             ("spec_f", "spec_buf"),
             {
-                "spec": spec_d[0, 0, t + p.df_lookahead].numpy(),
+                "spec": spec_d[t + p.df_lookahead].numpy(),
                 "coefs": coefs[0, t].numpy(),
                 "alpha": alpha[0, t].numpy(),
                 "spec_buf_in": spec_buf,
