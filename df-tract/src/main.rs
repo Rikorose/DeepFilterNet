@@ -158,13 +158,13 @@ fn init_dfop_delayspec(dfopinit: &Path, df_cfg: &ini::Properties) -> Result<Puls
 
 fn init_dfop_step(
     dfopstep: &Path,
-    net_cfg: &ini::Properties,
+    model_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
 ) -> Result<TypedModel> {
     println!("Init df OP step");
 
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
-    let df_order = net_cfg.get("df_order").unwrap().parse::<usize>()?;
+    let df_order = model_cfg.get("df_order").unwrap().parse::<usize>()?;
     let n_freq = df_cfg.get("fft_size").unwrap().parse::<usize>()? / 2 + 1;
 
     let spec = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_freq, 2));
@@ -222,51 +222,59 @@ fn main() -> Result<()> {
             .into_optimized()?
             .into_runnable()?,
     )?;
-    let mut dfstep = SimpleState::new(
+    let mut df_step = SimpleState::new(
         init_dfop_step(&exp_dir.join("dfop_step.onnx"), model_cfg, df_cfg)?.into_runnable()?,
     )?;
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
-    let n_freq = df_cfg.get("fft_size").unwrap().parse::<usize>()? / 2 + 1;
+    let nb_freq_bins = df_cfg.get("fft_size").unwrap().parse::<usize>()? / 2 + 1;
+    let df_order = model_cfg.get("df_order").unwrap().parse::<usize>()?;
+
+    let mut spec_buf = tensor0(0f32).broadcast_scalar_to_shape(&[df_order, nb_freq_bins, 2])?;
+
     // loop over input stream
-    let t: usize = 5;
+    let t: usize = 10;
     for v in 0..t {
+        dbg!(t);
         // mocked input chunks
         let feat_erb = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 1, 1, nb_erb])?;
         let feat_spec = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 2, 1, nb_df])?;
-        let spec = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 1, 1, n_freq, 2])?;
+        let spec = tensor0(v as f32).broadcast_scalar_to_shape(&[nb_freq_bins, 2])?;
         let mut enc_emb = enc.run(tvec!(feat_erb, feat_spec))?;
-        eprintln!("{:?}", enc_emb.len());
-        //let (lsnr, emb) = emb.split_last().unwrap();
-        //dbg!(lsnr);
         debug_assert_eq!(enc_emb.len(), 6);
 
         // pop removes from end
         let lsnr = enc_emb.pop().unwrap();
-        dbg!(lsnr);
+        dbg!(lsnr.as_slice::<f32>()?[0]);
         let c0 = enc_emb.pop().unwrap();
         let emb = enc_emb.pop().unwrap();
 
         let dec_input = tvec!(
-            Arc::try_unwrap(Arc::clone(&emb)).unwrap(),
-            Arc::try_unwrap(enc_emb.pop().unwrap()).unwrap(),
-            Arc::try_unwrap(enc_emb.pop().unwrap()).unwrap(),
-            Arc::try_unwrap(enc_emb.pop().unwrap()).unwrap(),
-            Arc::try_unwrap(enc_emb.pop().unwrap()).unwrap(),
+            emb.clone().into_tensor(),
+            enc_emb.pop().unwrap().into_tensor(), // e3
+            enc_emb.pop().unwrap().into_tensor(), // e2
+            enc_emb.pop().unwrap().into_tensor(), // e1
+            enc_emb.pop().unwrap().into_tensor(), // e0
         );
         let m = dec.run(dec_input)?;
         dbg!(m);
 
-        let mut c = dfrnn.run(tvec!(
-            Arc::try_unwrap(emb).unwrap(),
-            Arc::try_unwrap(c0).unwrap()
-        ))?;
-        let alpha = Arc::try_unwrap(c.pop().unwrap()).unwrap();
-        let coefs = Arc::try_unwrap(c.pop().unwrap()).unwrap();
-        dbg!(coefs, alpha);
+        let mut c = dfrnn.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
+        let alpha = c.pop().unwrap().into_tensor();
+        let coefs = c.pop().unwrap().into_tensor();
 
-        let spec_d = df_delay.run(tvec!(spec))?.pop().unwrap();
+        let spec_d = df_delay.run(tvec!(spec))?.pop().unwrap().into_tensor();
+
+        let mut dfout = df_step.run(tvec!(
+            spec_d,
+            coefs.into_shape(&[df_order, nb_df, 2])?,
+            alpha.into_shape(&[1])?,
+            spec_buf
+        ))?;
+        spec_buf = dfout.pop().unwrap().into_tensor();
+        let spec_f = dfout.pop().unwrap();
+        dbg!(&spec_buf, &spec_f);
     }
 
     Ok(())
