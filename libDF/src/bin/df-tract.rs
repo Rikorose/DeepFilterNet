@@ -1,8 +1,15 @@
 use std::env::args;
 use std::path::Path;
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
+use df::mix_utils::{combine_noises, mix_audio_signal};
+use df::rng::seed_from_u64;
+use df::{apply_interp_band_gain, DFState};
+use df::{wav_utils::*, Complex32};
 use ini::Ini;
+use ndarray::prelude::*;
+use ndarray::Axis;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_hir::shapefactoid;
 use tract_pulse::internal::ToDim;
@@ -226,56 +233,114 @@ fn main() -> Result<()> {
         init_dfop_step(&exp_dir.join("dfop_step.onnx"), model_cfg, df_cfg)?.into_runnable()?,
     )?;
 
+    let sr = df_cfg.get("sr").unwrap().parse::<usize>()?;
+    let hop_size = df_cfg.get("hop_size").unwrap().parse::<usize>()?;
+    let fft_size = df_cfg.get("fft_size").unwrap().parse::<usize>()?;
+    let min_nb_erb_freqs = df_cfg.get("min_nb_erb_freqs").unwrap().parse::<usize>()?;
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
-    let nb_freq_bins = df_cfg.get("fft_size").unwrap().parse::<usize>()? / 2 + 1;
+    let nb_freq_bins = fft_size / 2 + 1;
     let df_order = model_cfg.get("df_order").unwrap().parse::<usize>()?;
+    let alpha = df_cfg.get("norm_alpha").unwrap().parse::<f32>()?;
 
     let mut spec_buf = tensor0(0f32).broadcast_scalar_to_shape(&[df_order, nb_freq_bins, 2])?;
 
-    // loop over input stream
-    let t: usize = 10;
-    for v in 0..t {
-        dbg!(t);
-        // mocked input chunks
-        let feat_erb = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 1, 1, nb_erb])?;
-        let feat_spec = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 2, 1, nb_df])?;
-        let spec = tensor0(v as f32).broadcast_scalar_to_shape(&[nb_freq_bins, 2])?;
-        let mut enc_emb = enc.run(tvec!(feat_erb, feat_spec))?;
-        debug_assert_eq!(enc_emb.len(), 6);
+    let reader = ReadWav::new("assets/noisy_snr0_mono.wav")?;
+    let (sr, ch) = (reader.sr as u32, reader.channels as u16);
+    let noisy = reader.samples_arr2()?;
+    let mut enh: Array2<f32> = ArrayD::default(noisy.shape()).into_dimensionality()?;
 
-        // pop removes from end
-        let lsnr = enc_emb.pop().unwrap();
-        dbg!(lsnr.as_slice::<f32>()?[0]);
-        let c0 = enc_emb.pop().unwrap();
-        let emb = enc_emb.pop().unwrap();
-
-        let dec_input = tvec!(
-            emb.clone().into_tensor(),
-            enc_emb.pop().unwrap().into_tensor(), // e3
-            enc_emb.pop().unwrap().into_tensor(), // e2
-            enc_emb.pop().unwrap().into_tensor(), // e1
-            enc_emb.pop().unwrap().into_tensor(), // e0
-        );
-        let m = dec.run(dec_input)?;
-        dbg!(m);
-
-        let mut c = dfrnn.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
-        let alpha = c.pop().unwrap().into_tensor();
-        let coefs = c.pop().unwrap().into_tensor();
-
-        let spec_d = df_delay.run(tvec!(spec))?.pop().unwrap().into_tensor();
-
-        let mut dfout = df_step.run(tvec!(
-            spec_d,
-            coefs.into_shape(&[df_order, nb_df, 2])?,
-            alpha.into_shape(&[1])?,
-            spec_buf
-        ))?;
-        spec_buf = dfout.pop().unwrap().into_tensor();
-        let spec_f = dfout.pop().unwrap();
-        dbg!(&spec_buf, &spec_f);
+    let ch = noisy.len_of(Axis(0));
+    let mut states = Vec::with_capacity(ch);
+    for _ in 0..ch {
+        let mut state = DFState::new(sr as usize, fft_size, hop_size, nb_erb, min_nb_erb_freqs);
+        state.init_norm_states(nb_df);
+        states.push(state)
     }
+    let t0 = Instant::now();
+    // loop over input stream
+    for (noisy_ch, mut enh_ch) in noisy
+        .axis_chunks_iter(Axis(1), hop_size)
+        .zip(enh.axis_chunks_iter_mut(Axis(1), hop_size))
+    {
+        for ((noisy_frame, mut enh_frame), state) in noisy_ch
+            .axis_iter(Axis(0))
+            .zip(enh_ch.axis_iter_mut(Axis(0)))
+            .zip(states.iter_mut())
+        {
+            //dbg!(noisy_frame.shape(), enh_frame.shape());
+            let mut input = vec![0f32; hop_size];
+            for (inp, &nsy) in input.iter_mut().zip(noisy_frame) {
+                *inp = nsy
+            }
+            if noisy_frame.len() < hop_size {
+                break; // for now
+            }
+            // Init buffers
+            let mut spec_buf = tensor0(0f32).broadcast_scalar_to_shape(&[nb_freq_bins, 2])?;
+            let mut erb_buf = tensor0(0f32).broadcast_scalar_to_shape(&[1, 1, 1, nb_erb])?;
+            let mut cplx_buf = tensor0(0f32).broadcast_scalar_to_shape(&[1, 1, nb_df, 2])?;
+            // Compute spectrogram and dnn features
+            let spec = convert_to_mut_complex(spec_buf.as_slice_mut()?);
+            state.analysis(&input, spec);
+            state.erb_feat(&spec, alpha, erb_buf.as_slice_mut()?);
+            state.cplx_feat_clone(
+                &spec[0..nb_df],
+                alpha,
+                convert_to_mut_complex(cplx_buf.as_slice_mut()?),
+            );
+
+            // Run dnn
+            let mut enc_emb = enc.run(tvec!(erb_buf, cplx_buf.permute_axes(&[0, 3, 1, 2])?))?;
+
+            // let feat_erb = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 1, 1, nb_erb])?;
+            // let feat_spec = tensor0(v as f32).broadcast_scalar_to_shape(&[1, 2, 1, nb_df])?;
+
+            let lsnr = enc_emb.pop().unwrap();
+            //dbg!(lsnr.to_scalar::<f32>()?);
+            let c0 = enc_emb.pop().unwrap();
+            let emb = enc_emb.pop().unwrap();
+            //dbg!(emb.shape());
+            let dec_input = tvec!(
+                emb.clone().into_tensor(),
+                enc_emb.pop().unwrap().into_tensor(), // e3
+                enc_emb.pop().unwrap().into_tensor(), // e2
+                enc_emb.pop().unwrap().into_tensor(), // e1
+                enc_emb.pop().unwrap().into_tensor(), // e0
+            );
+            //for x in dec_input.iter() {
+            //    dbg!(x.shape());
+            //}
+            let mut m = dec.run(dec_input)?;
+            let m = m.pop().unwrap().into_tensor().into_shape(&[nb_erb])?;
+            state.apply_mask(spec, m.as_slice()?);
+            state.synthesis(spec, enh_frame.as_slice_mut().unwrap());
+        }
+    }
+    let duration_ms = t0.elapsed().as_millis();
+    let audio_len_ms = noisy.len_of(Axis(1)) as f32 / sr as f32 * 1000.;
+    println!(
+        "Enhanced file in {} ms (RT factor: {})",
+        duration_ms,
+        audio_len_ms / duration_ms as f32
+    );
+    write_wav_arr2("out/enh.wav", enh.view(), sr)?;
 
     Ok(())
+}
+
+pub fn convert_to_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
+    unsafe {
+        let ptr = buffer.as_ptr() as *mut Complex32;
+        let len = buffer.len();
+        std::slice::from_raw_parts_mut(ptr, len / 2)
+    }
+}
+
+pub fn convert_to_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
+    unsafe {
+        let ptr = buffer.as_ptr() as *mut f32;
+        let len = buffer.len();
+        std::slice::from_raw_parts_mut(ptr, len * 2)
+    }
 }
