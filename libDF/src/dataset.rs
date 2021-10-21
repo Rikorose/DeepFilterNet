@@ -21,9 +21,9 @@ use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{augmentations::*, transforms::*, util::*, Complex32, DFState};
+use crate::{augmentations::*, mix_utils::*, transforms::*, util::*, Complex32, DFState};
 
-type Result<T> = std::result::Result<T, DfDatasetError>;
+pub type Result<T> = std::result::Result<T, DfDatasetError>;
 
 #[derive(Error, Debug)]
 pub enum DfDatasetError {
@@ -54,8 +54,12 @@ pub enum DfDatasetError {
     TransformError(#[from] crate::transforms::TransformError),
     #[error("DF Augmentation Error")]
     AugmentationError(#[from] crate::augmentations::AugmentationError),
+    #[error("DF Mix Error")]
+    MixError(#[from] DfMixUtilsError),
     #[error("DF Utils Error")]
-    UtilsError(#[from] crate::util::UtilsError),
+    UtilsError(#[from] UtilsError),
+    #[error("DF Rng Error")]
+    RngError(#[from] RngError),
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Hdf5 Error")]
@@ -75,8 +79,6 @@ pub enum DfDatasetError {
     #[error("Thread Join Error: {0:?}")]
     ThreadJoinError(String),
 }
-
-type Signal = Array2<f32>;
 
 fn one() -> f32 {
     1.
@@ -1011,15 +1013,6 @@ impl Dataset<f32> for TdDataset {
         if speech.len_of(Axis(1)) > self.max_sample_len() {
             speech.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
         }
-        // Apply low pass to the noise as well
-        let noise_low_pass = if max_freq < self.sr / 2 {
-            Some(LpParam {
-                cut_off: max_freq,
-                sr: self.sr,
-            })
-        } else {
-            None
-        };
         let mut ch = speech.len_of(Axis(0));
         let mut len = speech.len_of(Axis(1));
         if len > self.max_samples {
@@ -1075,6 +1068,11 @@ impl Dataset<f32> for TdDataset {
         } else {
             None
         };
+        if max_freq < self.sr / 2 {
+            // Apply low pass (via resampling) to the noise to match speech sampling rate
+            noise = low_pass_resample(&noise, max_freq, self.sr)?;
+            noise.slice_axis_inplace(Axis(1), Slice::from(..len));
+        }
         let (speech, noise, noisy) = mix_audio_signal(
             speech,
             speech_rev,
@@ -1082,7 +1080,6 @@ impl Dataset<f32> for TdDataset {
             snr as f32,
             gain as f32,
             atten.map(|a| a as f32),
-            noise_low_pass,
         )?;
         Ok(Sample {
             speech: speech.into_dyn(),
@@ -1352,101 +1349,6 @@ impl Hdf5Dataset {
     }
 }
 
-struct LpParam {
-    sr: usize,
-    cut_off: usize,
-}
-
-fn combine_noises(
-    ch: usize,
-    len: usize,
-    noises: &mut [Array2<f32>],
-    noise_gains: Option<&[f32]>,
-) -> Result<Signal> {
-    let mut rng = thread_rng()?;
-    // Adjust length of noises to clean length
-    for ns in noises.iter_mut() {
-        loop {
-            if len.checked_sub(ns.len_of(Axis(1))).is_some() {
-                // TODO: Remove this clone if ndarray supports repeat
-                ns.append(Axis(1), ns.clone().view())?;
-            } else {
-                break;
-            }
-        }
-        let too_large = ns.len_of(Axis(1)).checked_sub(len);
-        if let Some(too_large) = too_large {
-            let start: usize = rng.gen_range(0..too_large);
-            ns.slice_collapse(s![.., start..start + len]);
-        }
-    }
-    // Adjust number of noise channels to clean channels
-    for ns in noises.iter_mut() {
-        while ns.len_of(Axis(0)) > ch {
-            ns.remove_index(Axis(0), rng.gen_range(0..ns.len_of(Axis(0))))
-        }
-        while ns.len_of(Axis(0)) < ch {
-            let r = rng.gen_range(0..ns.len_of(Axis(0)));
-            let slc = ns.slice(s![r..r + 1, ..]).to_owned();
-            ns.append(Axis(0), slc.view())?;
-        }
-    }
-    // Apply gain to noises
-    if let Some(ns_gains) = noise_gains {
-        for (ns, &g) in noises.iter_mut().zip(ns_gains) {
-            *ns *= 10f32.powf(g / 20.);
-        }
-    }
-    // Average noises
-    let noise = Array2::zeros((ch, len));
-    let noise = noises.iter().fold(noise, |acc, x| acc + x) / ch as f32;
-    Ok(noise)
-}
-
-fn mix_audio_signal(
-    clean: Array2<f32>,
-    clean_rev: Option<Array2<f32>>,
-    mut noise: Array2<f32>,
-    snr_db: f32,
-    gain_db: f32,
-    atten_db: Option<f32>,
-    noise_resample: Option<LpParam>,
-) -> Result<(Signal, Signal, Signal)> {
-    let len = clean.len_of(Axis(1));
-    if let Some(re) = noise_resample {
-        // Low pass filtering via resampling
-        noise = low_pass_resample(&noise, re.cut_off, re.sr)?;
-        noise.slice_axis_inplace(Axis(1), Slice::from(..len));
-    }
-    // Apply gain to speech
-    let g = 10f32.powf(gain_db / 20.);
-    let mut clean_out = &clean * g;
-    let clean_mix = clean_rev.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
-    // For energy calculation use clean speech to also consider direct-to-reverberant ratio
-    let k = mix_f(clean.view(), noise.view(), snr_db);
-    if let Some(atten_db) = atten_db {
-        // Create a mixture with a higher SNR as target signal
-        let k_target = mix_f(clean.view(), noise.view(), snr_db + atten_db);
-        for (c, &n) in clean_out.iter_mut().zip(noise.iter()) {
-            *c += n * k_target;
-        }
-    }
-    // Create mixture at given SNR
-    noise *= k;
-    let mut mixture = clean_mix + &noise;
-    // Guard against clipping
-    let max = &([&clean_out, &noise, &mixture].iter().map(|x| find_max_abs(x.iter())))
-        .collect::<std::result::Result<Vec<f32>, crate::util::UtilsError>>()?;
-    let max = find_max(max)?;
-    if (max - 1.) > 1e-10 {
-        let f = 1. / (max + 1e-10);
-        clean_out *= f;
-        noise *= f;
-        mixture *= f;
-    }
-    Ok((clean_out, noise, mixture))
-}
-
 fn unpack_pad<Ts, To, F>(mut f: F, samples: &mut [Sample<Ts>], len: usize) -> Result<ArrayD<To>>
 where
     Ts: Data,
@@ -1506,9 +1408,9 @@ mod tests {
         let (clean, noise, noisy) =
             mix_audio_signal(clean, None, noise, 0., 6., None, None).unwrap();
         dbg!(noisy.len());
-        write_wav_iter("../out/clean.wav", clean.iter(), sr, ch)?;
-        write_wav_iter("../out/noise.wav", noise.iter(), sr, ch)?;
-        write_wav_iter("../out/noisy.wav", noisy.iter(), sr, ch)?;
+        write_wav_arr2("../out/clean.wav", clean.view(), sr)?;
+        write_wav_arr2("../out/noise.wav", noise.view(), sr)?;
+        write_wav_arr2("../out/noisy.wav", noisy.view(), sr)?;
         Ok(())
     }
 

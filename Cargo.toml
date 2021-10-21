@@ -3,6 +3,6 @@
 members = [
   "libDF",
   "pyDF",
-  "pyDF-data"
+  "pyDF-data",
   "df-tract"
 ]

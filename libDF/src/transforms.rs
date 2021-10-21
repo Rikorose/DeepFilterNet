@@ -7,6 +7,12 @@ type Result<T> = std::result::Result<T, TransformError>;
 
 #[derive(Error, Debug)]
 pub enum TransformError {
+    #[error("DF UtilsError")]
+    UtilsError(#[from] UtilsError),
+    #[error("DF Rng Error")]
+    RngError(#[from] RngError),
+    #[error("Transform {transform} not initalized: {msg}")]
+    NotInitialized { transform: String, msg: String },
     #[error("DF error: {0}")]
     DfError(String),
     #[error("Ndarray Shape Error")]
