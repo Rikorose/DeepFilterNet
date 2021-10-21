@@ -96,6 +96,8 @@ def main():
     bs: int = config("BATCH_SIZE", 1, int, section="train")
     bs_eval: int = config("BATCH_SIZE_EVAL", 0, int, section="train")
     bs_eval = bs_eval if bs_eval > 0 else bs
+    norm_alpha = get_norm_alpha()
+    config.set("DF", "norm_alpha", norm_alpha, float)
     dataloader = DataLoader(
         ds_dir=args.data_dir,
         ds_config=args.data_config_file,
@@ -109,7 +111,7 @@ def main():
         hop_size=p.hop_size,
         nb_erb=p.nb_erb,
         nb_spec=p.nb_df,
-        norm_alpha=get_norm_alpha(),
+        norm_alpha=norm_alpha,
         p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
         prefetch=10,
