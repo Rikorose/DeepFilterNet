@@ -11,7 +11,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "df-tract"
 path = "src/bin/df-tract.rs"
-required-features = ["dnn", "dataset"]
+required-features = ["dnn"]
 
 [features]
 default = []
@@ -37,10 +37,10 @@ serde_json = { version="1.0", optional=true }
 serde = { version = "1.0", features = ["derive"], optional=true }
 lewton = { version = "^0.10", optional=true }
 ogg = { version = "^0.8", optional=true }
-tract-core = { git="https://github.com/sonos/tract/", rev="c597702", optional=true }
-tract-onnx = { git="https://github.com/sonos/tract/", rev="c597702", optional=true }
-tract-pulse = { git="https://github.com/sonos/tract/", rev="c597702", optional=true }
-tract-hir = { git="https://github.com/sonos/tract/", rev="c597702", optional=true }
+tract-core = { version="^0.15.4", optional=true }
+tract-onnx = { version="^0.15.4", optional=true }
+tract-pulse = { version="^0.15.4", optional=true }
+tract-hir = { version="^0.15.4", optional=true }
 rust-ini = { version="^0.17", optional=true }
 anyhow = { version="^1.0", optional=true }
 
