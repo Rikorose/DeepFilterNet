@@ -48,16 +48,16 @@ def main():
     checkpoint_dir = os.path.join(args.model_base_dir, "checkpoints")
     model, _ = load_model(checkpoint_dir, df_state)
     model = model.to(get_device())
-    model_n = os.path.basename(os.path.abspath(args.model_base_dir))
     logger.info("Model loaded")
     if not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
-    suffix = "DeepFilterNet"
+    # Set suffix to model name
+    suffix = os.path.basename(os.path.abspath(args.model_base_dir))
     if args.pf:
         suffix += "_pf"
     for file in args.noisy_audio_files:
         audio = enhance(model, df_state, file, log=True)
-        save_audio(file, audio, p.sr, args.output_dir, model_n, log=True)
+        save_audio(file, audio, p.sr, args.output_dir, log=True, suffix=suffix)
 
 
 def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Tensor]:
@@ -65,9 +65,9 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     spec = df.analysis(audio.numpy())  # [C, Tf] -> [C, Tf, F]
     a = get_norm_alpha(False)
     erb_fb = df.erb_widths()
-    erb_feat = torch.as_tensor(erb_norm(erb(spec, erb_fb), a)).unsqueeze(0)
-    spec_feat = as_real(torch.as_tensor(unit_norm(spec[..., : p.nb_df], a)).unsqueeze(0))
-    spec = as_real(torch.as_tensor(spec).unsqueeze(0))
+    erb_feat = torch.as_tensor(erb_norm(erb(spec, erb_fb), a)).unsqueeze(1)
+    spec_feat = as_real(torch.as_tensor(unit_norm(spec[..., : p.nb_df], a)).unsqueeze(1))
+    spec = as_real(torch.as_tensor(spec).unsqueeze(1))
     if device is not None:
         spec = spec.to(device)
         erb_feat = erb_feat.to(device)
@@ -97,9 +97,10 @@ def save_audio(
 def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False):
     p = ModelParams()
     model.eval()
-    if hasattr(model, "reset_h0"):
-        model.reset_h0(batch_size=1, device=get_device())
     audio, sr = torchaudio.load(file)
+    bs = audio.shape[0]
+    if hasattr(model, "reset_h0"):
+        model.reset_h0(batch_size=bs, device=get_device())
     t_audio = audio.shape[-1] / sr
     if sr != p.sr:
         warnings.warn(
@@ -110,7 +111,7 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False):
     spec, erb_feat, spec_feat = df_features(audio, df_state, device=get_device())
     spec = model(spec, erb_feat, spec_feat)[0].cpu()
     t1 = time.time()
-    audio = df_state.synthesis(as_complex(spec.squeeze(0)).numpy())
+    audio = df_state.synthesis(as_complex(spec.squeeze(1)).numpy())
     t = t1 - t0
     rtf = t_audio / t
     if log:

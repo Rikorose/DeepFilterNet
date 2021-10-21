@@ -742,10 +742,16 @@ pub fn erb_norm(
     // state shape: [C, F]
     let mut state = state.unwrap_or_else(|| {
         let b = input.len_of(Axis(2));
-        Array1::<f32>::linspace(MEAN_NORM_INIT[0], MEAN_NORM_INIT[1], b)
+        let state_ch0=Array1::<f32>::linspace(MEAN_NORM_INIT[0], MEAN_NORM_INIT[1], b)
             .into_shape([1, b])
-            .unwrap()
+            .unwrap();
+        let mut state = state_ch0.clone();
+        for _ in 1..input.len_of(Axis(0)) {
+            state.append(Axis(0), state_ch0.view()).unwrap()
+        }
+        state
     });
+    debug_assert_eq!(state.len_of(Axis(0)), input.len_of(Axis(0)));
     for (mut in_ch, mut s_ch) in input.outer_iter_mut().zip(state.outer_iter_mut()) {
         for mut in_step in in_ch.outer_iter_mut() {
             band_mean_norm_erb(
