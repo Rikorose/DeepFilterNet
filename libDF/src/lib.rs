@@ -180,7 +180,6 @@ impl DFState {
         for i in 0..nb_erb {
             state.push(min + i as f32 * step);
         }
-        dbg!(state.first(), state.last());
         self.mean_norm_state = state;
     }
     pub fn init_unit_norm_state(&mut self, nb_freqs: usize) {
@@ -191,7 +190,6 @@ impl DFState {
         for i in 0..nb_freqs {
             state.push(min + i as f32 * step);
         }
-        dbg!(state.first(), state.last());
         self.unit_norm_state = state;
     }
 
@@ -212,7 +210,10 @@ impl DFState {
         band_unit_norm(output, &mut self.unit_norm_state, alpha)
     }
 
-    pub fn apply_mask(&mut self, output: &mut [Complex32], gains: &[f32]) {
+    pub fn apply_mask(&mut self, output: &mut [Complex32], gains: &mut [f32], pf: bool) {
+        if pf {
+            post_filter(gains);
+        }
         apply_interp_band_gain(output, gains, &self.erb)
     }
 }
@@ -408,6 +409,24 @@ where
     for (x, &w) in xs.iter_mut().zip(window) {
         *x *= w;
     }
+}
+
+pub fn post_filter(gains: &mut [f32]) {
+    debug_assert!(gains.len() % 4 == 0);
+    let beta = 0.02f32;
+    let eps = 1e-12;
+    let pi = std::f32::consts::PI;
+    // Run in efficient size-4 chunks
+    let mut g_sin = [0.0; 4];
+    for g in gains.chunks_exact_mut(4) {
+        g_sin[0] = (g[0] * (g[0] * pi / 2.0).sin()).max(eps);
+        g_sin[1] = (g[1] * (g[1] * pi / 2.0).sin()).max(eps);
+        g_sin[2] = (g[2] * (g[2] * pi / 2.0).sin()).max(eps);
+        g_sin[3] = (g[3] * (g[3] * pi / 2.0).sin()).max(eps);
+        g[0] = (1.0 + beta) * g[0] / (1.0 + beta * (g[0] / g_sin[0]).powi(2));
+        g[1] = (1.0 + beta) * g[1] / (1.0 + beta * (g[1] / g_sin[1]).powi(2));
+        g[2] = (1.0 + beta) * g[2] / (1.0 + beta * (g[2] / g_sin[2]).powi(2));
+        g[3] = (1.0 + beta) * g[3] / (1.0 + beta * (g[3] / g_sin[3]).powi(2));
 }
 
 #[cfg(test)]
