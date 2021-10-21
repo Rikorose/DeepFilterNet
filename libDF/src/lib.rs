@@ -46,6 +46,8 @@ pub struct DFState {
     analysis_scratch: Vec<Complex32>,
     synthesis_mem: Vec<f32>,
     synthesis_scratch: Vec<Complex32>,
+    mean_norm_state: Vec<f32>,
+    unit_norm_state: Vec<f32>,
 }
 
 pub fn erb_fb(sr: usize, fft_size: usize, nb_bands: usize, min_nb_freqs: usize) -> Vec<usize> {
@@ -114,6 +116,8 @@ impl DFState {
         }
         let wnorm =
             1_f32 / window.iter().map(|x| x * x).sum::<f32>() * frame_size as f32 / fft_size as f32;
+        let mean_norm_state = Vec::new();
+        let unit_norm_state = Vec::new();
 
         DFState {
             sr,
@@ -129,12 +133,21 @@ impl DFState {
             synthesis_scratch,
             window,
             wnorm,
+            mean_norm_state,
+            unit_norm_state,
         }
     }
 
     pub fn reset(&mut self) {
         self.analysis_mem.fill(0.);
         self.synthesis_mem.fill(0.);
+        if !self.mean_norm_state.is_empty() {
+            self.init_mean_norm_state();
+        }
+        let nb_freqs = self.unit_norm_state.len();
+        if nb_freqs > 0 {
+            self.init_unit_norm_state(nb_freqs);
+        }
     }
 
     pub fn process_frame(&mut self, input: &[f32], output: &mut [f32]) {
@@ -151,6 +164,56 @@ impl DFState {
     pub fn synthesis(&mut self, input: &mut [Complex32], output: &mut [f32]) {
         debug_assert_eq!(output.len(), self.frame_size);
         frame_synthesis(input, output, self)
+    }
+
+    pub fn init_norm_states(&mut self, nb_df_freqs: usize) {
+        self.init_mean_norm_state();
+        self.init_unit_norm_state(nb_df_freqs);
+    }
+
+    pub fn init_mean_norm_state(&mut self) {
+        let min = MEAN_NORM_INIT[0];
+        let max = MEAN_NORM_INIT[1];
+        let nb_erb = self.erb.len();
+        let step = (max - min) / (nb_erb - 1) as f32;
+        let mut state = Vec::with_capacity(nb_erb);
+        for i in 0..nb_erb {
+            state.push(min + i as f32 * step);
+        }
+        dbg!(state.first(), state.last());
+        self.mean_norm_state = state;
+    }
+    pub fn init_unit_norm_state(&mut self, nb_freqs: usize) {
+        let min = UNIT_NORM_INIT[0];
+        let max = UNIT_NORM_INIT[1];
+        let step = (max - min) / (nb_freqs - 1) as f32;
+        let mut state = Vec::with_capacity(nb_freqs);
+        for i in 0..nb_freqs {
+            state.push(min + i as f32 * step);
+        }
+        dbg!(state.first(), state.last());
+        self.unit_norm_state = state;
+    }
+
+    pub fn erb_feat(&mut self, input: &[Complex32], alpha: f32, output: &mut [f32]) {
+        compute_band_corr(output, &input, &input, &self.erb); // ERB FB
+        for o in output.iter_mut() {
+            *o = (*o + 1e-10).log10() * 10.;
+        }
+        band_mean_norm_erb(output, &mut self.mean_norm_state, alpha); // Exponential mean norm
+    }
+
+    pub fn cplx_feat(&mut self, input: &mut [Complex32], alpha: f32) {
+        band_unit_norm(input, &mut self.unit_norm_state, alpha)
+    }
+
+    pub fn cplx_feat_clone(&mut self, input: &[Complex32], alpha: f32, output: &mut [Complex32]) {
+        output.clone_from_slice(input);
+        band_unit_norm(output, &mut self.unit_norm_state, alpha)
+    }
+
+    pub fn apply_mask(&mut self, output: &mut [Complex32], gains: &[f32]) {
+        apply_interp_band_gain(output, gains, &self.erb)
     }
 }
 
@@ -221,7 +284,7 @@ pub fn band_compr(out: &mut [f32], x: &[f32], erb_fb: &[usize]) {
     }
 }
 
-fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], erb_fb: &[usize])
+pub fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], erb_fb: &[usize])
 where
     T: MulAssign<f32>,
 {
