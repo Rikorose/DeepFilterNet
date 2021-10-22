@@ -3,10 +3,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use df::mix_utils::{combine_noises, mix_audio_signal};
-use df::rng::seed_from_u64;
-use df::{apply_interp_band_gain, DFState};
-use df::{wav_utils::*, Complex32};
+use df::{wav_utils::*, Complex32, DFState};
 use ini::Ini;
 use ndarray::prelude::*;
 use ndarray::Axis;
@@ -217,14 +214,8 @@ fn main() -> Result<()> {
     let mut dec = SimpleState::new(
         init_decoder(&exp_dir.join("dec.onnx"), model_cfg, df_cfg)?.into_runnable()?,
     )?;
-    let mut dfrnn = SimpleState::new(
+    let mut df_net = SimpleState::new(
         init_dfmodule(&exp_dir.join("dfnet.onnx"), model_cfg, df_cfg)?
-            .into_typed()?
-            .into_optimized()?
-            .into_runnable()?,
-    )?;
-    let mut df_delay = SimpleState::new(
-        init_dfop_delayspec(&exp_dir.join("dfop_delayspec.onnx"), df_cfg)?
             .into_typed()?
             .into_optimized()?
             .into_runnable()?,
@@ -242,9 +233,13 @@ fn main() -> Result<()> {
     let nb_freq_bins = fft_size / 2 + 1;
     let df_order = model_cfg.get("df_order").unwrap().parse::<usize>()?;
     let alpha = df_cfg.get("norm_alpha").unwrap().parse::<f32>()?;
+    let min_db = df_cfg.get("min_db").unwrap().parse::<f32>()?;
+    let clamp_min = 10f32.powf(min_db / 20.0);
+    assert!(clamp_min < 1.0);
+    dbg!(clamp_min);
 
     let reader = ReadWav::new("assets/noisy_snr0_mono.wav")?;
-    let sr = reader.sr as u32;
+    assert_eq!(sr, reader.sr);
     let noisy = reader.samples_arr2()?;
     let mut enh: Array2<f32> = ArrayD::default(noisy.shape()).into_dimensionality()?;
 
@@ -252,7 +247,9 @@ fn main() -> Result<()> {
     let mut spec_buf = tensor0(0f32).broadcast_scalar_to_shape(&[nb_freq_bins, 2])?;
     let mut erb_buf = tensor0(0f32).broadcast_scalar_to_shape(&[1, 1, 1, nb_erb])?;
     let mut cplx_buf = tensor0(0f32).broadcast_scalar_to_shape(&[1, 1, nb_df, 2])?;
-    let mut m_zeros = vec![0f32; nb_erb];
+    let mut m_zeros = vec![clamp_min; nb_erb];
+    let mut rolling_spec_buf =
+        tensor0(0f32).broadcast_scalar_to_shape(&[df_order, nb_freq_bins, 2])?;
 
     let ch = noisy.len_of(Axis(0));
     let mut states = Vec::with_capacity(ch);
@@ -298,10 +295,9 @@ fn main() -> Result<()> {
             ))?;
 
             let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
-            if i == 0 || lsnr < -12.5 {
+            if i == 0 || lsnr < -10. {
                 state.apply_mask(spec, &mut m_zeros, false);
             } else {
-                //dbg!(lsnr.to_scalar::<f32>()?);
                 let c0 = enc_emb.pop().unwrap();
                 let emb = enc_emb.pop().unwrap();
                 //dbg!(emb.shape());
@@ -315,8 +311,25 @@ fn main() -> Result<()> {
                 let mut m = dec.run(dec_input)?;
                 let mut m = m.pop().unwrap().into_tensor().into_shape(&[nb_erb])?;
                 state.apply_mask(spec, m.as_slice_mut()?, true);
+                if lsnr < 20.0 {
+                    // Run Deep Filter Module
+                    let mut df = df_net.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
+                    let alpha = df.pop().unwrap();
+                    let coefs = df.pop().unwrap();
+                    let mut out = df_step.run(tvec!(
+                        spec_buf.clone(),
+                        coefs.into_tensor().into_shape(&[df_order, nb_df, 2])?,
+                        alpha.into_tensor().into_shape(&[1])?,
+                        rolling_spec_buf,
+                    ))?;
+                    rolling_spec_buf = out.pop().unwrap().into_tensor();
+                    spec_buf = out.pop().unwrap().into_tensor();
+                }
             }
-            state.synthesis(spec, enh_frame.as_slice_mut().unwrap());
+            state.synthesis(
+                convert_to_mut_complex(spec_buf.as_slice_mut()?),
+                enh_frame.as_slice_mut().unwrap(),
+            );
         }
         i += 1;
     }
@@ -327,7 +340,7 @@ fn main() -> Result<()> {
         duration_ms,
         audio_len_ms / duration_ms as f32
     );
-    write_wav_arr2("out/enh.wav", enh.view(), sr)?;
+    write_wav_arr2("out/enh.wav", enh.view(), sr as u32)?;
 
     Ok(())
 }
