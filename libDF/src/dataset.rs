@@ -699,7 +699,6 @@ impl<'a> DatasetBuilder<'a> {
         if self.datasets.is_empty() {
             panic!("No datasets provided")
         }
-        let _e = hdf5_silence_errors();
         let max_samples: usize = (self.max_len_s.unwrap_or(10.) * self.sr as f32).round() as usize;
         let mut hdf5_handles = Vec::new();
         let mut sp_keys: Vec<(usize, String)> = Vec::new();
@@ -1170,7 +1169,6 @@ fn get_dstype(file: &File) -> Option<DsType> {
 
 impl Hdf5Dataset {
     fn new(path: &str) -> Result<Self> {
-        let _s = hdf5::silence_errors();
         let file = File::open(path)?;
         match get_dstype(&file) {
             None => Err(DfDatasetError::Hdf5DsTypeNotFoundError),
