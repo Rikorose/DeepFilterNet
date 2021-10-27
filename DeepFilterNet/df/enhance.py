@@ -2,11 +2,12 @@ import argparse
 import os
 import time
 import warnings
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torchaudio
 from loguru import logger
+from numpy import ndarray
 from torch import Tensor, nn
 
 from df import DF, config, erb, erb_norm, unit_norm
@@ -77,20 +78,27 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
 
 def save_audio(
     file: str,
-    audio: Tensor,
+    audio: Union[Tensor, ndarray],
     sr: int,
     output_dir: Optional[str] = None,
-    suffix: str = "enhanced",
+    suffix: str = None,
     log: bool = False,
 ):
-    file, ext = os.path.splitext(file)
-    outpath = file + f"_{suffix}" + ext
+    outpath = file
+    if suffix is not None:
+        file, ext = os.path.splitext(file)
+        outpath = file + f"_{suffix}" + ext
     if output_dir is not None:
         outpath = os.path.join(output_dir, os.path.basename(outpath))
     if log:
         logger.info(f"Saving audio file '{outpath}'")
+    audio = torch.as_tensor(audio)
+    if audio.ndim == 1:
+        audio.unsqueeze_(0)
+    if audio.dtype != torch.int16:
+        audio = (audio * (1 << 15)).to(torch.int16)
 
-    torchaudio.save(outpath, torch.as_tensor(audio), sr)
+    torchaudio.save(outpath, audio, sr)
 
 
 @torch.no_grad()
