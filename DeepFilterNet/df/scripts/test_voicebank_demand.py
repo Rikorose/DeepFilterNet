@@ -1,10 +1,11 @@
 import argparse
 import glob
 import os
+import tempfile
 
 import numpy as np
-import pesq as pypesq
 import pystoi
+import semetrics
 import torch
 import torchaudio
 from loguru import logger
@@ -58,10 +59,10 @@ def main():
     os.makedirs(enh_dir, exist_ok=True)
     enh_stoi = []
     noisy_stoi = []
-    enh_pesq = []
-    noisy_pesq = []
-    enh_sdr = []
-    noisy_sdr = []
+    enh_sisdr = []
+    noisy_sisdr = []
+    enh_comp = []
+    noisy_comp = []
     for noisyfn, cleanfn in zip(glob.iglob(noisy_dir + "/*wav"), glob.iglob(clean_dir + "/*wav")):
         noisy, sr = torchaudio.load(noisyfn)
         clean, sr = torchaudio.load(cleanfn)
@@ -73,27 +74,47 @@ def main():
         noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
         enh_stoi.append(stoi(clean, enh, sr))
         noisy_stoi.append(stoi(clean, noisy, sr))
-        enh_pesq.append(pesq(clean, enh, sr))
-        noisy_pesq.append(pesq(clean, noisy, sr))
-        enh_sdr.append(si_sdr_speechmetrics(clean, enh))
-        noisy_sdr.append(si_sdr_speechmetrics(clean, noisy))
+        enh_sisdr.append(si_sdr_speechmetrics(clean, enh))
+        noisy_sisdr.append(si_sdr_speechmetrics(clean, noisy))
+        noisy_comp.append(composite(clean, noisy, sr))
+        enh_comp.append(composite(clean, enh, sr))
         if args.verbose:
-            print(cleanfn, enh_stoi[-1], enh_pesq[-1], enh_sdr[-1])
+            print(cleanfn, enh_stoi[-1], enh_comp[-1], enh_sisdr[-1])
         enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
         save_audio(
             os.path.basename(cleanfn),
             enh,
             p.sr,
             output_dir=enh_dir,
-            suffix=f"{model_n}_{enh_pesq[-1]:.3f}",
+            suffix=f"{model_n}_{enh_comp[-1][0]:.3f}",
             log=args.verbose,
         )
     logger.info(f"noisy stoi: {np.mean(noisy_stoi)}")
     logger.info(f"enhanced stoi: {np.mean(enh_stoi)}")
+    noisy_comp = np.stack(noisy_comp)
+    enh_comp = np.stack(enh_comp)
+    noisy_pesq = np.mean(noisy_comp[:, 0])
+    noisy_csig = np.mean(noisy_comp[:, 1])
+    noisy_cbak = np.mean(noisy_comp[:, 2])
+    noisy_covl = np.mean(noisy_comp[:, 3])
+    noisy_ssnr = np.mean(noisy_comp[:, 4])
+    enh_pesq = np.mean(enh_comp[:, 0])
+    enh_csig = np.mean(enh_comp[:, 1])
+    enh_cbak = np.mean(enh_comp[:, 2])
+    enh_covl = np.mean(enh_comp[:, 3])
+    enh_ssnr = np.mean(enh_comp[:, 4])
     logger.info(f"noisy pesq: {np.mean(noisy_pesq)}")
     logger.info(f"enhanced pesq: {np.mean(enh_pesq)}")
-    logger.info(f"noisy sdr: {np.mean(noisy_sdr)}")
-    logger.info(f"enhanced sdr: {np.mean(enh_sdr)}")
+    logger.info(f"noisy csig: {np.mean(noisy_csig)}")
+    logger.info(f"enhanced csig: {np.mean(enh_csig)}")
+    logger.info(f"noisy cbak: {np.mean(noisy_cbak)}")
+    logger.info(f"enhanced cbak: {np.mean(enh_cbak)}")
+    logger.info(f"noisy covl: {np.mean(noisy_covl)}")
+    logger.info(f"enhanced covl: {np.mean(enh_covl)}")
+    logger.info(f"noisy ssnr: {np.mean(noisy_ssnr)}")
+    logger.info(f"enhanced ssnr: {np.mean(enh_ssnr)}")
+    logger.info(f"noisy sisdr: {np.mean(noisy_sisdr)}")
+    logger.info(f"enhanced sisdr: {np.mean(enh_sisdr)}")
 
 
 def stoi(clean, degraded, sr, extended=False):
@@ -104,12 +125,20 @@ def stoi(clean, degraded, sr, extended=False):
     return pystoi.stoi(clean, degraded, sr, extended=extended)
 
 
-def pesq(clean, degraded, sr, mode="wb"):
+def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
+    """Compute pesq, csig, cbak, covl, ssnr"""
     if sr != 16000:
         clean = resample_oct(clean, 16000, sr)
         degraded = resample_oct(degraded, 16000, sr)
         sr = 16000
-    return pypesq.pesq(sr, clean, degraded, mode)
+    cf = tempfile.NamedTemporaryFile(suffix=".wav")
+    save_audio(cf.name, clean, sr)
+    nf = tempfile.NamedTemporaryFile(suffix=".wav")
+    save_audio(nf.name, degraded, sr)
+    c = semetrics.composite(cf.name, nf.name)
+    cf.close()
+    nf.close()
+    return np.asarray(c)
 
 
 @torch.no_grad()
