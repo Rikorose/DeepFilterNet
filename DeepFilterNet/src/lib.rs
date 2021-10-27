@@ -527,7 +527,6 @@ impl _FdDataLoader {
             dl_builder = dl_builder.overfit(overfit);
         }
         let loader = dl_builder.build().to_py_err()?;
-        let _e = df::dataset::hdf5_silence_errors();
         Ok(_FdDataLoader { loader })
     }
 

@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-pub use hdf5::silence_errors as hdf5_silence_errors;
 use hdf5::{types::VarLenUnicode, File};
 use lewton::inside_ogg::OggStreamReader;
 use ndarray::prelude::*;
@@ -1554,7 +1553,6 @@ mod tests {
     #[test]
     pub fn test_data_loader() -> Result<()> {
         println!("******** Start test_data_loader() ********");
-        let _e = hdf5::silence_errors();
         seed_from_u64(42);
         let batch_size = 1;
         let sr = 48000;
@@ -1607,7 +1605,6 @@ mod tests {
     #[test]
     pub fn test_fft_dataset() -> Result<()> {
         println!("******** Start test_data_loader() ********");
-        let _e = hdf5::silence_errors();
         seed_from_u64(42);
         let batch_size = 2;
         let fft_size = 960;
