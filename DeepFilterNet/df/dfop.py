@@ -328,14 +328,19 @@ class DfOpTimeLoop(nn.Module):
 
 class DfDelaySpec(nn.Module):
     lookahead: Final[int]
+    delay: Final[int]
 
-    def __init__(self, lookahead: int):
+    def __init__(self, lookahead: int = None, delay: int = None):
         super().__init__()
-        self.lookahead = lookahead
+        self.lookahead = lookahead or 0
+        self.delay = delay or 0
 
     def forward(self, spec: Tensor) -> Tensor:
         # Takes a spectrogram, delays it for `lookahead` steps and initializes the spec buffer.
-        return df_delay_spec(spec, self.lookahead)
+        # spec shape: [T, F, 2]
+        assert spec.ndim == 3 and spec.size(2) == 2
+        out = F.pad(spec, (0, 0, 0, 0, self.delay, self.lookahead))
+        return out
 
 
 class DfOpInitSpecBuf(nn.Module):

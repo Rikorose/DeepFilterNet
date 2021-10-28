@@ -154,6 +154,7 @@ fn init_dfop_delayspec(dfopinit: &Path, df_cfg: &ini::Properties) -> Result<Puls
     dfopinit.analyse(true)?;
     let dfopinit = dfopinit.into_typed()?;
     let dfopinit = dfopinit.declutter()?;
+    dbg!(&dfopinit);
     let pulsed = PulsedModel::new(&dfopinit, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     println!("Init dfop delay with delay: {}", delay);
@@ -216,6 +217,12 @@ fn main() -> Result<()> {
     )?;
     let mut df_net = SimpleState::new(
         init_dfmodule(&exp_dir.join("dfnet.onnx"), model_cfg, df_cfg)?
+            .into_typed()?
+            .into_optimized()?
+            .into_runnable()?,
+    )?;
+    let mut spec_delay = SimpleState::new(
+        init_dfop_delayspec(&exp_dir.join("dfop_delayspec.onnx"), df_cfg)?
             .into_typed()?
             .into_optimized()?
             .into_runnable()?,
@@ -295,11 +302,11 @@ fn main() -> Result<()> {
             ))?;
 
             let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
-            if i == 0 || lsnr < -10. {
+            let c0 = enc_emb.pop().unwrap();
+            let emb = enc_emb.pop().unwrap();
+            if i == 0 || lsnr < -15. {
                 state.apply_mask(spec, &mut m_zeros, false);
             } else {
-                let c0 = enc_emb.pop().unwrap();
-                let emb = enc_emb.pop().unwrap();
                 //dbg!(emb.shape());
                 let dec_input = tvec!(
                     emb.clone().into_tensor(),
@@ -311,20 +318,39 @@ fn main() -> Result<()> {
                 let mut m = dec.run(dec_input)?;
                 let mut m = m.pop().unwrap().into_tensor().into_shape(&[nb_erb])?;
                 state.apply_mask(spec, m.as_slice_mut()?, true);
-                if lsnr < 20.0 {
-                    // Run Deep Filter Module
-                    let mut df = df_net.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
-                    let alpha = df.pop().unwrap();
-                    let coefs = df.pop().unwrap();
-                    let mut out = df_step.run(tvec!(
-                        spec_buf.clone(),
-                        coefs.into_tensor().into_shape(&[df_order, nb_df, 2])?,
-                        alpha.into_tensor().into_shape(&[1])?,
-                        rolling_spec_buf,
-                    ))?;
-                    rolling_spec_buf = out.pop().unwrap().into_tensor();
-                    spec_buf = out.pop().unwrap().into_tensor();
-                }
+            }
+            spec_buf = spec_delay
+                .run(tvec!(spec_buf.clone().into_shape(&[1, nb_freq_bins, 2])?))?
+                .pop()
+                .unwrap()
+                .into_tensor();
+            if lsnr < 30.0 {
+                // Run Deep Filter Module
+                let mut df = df_net.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
+                let alpha = df.pop().unwrap();
+                let coefs = df.pop().unwrap();
+                //dbg!(spec_buf.shape());
+                //println!(
+                //    "{}, {}",
+                //    spec_buf.as_slice()?.iter().sum::<f32>(),
+                //    alpha.to_scalar::<f32>()?
+                //);
+                //if i < 15 {
+                //    dbg!(spec_buf.as_slice()?.iter().sum::<f32>());
+                //    dbg!(spec_d.as_slice()?.iter().sum::<f32>());
+                //    dbg!(spec_buf.as_slice()?.iter().sum::<f32>());
+                //    dbg!(alpha.to_scalar::<f32>()?);
+                //}
+                let mut out = df_step.run(tvec!(
+                    spec_buf.into_shape(&[nb_freq_bins, 2])?,
+                    coefs.into_tensor().into_shape(&[df_order, nb_df, 2])?,
+                    //alpha.into_tensor().into_shape(&[1])?,
+                    tensor0(1f32).broadcast_scalar_to_shape(&[1])?,
+                    rolling_spec_buf,
+                ))?;
+                rolling_spec_buf = out.pop().unwrap().into_tensor();
+                spec_buf = out.pop().unwrap().into_tensor();
+                //println!("{}", spec_buf.as_slice()?.iter().sum::<f32>());
             }
             state.synthesis(
                 convert_to_mut_complex(spec_buf.as_slice_mut()?),

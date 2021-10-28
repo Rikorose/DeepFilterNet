@@ -4,14 +4,14 @@ import os
 import onnx
 import onnxruntime
 import torch
-import torchaudio
 from icecream import ic
 
 from df import DF, config
-from df.dfop import DfDelaySpec, DfOpInitSpecBuf, DfOpTimeLoop, DfOpTimeStep, get_df_op
+from df.dfop import DfDelaySpec, DfOpInitSpecBuf, DfOpTimeStep
 from df.enhance import df_features
 from df.logger import init_logger
 from df.model import ModelParams
+from df.modules import Mask, erb_fb
 from df.train import load_model
 
 icolnames = ("input_size", "output_size", "num_params", "kernel_size", "mult_adds")
@@ -119,6 +119,29 @@ def export(
     )
     torch.testing.assert_allclose(m, out[0])
 
+    print("exporting mask op")
+    erb_inverse = erb_fb(state.erb_widths(), p.sr, inverse=True)
+    mask_op = Mask(erb_inverse, post_filter=p.mask_pf, delay_spec=p.conv_lookahead)
+    # mask_op = torch.jit.script(mask_op)
+    args = (spec, m)
+    spec_m = mask_op(*args)
+    ic(spec.shape, m.shape, spec_m.shape)
+    torch.onnx.export(
+        model=mask_op,
+        args=args,
+        input_names=["spec", "m"],
+        f=os.path.join(output_dir, "mask_op.onnx"),
+        do_constant_folding=constant_folding,
+        opset_version=opset_version,
+        output_names=["spec_m"],
+        dynamic_axes={
+            "spec": {2: "time"},
+            "m": {2: "time"},
+            "spec_m": {2: "time"},
+        },
+        verbose=False,
+    )
+
     print("exporting dfnet")
     args = (emb, c0)
     coefs, alpha = net.df_dec(*args)
@@ -169,9 +192,17 @@ def export(
     #     },
     #     verbose=False,
     # )
-    dfop_delayspec = DfDelaySpec(p.df_lookahead)
+
+    # dfop_delayspec = DfDelaySpec(lookahead=p.df_lookahead)
+    # This needs to be set in for the torch.assert_allclose condition later.
+    # However in tract, we cannot front-pad the spectrogram for the delay introduced in the
+    # convolutions. In general, we are not able to frontpad since we imediatly get new gains, coefs
+    # etc. Thus we need to delay the overall introduced delay consider this delay.
+    delay = max(p.conv_lookahead, p.df_lookahead)
+    delay = p.df_lookahead
+    ic(delay)
+    dfop_delayspec = DfDelaySpec(delay=delay)
     spec_d = dfop_delayspec(spec[0, 0])
-    ic(spec.shape, spec_d.shape)
     torch.onnx.export(
         model=dfop_delayspec,
         args=spec[0, 0],
@@ -206,10 +237,11 @@ def export(
     dfop_step = DfOpTimeStep(p.df_order, p.df_lookahead, p.nb_df, p.fft_size // 2 + 1)
     dfop_step = torch.jit.script(dfop_step)
     spec_f = torch.zeros_like(spec)
+    ic(spec_d.shape, spec.shape)
     for t in range(spec.shape[2]):
         args = [spec_d[t + p.df_lookahead], coefs[0, t], alpha[0, t], spec_buf]
         spec_f[:, :, t], spec_buf = dfop_step(*args)
-    # torch.testing.assert_allclose(spec_f_net, spec_f)
+    # This will only hold if the delay op is changed as explained above.
     ic(torch.allclose(spec_f, spec_f_net))
     for arg in args:
         ic(arg.shape)
@@ -232,7 +264,7 @@ def export(
     sess = onnxruntime.InferenceSession(os.path.join(output_dir, "dfop_step.onnx"))
     spec_d = dfop_delayspec(spec[0, 0])
     spec_buf = dfop_initbuf(spec[0, 0]).numpy()
-    for t in range(spec.shape[2]):
+    for t in range(spec.shape[2] - p.df_lookahead):
         out = sess.run(
             ("spec_f", "spec_buf"),
             {
