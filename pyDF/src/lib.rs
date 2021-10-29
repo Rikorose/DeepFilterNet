@@ -114,7 +114,7 @@ impl DF {
 }
 
 #[pymodule]
-fn _libdf(_py: Python, m: &PyModule) -> PyResult<()> {
+fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<DF>()?;
 
     #[pyfn(m)]
