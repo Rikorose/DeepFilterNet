@@ -25,7 +25,7 @@ jobs:
      - uses: actions/upload-artifact@v1
        with:
          name: linux-libdf-wheels
-         path: target/wheels/
+         path: wheelhouse/
 
   linux-libdfdata-wheels:
     runs-on: ubuntu-latest
@@ -43,4 +43,4 @@ jobs:
      - uses: actions/upload-artifact@v1
        with:
          name: linux-libdfdata-wheels
-         path: target/wheels/
+         path: wheelhouse/
