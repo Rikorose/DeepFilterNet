@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 import torch
 from torch import Tensor, nn
 
-from df import DF
+from libdf import DF
 from df.config import DfParams, config
 from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
 

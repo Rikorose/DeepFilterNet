@@ -11,10 +11,8 @@ from torch import Tensor, nn
 from torch.optim import Adam, AdamW, Optimizer, RMSprop
 from torch.types import Number
 
-from df import DF
 from df.checkpoint import read_cp, write_cp
 from df.config import Csv, config
-from df.dataloader import DataLoader
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
 from df.model import ModelParams, init_model
@@ -29,6 +27,8 @@ from df.utils import (
     get_norm_alpha,
     make_np,
 )
+from libdf import DF
+from libdfdata import PytorchDataLoader as DataLoader
 
 should_stop = False
 debug = False
