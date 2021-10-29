@@ -17,6 +17,12 @@ jobs:
         python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
     steps:
      - uses: actions/checkout@v1
+     - name: Cache Primes
+       id: cache-primes
+       uses: actions/cache@v2
+       with:
+         path: target
+         key: ${{ runner.os }}-target
      - name: Build wheels
        run: |
          curl https://sh.rustup.rs -sSf | sh -s -- -y
