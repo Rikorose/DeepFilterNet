@@ -1,19 +1,39 @@
-[project]
-dependencies = ["DeepFilterLib >= 0.1", "numpy >= 1.20", "torch >= 1.8", "torchaudio >= 0.8", "loguru >= 0.5"]
+[tool.poetry]
+name = "DeepFilterNet"
+version = "0.1.0"
+description = "Noise supression using deep filtering"
+authors = ["Hendrik Schröter"]
+repository = "https://github.com/Rikorose/DeepFilterNet"
+keywords = ["noise reduction", "neural network"]
+classifiers = [
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+  "Topic :: Utilities"
+]
+license = "MIT"
+packages = [{ include = "df" }]
+include = [
+  { path = "pretrained_models/DeepFilterNet/config.ini", format="wheel" },
+  { path = "pretrained_models/DeepFilterNet/checkpoints/", format="wheel" },
+]
 
-[project.optional-dependencies]
-train = ["DeepFilterDataLoader >= 0.1", "ptflops", "icecream"]
+[tool.poetry.dependencies]
+DeepFilterLib = { version = "^0.1" }
+numpy = "^1.20"
+loguru = "^0.5"
+DeepFilterDataLoader = { version = "^0.1", optional = true }
+icecream = { version = "^2", optional = true }
 
-[project.scripts]
+[tool.poetry.extras]
+train = ["DeepFilterDataLoader"]
+
+[tool.poetry.scripts]
 deepFilter = "df.enhance:main"
 
 [build-system]
-requires = ["maturin>=0.11,<0.12"]
-build-backend = "maturin"
-
-[tool.maturin]
-sdist-include = ["../models/DeepFilterNet"]
-strip = "on"
+requires = ["poetry>=1.0"]
+build-backend = "poetry.masonry.api"
 
 [tool.black]
 line-length = 100
