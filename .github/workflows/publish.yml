@@ -9,7 +9,25 @@ on:
 
 jobs:
 
-  linux-wheels:
+  linux-libdf-wheels:
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux2014_x86_64:latest
+    strategy:
+      matrix:
+        python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
+    steps:
+     - uses: actions/checkout@v1
+     - name: Build wheels
+       run: |
+         curl https://sh.rustup.rs -sSf | sh -s -- -y
+         source $HOME/.cargo/env
+         bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF/Cargo.toml
+     - uses: actions/upload-artifact@v1
+       with:
+         name: linux-wheels
+         path: wheelhouse/
+
+  linux-libdfdata-wheels:
     runs-on: ubuntu-latest
     container: ghcr.io/h5py/manylinux2010_x86_64-hdf5:latest
     strategy:
@@ -17,17 +35,11 @@ jobs:
         python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
     steps:
      - uses: actions/checkout@v1
-     - name: Cache Primes
-       id: cache-primes
-       uses: actions/cache@v2
-       with:
-         path: target
-         key: ${{ runner.os }}-target
      - name: Build wheels
        run: |
          curl https://sh.rustup.rs -sSf | sh -s -- -y
          source $HOME/.cargo/env
-         bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF/Cargo.toml
+         bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF-data/Cargo.toml
      - uses: actions/upload-artifact@v1
        with:
          name: linux-wheels
