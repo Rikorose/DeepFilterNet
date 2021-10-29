@@ -11,7 +11,3 @@ ls ${PYBIN}
 
 ${PYBIN}/pip install maturin
 ${PYBIN}/maturin build --release -m $MANIFEST -i ${PYBIN}/python
-
-for wheel in target/wheels/*.whl; do
-    auditwheel repair "${wheel}"
-done
