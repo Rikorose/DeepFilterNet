@@ -1,0 +1,17 @@
+[package]
+name = "libdfdata"
+version = "0.1.0"
+authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
+edition = "2018"
+
+[lib]
+name = "_libdfdata"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+df = { path = "../libDF", features = ["dataset"] }
+pyo3 = { version = "^0.14", default_features = true, features = ["extension-module"]}
+numpy = "^0.14"
+ndarray = "0.15"
+sled = "^0.34"
