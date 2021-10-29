@@ -3,6 +3,7 @@
 *.png
 *.pdf
 out/
+export/
 
 ### Rust gitignore ###
 
