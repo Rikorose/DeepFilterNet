@@ -1,5 +1,5 @@
 [package]
-name = "libdfdata"
+name = "DeepFilterDataLoader"
 version = "0.1.0"
 authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2018"
