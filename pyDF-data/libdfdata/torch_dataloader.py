@@ -9,7 +9,7 @@ from loguru import logger
 from torch._utils import ExceptionWrapper
 from torch.utils.data._utils.pin_memory import _pin_memory_loop
 
-from _libdfdata import _FdDataLoader, _TdDataLoader
+from libdfdata import _FdDataLoader, _TdDataLoader
 
 
 class Batch:
