@@ -9,9 +9,12 @@ classifiers = [
   "Topic :: Multimedia :: Sound/Audio :: Speech",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Software Development :: Libraries :: Application Frameworks",
-  "Topic :: Utilities"
+  "Topic :: Utilities",
+  "Programming Language :: Rust",
+  "Programming Language :: Python"
 ]
 license = "MIT"
+requires-python = ">=3.6"
 packages = [{ include = "df" }]
 include = [
   { path = "pretrained_models/DeepFilterNet/config.ini", format="wheel" },
