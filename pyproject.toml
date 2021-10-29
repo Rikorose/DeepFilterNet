@@ -19,4 +19,4 @@ include = '\.pyi?$'
 profile = "black"
 line_length = 100
 skip_gitignore = true
-known_first_party = "df"
+known_first_party = ["df", "libdf", "libdfdata"]
