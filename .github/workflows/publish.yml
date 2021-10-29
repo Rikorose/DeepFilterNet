@@ -2,6 +2,8 @@ name: publish-DeepFilterNet
 
 on:
   push:
+    branches:
+      - "feat_pypi"
     tags:
        - 'v*'
 
