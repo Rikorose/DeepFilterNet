@@ -7,12 +7,12 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.autograd import Function
 
-from df import DF
 from df.config import config
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
 from df.utils import as_complex
+from libdf import DF
 
 
 def wg(S: Tensor, X: Tensor, eps: float = 1e-10) -> Tensor:
@@ -426,8 +426,8 @@ def test_local_snr():
     import numpy as np
     import soundfile as sf
 
-    from df import DF
     from df.modules import local_snr
+    from libdf import DF
 
     sr, fft, hop, nb_bands = 48000, 960, 480, 32
     df = DF(sr, fft, hop, nb_bands)

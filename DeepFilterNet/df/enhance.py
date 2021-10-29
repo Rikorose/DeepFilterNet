@@ -10,12 +10,13 @@ from loguru import logger
 from numpy import ndarray
 from torch import Tensor, nn
 
-from df import DF, config, erb, erb_norm, unit_norm
+from df import config
 from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
 from df.train import get_norm_alpha, load_model
 from df.utils import as_complex, as_real
+from libdf import DF, erb, erb_norm, unit_norm
 
 
 def main():

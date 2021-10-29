@@ -5,14 +5,13 @@ import numpy as np
 import torch
 from icecream import ic  # noqa
 from torch import Tensor, nn
-from torch.fx import wrap as fx_wrap
 from torch.nn import functional as F
 from typing_extensions import Final
 
-from df import unit_norm_init
 from df.config import config
 from df.model import ModelParams
 from df.utils import as_complex, as_real, get_norm_alpha
+from libdf import unit_norm_init
 
 
 def get_device():
@@ -356,7 +355,6 @@ class DfOp(nn.Module):
         return spec_out
 
 
-@fx_wrap
 def assign_df(spec: Tensor, spec_f: Tensor, df_bins: int, alpha: Optional[Tensor]):
     spec_out = spec.clone()
     if alpha is not None:
@@ -368,7 +366,6 @@ def assign_df(spec: Tensor, spec_f: Tensor, df_bins: int, alpha: Optional[Tensor
     return spec_out
 
 
-@fx_wrap
 def spec_pad(x: Tensor, window_size: int, lookahead: int, dim: int = 0) -> Tensor:
     pad = [0] * x.dim() * 2
     if dim >= 0:
@@ -380,7 +377,6 @@ def spec_pad(x: Tensor, window_size: int, lookahead: int, dim: int = 0) -> Tenso
     return F.pad(x, pad)
 
 
-@fx_wrap
 def as_strided(x: Tensor, window_size: int, lookahead: int, step: int = 1, dim: int = 0) -> Tensor:
     shape = list(x.shape)
     shape.insert(dim + 1, window_size)
