@@ -1,6 +1,3 @@
-#![feature(backtrace)]
-
-use std::error::Error;
 use std::sync::Arc;
 
 use df::dataset::{DataLoader, DatasetBuilder, DatasetConfig, Datasets, DfDatasetError};
@@ -594,9 +591,6 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDatasetError> {
         match self {
             Ok(x) => Ok(x),
             Err(e) => {
-                if let Some(b) = e.backtrace() {
-                    eprintln!("{}", b);
-                }
                 Err(PyRuntimeError::new_err(format!(
                     "DF dataset error: {:?}",
                     e
