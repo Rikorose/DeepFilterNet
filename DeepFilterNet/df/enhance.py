@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import sys
 import warnings
 from typing import Optional, Tuple, Union
 
@@ -22,7 +23,11 @@ from libdf import DF, erb, erb_norm, unit_norm
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "model_base_dir", type=str, help="Model directory containing checkpoints and config."
+        "--model-base-dir",
+        "-m",
+        type=str,
+        default=None,
+        help="Model directory containing checkpoints and config.",
     )
     parser.add_argument(
         "noisy_audio_files",
@@ -33,6 +38,12 @@ def main():
     parser.add_argument("--pf", action="store_true")
     parser.add_argument("--output-dir", "-o", type=str, default=None)
     args = parser.parse_args()
+    if args.model_base_dir is None:
+        args.model_base_dir = os.path.relpath(
+            os.path.join(
+                os.path.dirname(sys.argv[0]), os.pardir, os.pardir, "models", "DeepFilterNet"
+            )
+        )
     if not os.path.isdir(args.model_base_dir):
         NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
     init_logger(file=os.path.join(args.model_base_dir, "enhance.log"))
