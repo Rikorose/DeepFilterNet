@@ -62,10 +62,10 @@ jobs:
        uses: abatilo/actions-poetry@v2.0.0
        with:
          poetry-version: ${{ matrix.poetry-version }}
-     - name: View poetry --help
+     - name: Build wheels
        run: poetry build
        working-directory: DeepFilterNet
      - uses: actions/upload-artifact@v1
        with:
          name: linux-deepfilternet-wheels
-         path: dist/*whl
+         path: DeepFilterNet/dist/*whl
