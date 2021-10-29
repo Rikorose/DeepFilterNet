@@ -44,3 +44,28 @@ jobs:
        with:
          name: linux-libdfdata-wheels
          path: wheelhouse/
+
+  linux-deepfilternet-wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
+        poetry-version: [1.0, 1.1.11]
+        os: [ubuntu-18.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+     - uses: actions/checkout@v2
+     - uses: actions/setup-python@v2
+       with:
+         python-version: ${{ matrix.python-version }}
+     - name: Run image
+       uses: abatilo/actions-poetry@v2.0.0
+       with:
+         poetry-version: ${{ matrix.poetry-version }}
+     - name: View poetry --help
+       run: poetry build
+       working-directory: DeepFilterNet
+     - uses: actions/upload-artifact@v1
+       with:
+         name: linux-deepfilternet-wheels
+         path: dist/*whl
