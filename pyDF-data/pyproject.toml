@@ -1,8 +1,11 @@
 [project]
-name = "DeepFilterNet"
+dependencies = ["numpy >= 1.20"]
+
+[project.optional-dependencies]
+torch = ["torch >= 1.8"]
 
 [build-system]
-requires = ["maturin>=0.10,<0.11"]
+requires = ["maturin>=0.10,<0.12"]
 build-backend = "maturin"
 
 [tool.maturin]
@@ -12,7 +15,7 @@ strip = "on"
 
 [tool.black]
 line-length = 100
-target-version = ['py37', 'py38']
+target-version = ["py36", "py37", "py38", "py39"]
 include = '\.pyi?$'
 
 [tool.isort]
