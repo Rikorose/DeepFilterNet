@@ -1,0 +1,20 @@
+[project]
+dependencies = ["numpy >= 1.20"]
+
+[build-system]
+requires = ["maturin>=0.10,<0.12"]
+build-backend = "maturin"
+
+[tool.maturin]
+strip = "on"
+
+[tool.black]
+line-length = 100
+target-version = ["py36", "py37", "py38", "py39"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+known_first_party = ["df", "libdf", "libdfdata"]

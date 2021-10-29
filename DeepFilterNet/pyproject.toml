@@ -1,0 +1,27 @@
+[project]
+dependencies = ["DeepFilterLib >= 0.1", "numpy >= 1.20", "torch >= 1.8", "torchaudio >= 0.8", "loguru >= 0.5"]
+
+[project.optional-dependencies]
+train = ["DeepFilterDataLoader >= 0.1", "ptflops", "icecream"]
+
+[project.scripts]
+deepFilter = "df.enhance:main"
+
+[build-system]
+requires = ["maturin>=0.11,<0.12"]
+build-backend = "maturin"
+
+[tool.maturin]
+sdist-include = ["../models/DeepFilterNet"]
+strip = "on"
+
+[tool.black]
+line-length = 100
+target-version = ["py36", "py37", "py38", "py39"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+known_first_party = ["df", "libdf", "libdfdata"]
