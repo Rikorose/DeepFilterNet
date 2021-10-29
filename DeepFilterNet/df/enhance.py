@@ -11,6 +11,7 @@ from loguru import logger
 from numpy import ndarray
 from torch import Tensor, nn
 
+import df
 from df import config
 from df.logger import init_logger
 from df.model import ModelParams
@@ -35,15 +36,18 @@ def main():
         nargs="+",
         help="List of noise files to mix with the clean speech file.",
     )
-    parser.add_argument("--pf", action="store_true")
+    parser.add_argument(
+        "--pf",
+        help="Postfilter that slightly overattenuates very noisy sections.",
+        action="store_true",
+    )
     parser.add_argument("--output-dir", "-o", type=str, default=None)
     args = parser.parse_args()
     if args.model_base_dir is None:
-        args.model_base_dir = os.path.relpath(
-            os.path.join(
-                os.path.dirname(sys.argv[0]), os.pardir, os.pardir, "models", "DeepFilterNet"
-            )
+        args.model_base_dir = os.path.join(
+            os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet"
         )
+        print(f"Using default model at {args.model_base_dir}")
     if not os.path.isdir(args.model_base_dir):
         NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
     init_logger(file=os.path.join(args.model_base_dir, "enhance.log"))
@@ -62,7 +66,9 @@ def main():
     model, _ = load_model(checkpoint_dir, df_state)
     model = model.to(get_device())
     logger.info("Model loaded")
-    if not os.path.isdir(args.output_dir):
+    if args.output_dir is None:
+        args.output_dir = "."
+    elif not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
     # Set suffix to model name
     suffix = os.path.basename(os.path.abspath(args.model_base_dir))
