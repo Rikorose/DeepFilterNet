@@ -14,7 +14,6 @@ classifiers = [
   "Programming Language :: Python"
 ]
 license = "MIT"
-requires-python = ">=3.6"
 packages = [{ include = "df" }]
 include = [
   { path = "pretrained_models/DeepFilterNet/config.ini", format="wheel" },
@@ -22,6 +21,7 @@ include = [
 ]
 
 [tool.poetry.dependencies]
+python = "^3.6"
 DeepFilterLib = { version = "^0.1" }
 numpy = "^1.20"
 loguru = "^0.5"
