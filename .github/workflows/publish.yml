@@ -24,8 +24,8 @@ jobs:
          bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF/Cargo.toml
      - uses: actions/upload-artifact@v1
        with:
-         name: linux-wheels
-         path: wheelhouse/
+         name: linux-libdf-wheels
+         path: target/wheels/
 
   linux-libdfdata-wheels:
     runs-on: ubuntu-latest
@@ -42,5 +42,5 @@ jobs:
          bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF-data/Cargo.toml
      - uses: actions/upload-artifact@v1
        with:
-         name: linux-wheels
-         path: wheelhouse/
+         name: linux-libdfdata-wheels
+         path: target/wheels/
