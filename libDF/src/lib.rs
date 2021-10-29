@@ -6,18 +6,23 @@ use std::vec::Vec;
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
-mod util;
 pub type Complex32 = rustfft::num_complex::Complex32;
 
 pub const MEAN_NORM_INIT: [f32; 2] = [-60., -90.];
 pub const UNIT_NORM_INIT: [f32; 2] = [0.001, 0.0001];
 
-#[cfg(feature = "dataset")]
-pub mod dataset;
-#[cfg(feature = "transforms")]
-pub mod transforms;
 #[cfg(any(feature = "transforms", feature = "dataset"))]
-mod wav_utils;
+pub mod transforms;
+#[cfg(feature = "dataset")]
+#[path = ""]
+mod reexport_dataset_modules {
+    pub mod dataset;
+    pub mod augmentations;
+    pub mod util;
+    pub mod wav_utils;
+}
+#[cfg(feature = "dataset")]
+pub use reexport_dataset_modules::*;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
     9.265 * (freq_hz / (24.7 * 9.265)).ln_1p()

@@ -9,10 +9,10 @@ name = "df"
 path = "src/lib.rs"
 
 [features]
-default = ["transforms", "dataset"]
+default = []
 
-transforms = ["rubato", "rand_xoshiro", "thiserror", "hound", "ndarray"]
-dataset = ["hound", "hdf5", "ndarray", "rayon", "serde_json", "serde", "lewton", "ogg", "sled", "bincode"]
+transforms = ["thiserror", "ndarray"]
+dataset = ["thiserror", "ndarray", "hdf5", "rand_xoshiro", "rayon", "serde_json", "serde", "lewton", "ogg", "hound", "rubato", "sled", "bincode"]
 
 [dependencies]
 once_cell = "1.4.0"
