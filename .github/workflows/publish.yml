@@ -1,0 +1,27 @@
+name: publish-DeepFilterNet
+
+on:
+  push:
+    tags:
+       - 'v*'
+
+jobs:
+
+  linux-wheels:
+    runs-on: ubuntu-latest
+    container: ghcr.io/h5py/manylinux2010_x86_64-hdf5:latest
+    strategy:
+      matrix:
+        python-version: [3.5, 3.6, 3.7, 3.8, 3.9, 3.10]
+    steps:
+     - uses: actions/checkout@v1
+     - uses: actions-rs/toolchain@v1
+       with:
+         default: true
+     - name: Build wheels
+       run: |
+         bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF/Cargo.toml
+     - uses: actions/upload-artifact@v1
+       with:
+         name: linux-wheels
+         path: wheelhouse/
