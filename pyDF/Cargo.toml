@@ -5,7 +5,7 @@ authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2018"
 
 [lib]
-name = "_libdf"
+name = "libdf"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
