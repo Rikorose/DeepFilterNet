@@ -9,7 +9,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyValueError};
 use pyo3::prelude::*;
 
 #[pymodule]
-fn _libdfdata(_py: Python, m: &PyModule) -> PyResult<()> {
+fn libdfdata(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<_TdDataLoader>()?;
     m.add_class::<_FdDataLoader>()?;
     Ok(())
