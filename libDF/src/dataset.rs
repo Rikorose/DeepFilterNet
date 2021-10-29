@@ -21,7 +21,7 @@ use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{transforms::*, util::*, Complex32, DFState};
+use crate::{transforms::*, util::*, augmentations::*, Complex32, DFState};
 
 type Result<T> = std::result::Result<T, DfDatasetError>;
 
@@ -52,6 +52,8 @@ pub enum DfDatasetError {
     SendError(String),
     #[error("DF Transforms Error")]
     TransformError(#[from] crate::transforms::TransformError),
+    #[error("DF Augmentation Error")]
+    AugmentationError(#[from] crate::augmentations::AugmentationError),
     #[error("DF Utils Error")]
     UtilsError(#[from] crate::util::UtilsError),
     #[error("Ndarray Shape Error")]
