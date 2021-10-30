@@ -5,8 +5,8 @@ use df::transforms::{
 use df::{Complex32, DFState, UNIT_NORM_INIT};
 use ndarray::{Array1, Array2, Array3, Array4, ArrayD, ArrayView4, Axis, ShapeError};
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayDyn, PyReadonlyArray2,
-    PyReadonlyArray3, PyReadonlyArrayDyn,
+    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayDyn, PyReadonlyArray2, PyReadonlyArray3,
+    PyReadonlyArrayDyn,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;

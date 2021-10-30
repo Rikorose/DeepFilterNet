@@ -16,8 +16,8 @@ pub mod transforms;
 #[cfg(feature = "dataset")]
 #[path = ""]
 mod reexport_dataset_modules {
-    pub mod dataset;
     pub mod augmentations;
+    pub mod dataset;
     pub mod util;
     pub mod wav_utils;
 }

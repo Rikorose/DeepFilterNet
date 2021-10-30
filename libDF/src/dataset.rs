@@ -21,7 +21,7 @@ use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{transforms::*, util::*, augmentations::*, Complex32, DFState};
+use crate::{augmentations::*, transforms::*, util::*, Complex32, DFState};
 
 type Result<T> = std::result::Result<T, DfDatasetError>;
 
