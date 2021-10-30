@@ -101,9 +101,14 @@ def get_git_root():
 
 def get_commit_hash():
     """Returns the current git commit."""
-    git_dir = get_git_root()
-    args = ["git", "-C", git_dir, "rev-parse", "--short", "--verify", "HEAD"]
-    return subprocess.check_output(args).strip().decode()
+    try:
+        git_dir = get_git_root()
+        args = ["git", "-C", git_dir, "rev-parse", "--short", "--verify", "HEAD"]
+        commit = subprocess.check_output(args).strip().decode()
+    except subprocess.CalledProcessError:
+        # probably not in git repo
+        commit = None
+    return commit
 
 
 def get_host() -> str:
@@ -111,9 +116,14 @@ def get_host() -> str:
 
 
 def get_branch_name():
-    git_dir = os.path.dirname(os.path.abspath(__file__))
-    args = ["git", "-C", git_dir, "rev-parse", "--abbrev-ref", "HEAD"]
-    return subprocess.check_output(args).strip().decode()
+    try:
+        git_dir = os.path.dirname(os.path.abspath(__file__))
+        args = ["git", "-C", git_dir, "rev-parse", "--abbrev-ref", "HEAD"]
+        branch = subprocess.check_output(args).strip().decode()
+    except subprocess.CalledProcessError:
+        # probably not in git repo
+        branch = None
+    return branch
 
 
 def clip_grad_norm_(

@@ -20,7 +20,9 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
 
     logger.info(f"Running on torch {torch.__version__}")
     logger.info(f"Running on host {get_host()}")
-    logger.info(f"Git commit: {get_commit_hash()}, branch: {get_branch_name()}")
+    commit = get_commit_hash()
+    if commit is not None:
+        logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
     if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
         logger.info(f"Slurm jobid: {jobid}")
 
