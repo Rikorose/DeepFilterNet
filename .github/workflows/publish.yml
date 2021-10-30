@@ -55,10 +55,10 @@ jobs:
      - uses: actions/setup-python@v2
        with:
          python-version: ${{ matrix.python-version }}
-     - name: Run image
-       uses: abatilo/actions-poetry@v2.0.0
+     - name: Install poetry
+       run: pip install poetry
      - name: Build wheels
-       run: poetry build
+       run: poetry build -vvv
        working-directory: DeepFilterNet
      - uses: actions/upload-artifact@v2
        with:

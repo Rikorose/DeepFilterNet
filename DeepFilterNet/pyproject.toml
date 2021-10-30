@@ -16,8 +16,8 @@ classifiers = [
 license = "MIT"
 packages = [{ include = "df" }]
 include = [
-  { path = "pretrained_models/DeepFilterNet/config.ini", format="wheel" },
-  { path = "pretrained_models/DeepFilterNet/checkpoints/", format="wheel" },
+  { path = "pretrained_models/DeepFilterNet/config.ini" },
+  { path = "pretrained_models/DeepFilterNet/checkpoints/*" },
 ]
 
 [tool.poetry.dependencies]
