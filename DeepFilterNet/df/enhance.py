@@ -1,7 +1,6 @@
 import argparse
 import os
 import time
-import sys
 import warnings
 from typing import Optional, Tuple, Union
 
@@ -13,11 +12,11 @@ from torch import Tensor, nn
 
 import df
 from df import config
+from df.checkpoint import load_model
 from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
-from df.train import get_norm_alpha, load_model
-from df.utils import as_complex, as_real
+from df.utils import as_complex, as_real, get_norm_alpha
 from libdf import DF, erb, erb_norm, unit_norm
 
 
