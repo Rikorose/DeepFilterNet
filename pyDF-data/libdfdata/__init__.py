@@ -6,8 +6,7 @@ try:
 except ImportError:
     pass
 
-__all__ = []
 if has_torch:
     from .torch_dataloader import PytorchDataLoader
 
-    __all__.append("PytorchDataLoader")
+__all__ = ["PytorchDataLoader"]
