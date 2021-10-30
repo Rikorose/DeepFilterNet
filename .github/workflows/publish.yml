@@ -2,8 +2,6 @@ name: publish-DeepFilterNet
 
 on:
   push:
-    branches:
-      - "feat_pypi"
     tags:
        - 'v*'
 
@@ -14,7 +12,7 @@ jobs:
     container: quay.io/pypa/manylinux2014_x86_64:latest
     strategy:
       matrix:
-        python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
+        python-version: [3.6, 3.7, 3.8, 3.9, "3.10"]
     steps:
      - uses: actions/checkout@v1
      - name: Build wheels
@@ -22,7 +20,7 @@ jobs:
          curl https://sh.rustup.rs -sSf | sh -s -- -y
          source $HOME/.cargo/env
          bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF/Cargo.toml
-     - uses: actions/upload-artifact@v1
+     - uses: actions/upload-artifact@v2
        with:
          name: linux-libdf-wheels
          path: wheelhouse/
@@ -32,7 +30,7 @@ jobs:
     container: ghcr.io/h5py/manylinux2010_x86_64-hdf5
     strategy:
       matrix:
-        python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
+        python-version: [3.6, 3.7, 3.8, 3.9, "3.10"]
     steps:
      - uses: actions/checkout@v1
      - name: Build wheels
@@ -49,8 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.6, 3.7, 3.8, 3.9, 3.10]
-        poetry-version: [1.0, 1.1.11]
+        python-version: [3.6, 3.7, 3.8, 3.9, "3.10"]
         os: [ubuntu-18.04]
     runs-on: ${{ matrix.os }}
     steps:
@@ -60,12 +57,10 @@ jobs:
          python-version: ${{ matrix.python-version }}
      - name: Run image
        uses: abatilo/actions-poetry@v2.0.0
-       with:
-         poetry-version: ${{ matrix.poetry-version }}
      - name: Build wheels
        run: poetry build
        working-directory: DeepFilterNet
-     - uses: actions/upload-artifact@v1
+     - uses: actions/upload-artifact@v2
        with:
          name: linux-deepfilternet-wheels
-         path: DeepFilterNet/dist/*whl
+         path: DeepFilterNet/dist/
