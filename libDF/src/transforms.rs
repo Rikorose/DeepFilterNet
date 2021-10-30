@@ -742,7 +742,7 @@ pub fn erb_norm(
     // state shape: [C, F]
     let mut state = state.unwrap_or_else(|| {
         let b = input.len_of(Axis(2));
-        let state_ch0=Array1::<f32>::linspace(MEAN_NORM_INIT[0], MEAN_NORM_INIT[1], b)
+        let state_ch0 = Array1::<f32>::linspace(MEAN_NORM_INIT[0], MEAN_NORM_INIT[1], b)
             .into_shape([1, b])
             .unwrap();
         let mut state = state_ch0.clone();
