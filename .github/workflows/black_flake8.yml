@@ -1,0 +1,29 @@
+name: Python CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 18 * * *'
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {command: flake8, args: ""}
+          - {command: black, args: "--check"}
+    steps:
+     - uses: actions/checkout@v2
+     - uses: actions/setup-python@v2
+     - name: Install
+       run: pip install ${{matrix.command}}
+     - name: Run ${{matrix.command}}
+       run: ${{matrix.command}} ${{matrix.args}}
