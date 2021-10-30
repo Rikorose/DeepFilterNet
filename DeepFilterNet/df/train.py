@@ -1,7 +1,7 @@
 import argparse
 import os
 import signal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 import torch
@@ -12,10 +12,10 @@ from torch.optim import Adam, AdamW, Optimizer, RMSprop
 from torch.types import Number
 
 from df.checkpoint import read_cp, write_cp
-from df.config import Csv, config
+from df.config import config
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
-from df.model import ModelParams, init_model
+from df.model import ModelParams, load_model
 from df.modules import get_device
 from df.utils import (
     as_complex,
@@ -314,27 +314,6 @@ def setup_losses() -> Loss:
     loss = Loss(state, istft).to(get_device())
     # loss = torch.jit.script(loss)
     return loss
-
-
-def load_model(
-    cp_dir: str,
-    df_state: Optional[DF] = None,
-    jit: bool = False,
-    mask_only: bool = False,
-    train_df_only: bool = False,
-) -> Tuple[nn.Module, int]:
-    if mask_only and train_df_only:
-        raise ValueError("Only one of `mask_only` `train_df_only` can be enabled")
-    if df_state is None:
-        global state
-        df_state = state
-    model = init_model(df_state, run_df=mask_only is False, train_mask=train_df_only is False)
-    if jit:
-        model = torch.jit.script(model)
-    blacklist: List[str] = config("CP_BLACKLIST", [], Csv(), save=False, section="train")  # type: ignore
-    epoch = read_cp(model, "model", cp_dir, blacklist=blacklist)
-    epoch = 0 if epoch is None else epoch
-    return model, epoch
 
 
 def load_opt(

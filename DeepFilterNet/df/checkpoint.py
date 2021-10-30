@@ -1,17 +1,38 @@
 import glob
 import os
 import re
-from typing import Union
+from typing import List, Tuple, Union
 
 import torch
 from loguru import logger
 from torch import nn
 
+from df.config import Csv, config
+from df.model import init_model
 from df.utils import check_finite_module
+from libdf import DF
 
 
 def get_epoch(cp) -> int:
     return int(os.path.splitext(os.path.basename(cp))[0].split("_")[-1])
+
+
+def load_model(
+    cp_dir: str,
+    df_state: DF,
+    jit: bool = False,
+    mask_only: bool = False,
+    train_df_only: bool = False,
+) -> Tuple[nn.Module, int]:
+    if mask_only and train_df_only:
+        raise ValueError("Only one of `mask_only` `train_df_only` can be enabled")
+    model = init_model(df_state, run_df=mask_only is False, train_mask=train_df_only is False)
+    if jit:
+        model = torch.jit.script(model)
+    blacklist: List[str] = config("CP_BLACKLIST", [], Csv(), save=False, section="train")  # type: ignore
+    epoch = read_cp(model, "model", cp_dir, blacklist=blacklist)
+    epoch = 0 if epoch is None else epoch
+    return model, epoch
 
 
 def read_cp(
