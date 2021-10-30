@@ -590,12 +590,10 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDatasetError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => {
-                Err(PyRuntimeError::new_err(format!(
-                    "DF dataset error: {:?}",
-                    e
-                )))
-            }
+            Err(e) => Err(PyRuntimeError::new_err(format!(
+                "DF dataset error: {:?}",
+                e
+            ))),
         }
     }
 }
