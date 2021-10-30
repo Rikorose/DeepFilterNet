@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 18 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {command: fmt, rust: nightly}
+          - {command: clippy, rust: stable}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Install Rust (${{matrix.rust}})
+        uses: actions-rs/toolchain@v1
+        with: {profile: minimal, toolchain: '${{matrix.rust}}', override: true, components: 'rustfmt, clippy'}
+      - name: Install HDF5
+        run: sudo apt-get install libhdf5-dev
+      - name: Run cargo ${{matrix.command}}
+        uses: actions-rs/cargo@v1
+        with:
+          command: ${{matrix.command}}
+          args: "${{matrix.command == 'fmt' && '--all -- --check' || '-- -D warnings'}}"
