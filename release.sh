@@ -37,6 +37,7 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
 fd "(pyproject)|(Cargo)" -t f -e toml -X git add {}
 
 git commit -m "v$VERSION"
+git push
 git tag -f "v$VERSION"
 git push -f --tags
 
