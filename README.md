@@ -7,29 +7,45 @@ Audio samples from the voice bank/DEMAND test set can found at https://rikorose.
 * `models` contains DeepFilterNet model weights and config.
 
 ## Usage
-
-System requirements are `cargo` and `pip` (Rust and Python package managers).
-Usage of a `conda` or `virtualenv` recommended.
 This framework is currently only tested under Linux.
+
+### PyPI
+
+Install the DeepFilterNet python package via pip:
+```bash
+pip install deepfilterlib
+```
+
+To enhance noisy audio files using DeepFilterNet run
+```bash
+# Specify an output directory with --output-dir [OUTPUT_DIR]
+deepFilter path/to/noisy_audio.wav
+```
+
+### Manual Installation
+
+Install cargo via [rustup](https://rustup.rs/). Usage of a `conda` or `virtualenv` recommended.
 
 Installation of python dependencies and libDF:
 ```bash
 cd path/to/DeepFilterNet/  # cd into repository
 # Recommended: Install or activate a python env
-pip install maturin  # Used to compile libDF and load
-# A) Build python wheel manually and install using pip
-maturin build --release -m DeepFilterNet/Cargo.toml
-# Install python wheel. Make sure to specify the correct DeepFilterNet and python version
-pip install target/wheels/DeepFilterNet-0.1.0-cp39-cp39-linux_x86_64.whl
-# B) Directly install into env via maturin develop: maturin develop --release -m DeepFilterNet/Cargo.toml
-# Optional: Install cuda version of pytorch from pytorch.org
-pip install -r requirements.txt  # Install remaining dependencies
+pip install maturin poetry  # Used to compile libdf and DeepFilterNet python wheels
+# Build and install libdf python package required for enhance.py
+maturin develop --release -m pyDF/Cargo.toml
+# Optional: Install libdfdata python package with dataset and dataloading functionality for training
+maturin develop --release -m pyDF-data/Cargo.toml
+# Mandatory: Install cpu/cuda pytorch dependency from pytorch.org, e.g.:
+pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
+# Install remaining DeepFilterNet python dependencies
+cd DeepFilterNet
+poetry install
 ```
 
 To enhance noisy audio files using DeepFilterNet run
 ```bash
-# usage: enhance.py [-h] [--output-dir OUTPUT_DIR] model_base_dir noisy_audio_files [noisy_audio_files ...]
-python DeepFilterNet/df/enhance.py models/DeepFilterNet/ path/to/noisy_audio.wav
+# usage: enhance.py [-h] [--output-dir OUTPUT_DIR] [--model_base_dir MODEL_BASE_DIR] noisy_audio_files [noisy_audio_files ...]
+python DeepFilterNet/df/enhance.py DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
 ```
 
 ## Citation
