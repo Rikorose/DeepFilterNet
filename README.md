@@ -13,7 +13,7 @@ This framework is currently only tested under Linux.
 
 Install the DeepFilterNet python package via pip:
 ```bash
-pip install deepfilterlib
+pip install deepfilternet
 ```
 
 To enhance noisy audio files using DeepFilterNet run
