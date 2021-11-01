@@ -13,6 +13,9 @@ This framework is currently only tested under Linux.
 
 Install the DeepFilterNet python package via pip:
 ```bash
+# Install cpu/cuda pytorch dependency from pytorch.org, e.g.:
+pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
+# Install DeepFilterNet
 pip install deepfilternet
 ```
 
