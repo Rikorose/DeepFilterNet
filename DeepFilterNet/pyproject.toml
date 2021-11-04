@@ -21,7 +21,7 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.6"
+python = "^3.7"
 DeepFilterLib = { version = "^0.1" }
 numpy = "^1.20"
 loguru = "^0.5"
@@ -40,7 +40,7 @@ build-backend = "poetry.masonry.api"
 
 [tool.black]
 line-length = 100
-target-version = ["py36", "py37", "py38", "py39"]
+target-version = ["py37", "py38", "py39"]
 include = '\.pyi?$'
 
 [tool.isort]

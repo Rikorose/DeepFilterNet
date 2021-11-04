@@ -12,7 +12,7 @@ jobs:
     container: quay.io/pypa/manylinux2014_x86_64:latest
     strategy:
       matrix:
-        python-version: [3.6, 3.7, 3.8, 3.9, "3.10"]
+        python-version: [3.7, 3.8, 3.9, "3.10"]
     steps:
      - uses: actions/checkout@v1
      - name: Build wheels
@@ -30,7 +30,7 @@ jobs:
     container: ghcr.io/h5py/manylinux2010_x86_64-hdf5
     strategy:
       matrix:
-        python-version: [3.6, 3.7, 3.8, 3.9, "3.10"]
+        python-version: [3.7, 3.8, 3.9, "3.10"]
     steps:
      - uses: actions/checkout@v1
      - name: Build wheels
@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.6, 3.7, 3.8, 3.9, "3.10"]
+        python-version: [3.7, 3.8, 3.9, "3.10"]
         os: [ubuntu-18.04]
     runs-on: ${{ matrix.os }}
     steps:
