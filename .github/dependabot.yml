@@ -12,7 +12,7 @@ updates:
     directory: "/pyDf-data/"
     schedule:
       interval: "daily"
-  - package-ecosystem: "poetry"
+  - package-ecosystem: "pip"
     directory: "/DeepFilterNet/"
     schedule:
       interval: "daily"
