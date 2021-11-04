@@ -34,4 +34,4 @@ lewton = { version = "^0.10", optional=true }
 ogg = { version = "^0.8", optional=true }
 
 [dev-dependencies]
-dirs = "3.0"
+dirs = "4.0"
