@@ -1,6 +1,6 @@
 # DeepFilterNet
 A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) based on Deep Filtering.
-Audio samples from the voice bank/DEMAND test set can found at https://rikorose.github.io/DeepFilterNet-Samples/
+Audio samples from the voice bank/DEMAND test set can be found at https://rikorose.github.io/DeepFilterNet-Samples/
 
 * `libDF` contains Rust code used for data loading and augmentation.
 * `DeepFilterNet` contains Python code including a libDF wrapper for data loading, DeepFilterNet training, testing and visualization.
@@ -13,7 +13,7 @@ This framework is currently only tested under Linux.
 
 Install the DeepFilterNet python package via pip:
 ```bash
-# Install cpu/cuda pytorch dependency from pytorch.org, e.g.:
+# Install cpu/cuda pytorch (>=1.8) dependency from pytorch.org, e.g.:
 pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
 # Install DeepFilterNet
 pip install deepfilternet
@@ -33,13 +33,14 @@ Installation of python dependencies and libDF:
 ```bash
 cd path/to/DeepFilterNet/  # cd into repository
 # Recommended: Install or activate a python env
-pip install maturin poetry  # Used to compile libdf and DeepFilterNet python wheels
+# Mandatory: Install cpu/cuda pytorch (>=1.8) dependency from pytorch.org, e.g.:
+pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
+# Install build dependencies used to compile libdf and DeepFilterNet python wheels
+pip install maturin poetry
 # Build and install libdf python package required for enhance.py
 maturin develop --release -m pyDF/Cargo.toml
 # Optional: Install libdfdata python package with dataset and dataloading functionality for training
 maturin develop --release -m pyDF-data/Cargo.toml
-# Mandatory: Install cpu/cuda pytorch dependency from pytorch.org, e.g.:
-pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
 # Install remaining DeepFilterNet python dependencies
 cd DeepFilterNet
 poetry install
@@ -49,6 +50,59 @@ To enhance noisy audio files using DeepFilterNet run
 ```bash
 # usage: enhance.py [-h] [--output-dir OUTPUT_DIR] [--model_base_dir MODEL_BASE_DIR] noisy_audio_files [noisy_audio_files ...]
 python DeepFilterNet/df/enhance.py DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
+```
+
+### Training
+
+The entry point is `DeepFilterNet/df/train.py`. It expects a data directory containing HDF5 dataset
+as well as a dataset configuration json file.
+
+So, you first need to create your datasets in HDF5 format. Each dataset typically only
+holds training, validation, or test set of noise, speech or RIRs.
+```py
+# Install additional dependencies for dataset creation
+pip install h5py librosa soundfile
+# Go to DeepFilterNet python package
+cd path/to/DeepFilterNet/DeepFilterNet
+# Prepare text file (e.g. called training_set.txt) containing paths to .wav files
+#
+# usage: prepare_data.py [-h] [--num_workers NUM_WORKERS] [--max_freq MAX_FREQ] [--sr SR] [--dtype DTYPE]
+#                        [--codec CODEC] [--mono] [--compression COMPRESSION]
+#                        type audio_files hdf5_db
+#
+# where:
+#   type: One of `speech`, `noise`, `rir`
+#   audio_files: Text file containing paths to audio files to include in the dataset
+#   hdf5_db: Output HDF5 dataset.
+python df/prepare_data.py --sr 48000 speech training_set.txt TRAIN_SET_SPEECH.hdf5
+```
+All dataset should be made available in one dataset folder for the train script.
+
+The dataset configuration file should contain 3 entries: "train", "valid", "test". Each of those
+contains a list of datasets (e.g. a speech, noise and a RIR dataset). Optionally a sampling factor
+may be specified that can be used to over/under-sample the dataset. Say, you have a specific dataset
+with transient noises and want to increase the amount of non-stationary noises by oversampling.
+
+File `dataset.cfg`:
+```json
+{
+  "train": [
+    [
+      "TRAIN_SET_SPEECH.hdf5",
+      1.0
+    ]
+  ]
+}
+```
+
+Finally, start the training script. The training script may create a model `base_dir` if not
+existing used for logging, some audio samples, model checkpoints, and config. If no config file is
+found, it will create a default config. See
+[DeepFilterNet/pretrained_models/DeepFilterNet](https://github.com/Rikorose/DeepFilterNet/blob/main/DeepFilterNet/pretrained_models/DeepFilterNet/config.ini)
+for a config file.
+```py
+# usage: train.py [-h] [--debug] data_config_file data_dir base_dir
+python df/train.py path/to/dataset.cfg path/to/data_dir/ path/to/base_dir/
 ```
 
 ## Citation
