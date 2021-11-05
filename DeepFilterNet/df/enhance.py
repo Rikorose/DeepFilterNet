@@ -155,8 +155,11 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=Fa
             "Enhanced noisy audio file '{}' in {:.1f}s (RT factor: {})".format(file, t, rtf)
         )
     if pad:
-        # We were introducing a delay of p.hop_size (i.e. the frame size in each stft loop)
-        audio = audio[:, p.hop_size : orig_len + p.hop_size]
+        # Overall, the STFT/ISTFT loop introduces a delay of p.fft_size. Since this python script
+        # operates on the full signal and not on a per-frame-basis, the frame size (i.e. p.hop_size)
+        # can be neglected.
+        d = p.fft_size - p.hop_size
+        audio = audio[:, d : orig_len + d]
     return audio
 
 
