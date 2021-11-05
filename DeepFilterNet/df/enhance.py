@@ -9,6 +9,7 @@ import torchaudio
 from loguru import logger
 from numpy import ndarray
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 import df
 from df import config
@@ -41,6 +42,12 @@ def main():
         action="store_true",
     )
     parser.add_argument("--output-dir", "-o", type=str, default=None)
+    parser.add_argument(
+        "--compensate-delay",
+        "-d",
+        action="store_true",
+        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+    )
     args = parser.parse_args()
     if args.model_base_dir is None:
         args.model_base_dir = os.path.join(
@@ -74,7 +81,7 @@ def main():
     if args.pf:
         suffix += "_pf"
     for file in args.noisy_audio_files:
-        audio = enhance(model, df_state, file, log=True)
+        audio = enhance(model, df_state, file, log=True, pad=args.compensate_delay)
         save_audio(file, audio, p.sr, args.output_dir, log=True, suffix=suffix)
 
 
@@ -119,7 +126,7 @@ def save_audio(
 
 
 @torch.no_grad()
-def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False):
+def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=False):
     p = ModelParams()
     model.eval()
     audio, sr = torchaudio.load(file)
@@ -132,6 +139,10 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False):
             f"Audio sampling rate does not match model sampling rate ({sr}, {p.sr}). Resampling..."
         )
         audio = torchaudio.functional.resample(audio, sr, p.sr)
+    orig_len = audio.shape[-1]
+    if pad:
+        # Pad audio to compensate for the delay due to the real-time STFT implementation
+        audio = F.pad(audio, (0, p.fft_size))
     t0 = time.time()
     spec, erb_feat, spec_feat = df_features(audio, df_state, device=get_device())
     spec = model(spec, erb_feat, spec_feat)[0].cpu()
@@ -143,6 +154,9 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False):
         logger.info(
             "Enhanced noisy audio file '{}' in {:.1f}s (RT factor: {})".format(file, t, rtf)
         )
+    if pad:
+        # We were introducing a delay of p.hop_size (i.e. the frame size in each stft loop)
+        audio = audio[:, p.hop_size : orig_len + p.hop_size]
     return audio
 
 
