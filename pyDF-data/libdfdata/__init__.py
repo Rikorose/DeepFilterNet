@@ -1,5 +1,4 @@
 from .libdfdata import _FdDataLoader, _TdDataLoader
-from .libdfdata import __all__, __doc__
 
 has_torch = False
 try:
@@ -12,4 +11,4 @@ except ImportError:
 if has_torch:
     from .torch_dataloader import PytorchDataLoader
 
-__all__ += ["PytorchDataLoader"]
+__all__ = ["PytorchDataLoader", "_FdDataLoader", "_TdDataLoader"]
