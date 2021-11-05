@@ -11,11 +11,11 @@ from torch import Tensor, nn
 from torch.optim import Adam, AdamW, Optimizer, RMSprop
 from torch.types import Number
 
-from df.checkpoint import read_cp, write_cp
+from df.checkpoint import load_model, read_cp, write_cp
 from df.config import config
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
-from df.model import ModelParams, load_model
+from df.model import ModelParams
 from df.modules import get_device
 from df.utils import (
     as_complex,
