@@ -360,7 +360,7 @@ mod tests {
         let n_freqs = n_fft / 2 + 1;
         let hop = n_fft / 2;
         let nb_bands = 24;
-        let c = init(sr, n_fft, hop, nb_bands);
+        let state = DFState::new(sr, n_fft, hop, nb_bands, 1);
         let d = Uniform::new(-1., 1.);
         let mut input = Vec::with_capacity(n_freqs);
         let mut rng = rand::thread_rng();
@@ -371,9 +371,9 @@ mod tests {
         mask[3] = 0.3;
         mask[nb_bands - 1] = 0.5;
         let mut output = input.clone();
-        apply_band_gain(&mut output, mask.as_slice(), Some(&c));
+        apply_band_gain(&mut output, mask.as_slice(), &state.erb);
         let mut cumsum = 0;
-        for (erb_idx, erb_w) in c.erb.iter().enumerate() {
+        for (erb_idx, erb_w) in state.erb.iter().enumerate() {
             for i in cumsum..cumsum + erb_w {
                 assert_eq!(input[i] * mask[erb_idx], output[i])
             }
