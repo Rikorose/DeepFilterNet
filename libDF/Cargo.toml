@@ -12,7 +12,7 @@ path = "src/lib.rs"
 default = []
 
 transforms = ["thiserror", "ndarray"]
-dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "serde_json", "serde", "lewton", "ogg", "hound", "rubato", "sled", "bincode"]
+dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "serde_json", "serde", "lewton", "ogg", "hound", "rubato", "bincode"]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -23,7 +23,6 @@ rand_xoshiro = { version="0.6", optional=true }
 thiserror = { version="1.0", optional=true }
 hound = { version="3.4", optional=true }
 hdf5 = { version="^0.8", optional=true }
-sled = { version="^0.34", optional=true }
 bincode = { version="^1.3", optional=true }
 ndarray = { version="^0.15", optional=true, features=["serde"] }
 rayon = { version="1.5", optional=true }
