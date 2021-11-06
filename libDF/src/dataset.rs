@@ -1483,7 +1483,7 @@ mod tests {
     use dirs::home_dir;
 
     use super::*;
-    use crate::transforms::seed_from_u64;
+    use crate::util::seed_from_u64;
     use crate::wav_utils::*;
 
     #[test]
@@ -1540,7 +1540,6 @@ mod tests {
         let keys = hdf5.keys()?;
         let key = &keys[0];
         let signal = hdf5.read(key)?;
-        let ch = signal.len_of(Axis(0));
         write_wav_arr2("../out/hdf5_signal.wav", signal.view(), sr)?;
         dbg!(signal.shape());
         let max_len = 3 * sr as usize;
