@@ -2,7 +2,7 @@
 name = "df"
 version = "0.1.5"
 authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "df"
