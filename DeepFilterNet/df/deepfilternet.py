@@ -45,6 +45,9 @@ class ModelParams(DfParams):
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
+        self.group_shuffle: bool = config(
+            "GROUP_SHUFFLE", cast=bool, default=True, section=self.section
+        )
         self.dfop_method: str = config(
             "DFOP_METHOD", cast=str, default="real_unfold", section=self.section
         )
@@ -68,7 +71,6 @@ class Encoder(nn.Module):
         wf = p.conv_width_f
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
-        # TODO: Try pytorch 1.9's conv channels last
         k = p.conv_k_enc
         kwargs = {"batch_norm": True, "depthwise": p.conv_depthwise}
         k0 = 1 if k == 1 and p.conv_lookahead == 0 else max(2, k)
@@ -103,6 +105,7 @@ class Encoder(nn.Module):
             num_layers=p.emb_num_layers,
             batch_first=False,
             groups=p.gru_groups,
+            shuffle=p.group_shuffle,
             add_outputs=True,
         )
         self.lsnr_fc = nn.Sequential(nn.Linear(self.emb_out_dim, 1), nn.Sigmoid())
@@ -143,7 +146,9 @@ class ErbDecoder(nn.Module):
         self.emb_width = layer_width * wf ** 2
         self.emb_dim = self.emb_width * (p.nb_erb // 4)
         self.fc_emb = nn.Sequential(
-            GroupedLinear(p.emb_hidden_dim, self.emb_dim, groups=p.lin_groups),
+            GroupedLinear(
+                p.emb_hidden_dim, self.emb_dim, groups=p.lin_groups, shuffle=p.group_shuffle
+            ),
             nn.ReLU(inplace=True),
         )
         k = p.conv_k_dec
@@ -200,7 +205,7 @@ class DfDecoder(nn.Module):
             num_layers=self.df_n_layers,
             batch_first=False,
             groups=p.gru_groups,
-            shuffle=True,
+            shuffle=p.group_shuffle,
             add_outputs=True,
         )
         self.df_fc_out = nn.Sequential(
