@@ -428,6 +428,7 @@ pub fn post_filter(gains: &mut [f32]) {
         g[1] = (1.0 + beta) * g[1] / (1.0 + beta * (g[1] / g_sin[1]).powi(2));
         g[2] = (1.0 + beta) * g[2] / (1.0 + beta * (g[2] / g_sin[2]).powi(2));
         g[3] = (1.0 + beta) * g[3] / (1.0 + beta * (g[3] / g_sin[3]).powi(2));
+    }
 }
 
 #[cfg(test)]
