@@ -432,6 +432,7 @@ def as_strided(x: Tensor, window_size: int, lookahead: int, step: int = 1, dim: 
 def test_dfop():
     from df.config import config
     from df.model import ModelParams
+    from icecream import ic
 
     config.use_defaults()
     p = ModelParams()
