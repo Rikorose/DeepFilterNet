@@ -1,7 +1,6 @@
 import argparse
 import os
 import time
-import warnings
 from typing import Optional, Tuple, Union
 
 import torch
@@ -57,7 +56,11 @@ def main():
     if not os.path.isdir(args.model_base_dir):
         NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
     init_logger(file=os.path.join(args.model_base_dir, "enhance.log"))
-    config.load(os.path.join(args.model_base_dir, "config.ini"), doraise=True)
+    config.load(
+        os.path.join(args.model_base_dir, "config.ini"),
+        config_must_exist=True,
+        allow_defaults=False,
+    )
     if args.pf:
         config.set(ModelParams().section, "mask_pf", True, bool)
     p = ModelParams()
@@ -135,7 +138,7 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=Fa
         model.reset_h0(batch_size=bs, device=get_device())
     t_audio = audio.shape[-1] / sr
     if sr != p.sr:
-        warnings.warn(
+        logger.warning(
             f"Audio sampling rate does not match model sampling rate ({sr}, {p.sr}). Resampling..."
         )
         audio = torchaudio.functional.resample(audio, sr, p.sr)
