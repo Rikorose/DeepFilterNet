@@ -288,7 +288,7 @@ fn main() -> Result<()> {
             // Compute spectrogram and dnn features
             let spec = convert_to_mut_complex(spec_buf.as_slice_mut()?);
             state.analysis(&input, spec);
-            state.erb_feat(&spec, alpha, erb_buf.as_slice_mut()?);
+            state.erb_feat(spec, alpha, erb_buf.as_slice_mut()?);
             state.cplx_feat_clone(
                 &spec[0..nb_df],
                 alpha,
@@ -327,7 +327,7 @@ fn main() -> Result<()> {
             if lsnr < 30.0 {
                 // Run Deep Filter Module
                 let mut df = df_net.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
-                let alpha = df.pop().unwrap();
+                let _alpha = df.pop().unwrap();
                 let coefs = df.pop().unwrap();
                 //dbg!(spec_buf.shape());
                 //println!(

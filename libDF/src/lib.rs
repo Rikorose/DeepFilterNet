@@ -195,7 +195,7 @@ impl DFState {
     }
 
     pub fn erb_feat(&mut self, input: &[Complex32], alpha: f32, output: &mut [f32]) {
-        compute_band_corr(output, &input, &input, &self.erb); // ERB FB
+        compute_band_corr(output, input, input, &self.erb); // ERB FB
         for o in output.iter_mut() {
             *o = (*o + 1e-10).log10() * 10.;
         }
