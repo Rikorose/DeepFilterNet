@@ -31,8 +31,10 @@ class Config:
         self.parser: ConfigParser = None  # type: ignore
         self.path = ""
         self.modified = False
+        self.allow_defaults = True
 
-    def load(self, path: Optional[str], doraise=False):
+    def load(self, path: Optional[str], config_must_exist=False, allow_defaults=True):
+        self.allow_defaults = allow_defaults
         if self.parser is not None:
             raise ValueError("Config already loaded")
         self.parser = ConfigParser()
@@ -41,13 +43,14 @@ class Config:
             with open(path) as f:
                 self.parser.read_file(f)
         else:
-            if doraise:
+            if config_must_exist:
                 raise ValueError("No config file found.")
         if not self.parser.has_section(self.DEFAULT_SECTION):
             self.parser.add_section(self.DEFAULT_SECTION)
+        self._fix_clc()
 
     def use_defaults(self):
-        self.load(path=None, doraise=False)
+        self.load(path=None, config_must_exist=False)
 
     def save(self, path: str):
         if not self.modified:
@@ -96,9 +99,9 @@ class Config:
             if save:
                 self.parser.set(section, option, self.tostr(value, cast))
         elif self.parser.has_option(section, option):
-            value = self.read_from_section(section, option, default, cast, save)
+            value = self.read_from_section(section, option, default, cast=cast, save=save)
         elif self.parser.has_option(section.lower(), option):
-            value = self.read_from_section(section.lower(), option, cast, save)
+            value = self.read_from_section(section.lower(), option, default, cast=cast, save=save)
         elif self.parser.has_option(self.DEFAULT_SECTION, option):
             logger.warning(
                 f"Couldn't find option {option} in section {section}. "
@@ -107,6 +110,8 @@ class Config:
             value = self.read_from_section(self.DEFAULT_SECTION, option, cast=cast, save=save)
         elif default is None:
             raise ValueError("Value {} not found.".format(option))
+        elif not self.allow_defaults and save:
+            raise ValueError(f"Value '{option}' not found in config (defaults not allowed).")
         else:
             value = default
             if save:
@@ -132,6 +137,8 @@ class Config:
             # Set to default or remove to not read it at trainig start again
             if default is None:
                 self.parser.remove_option(section, option)
+            elif not self.allow_defaults:
+                raise ValueError(f"Value '{option}' not found in config (defaults not allowed).")
             else:
                 self.parser.set(section, option, self.tostr(default, cast))
         elif section.lower() != section:
@@ -148,6 +155,25 @@ class Config:
         self.modified = True
         cast = type(value)
         return self.parser.set(section, option, self.tostr(value, cast))
+
+    def _fix_clc(self):
+        """Renaming of some groups/options for compatibility with old models."""
+        if (
+            not self.parser.has_section("deepfilternet")
+            and self.parser.get("train", "model") == "convgru5"
+        ):
+            self.overwrite("train", "model", "deepfilternet")
+            self.parser.add_section("deepfilternet")
+            self.parser["deepfilternet"] = self.parser["convgru"]
+            del self.parser["convgru"]
+        if not self.parser.has_section("df") and self.parser.has_section("clc"):
+            self.parser["df"] = self.parser["clc"]
+            del self.parser["clc"]
+        for section in self.parser.sections():
+            for k, v in self.parser[section].items():
+                if "clc" in k.lower():
+                    self.parser.set(section, k.lower().replace("clc", "df"), v)
+                    del self.parser[section][k]
 
     def __repr__(self):
         msg = ""

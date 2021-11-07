@@ -36,7 +36,11 @@ def main():
     if not os.path.isdir(args.model_base_dir):
         NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
     init_logger(file=os.path.join(args.model_base_dir, "test_voicebank_demand.log"))
-    config.load(os.path.join(args.model_base_dir, "config.ini"), doraise=True)
+    config.load(
+        os.path.join(args.model_base_dir, "config.ini"),
+        config_must_exist=True,
+        allow_defaults=False,
+    )
     if args.pf:
         config.set(ModelParams().section, "mask_pf", True, bool)
     p = ModelParams()
