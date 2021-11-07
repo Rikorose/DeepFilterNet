@@ -1,6 +1,7 @@
 use ndarray::prelude::*;
 use thiserror::Error;
 
+use crate::util::UtilsError;
 use crate::*;
 
 type Result<T> = std::result::Result<T, TransformError>;
@@ -9,8 +10,6 @@ type Result<T> = std::result::Result<T, TransformError>;
 pub enum TransformError {
     #[error("DF UtilsError")]
     UtilsError(#[from] UtilsError),
-    #[error("DF Rng Error")]
-    RngError(#[from] RngError),
     #[error("Transform {transform} not initalized: {msg}")]
     NotInitialized { transform: String, msg: String },
     #[error("DF error: {0}")]

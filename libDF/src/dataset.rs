@@ -58,8 +58,6 @@ pub enum DfDatasetError {
     MixError(#[from] DfMixUtilsError),
     #[error("DF Utils Error")]
     UtilsError(#[from] UtilsError),
-    #[error("DF Rng Error")]
-    RngError(#[from] RngError),
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Hdf5 Error")]

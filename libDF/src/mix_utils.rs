@@ -1,6 +1,8 @@
 use ndarray::prelude::*;
+use rand::Rng;
 use thiserror::Error;
 
+use crate::transforms::*;
 use crate::util::*;
 
 pub type Result<T> = std::result::Result<T, DfMixUtilsError>;
@@ -11,8 +13,6 @@ pub enum DfMixUtilsError {
     NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("DF Utils Error")]
     UtilsError(#[from] UtilsError),
-    #[error("DF Rng Error")]
-    RngError(#[from] RngError),
 }
 
 pub fn combine_noises(
@@ -96,11 +96,4 @@ pub fn mix_audio_signal(
         mixture *= f;
     }
     Ok((clean_out, noise, mixture))
-}
-
-pub(crate) fn mix_f(clean: ArrayView2<f32>, noise: ArrayView2<f32>, snr_db: f32) -> f32 {
-    let e_clean = clean.iter().fold(0f32, |acc, x| acc + x.powi(2)) + 1e-10;
-    let e_noise = noise.iter().fold(0f32, |acc, x| acc + x.powi(2)) + 1e-10;
-    let snr = 10f32.powf(snr_db / 10.);
-    (1f64 / (((e_noise / e_clean) * snr + 1e-10) as f64).sqrt()) as f32
 }
