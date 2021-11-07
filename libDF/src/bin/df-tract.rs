@@ -267,10 +267,10 @@ fn main() -> Result<()> {
     }
     let t0 = Instant::now();
     // loop over input stream
-    let mut i = 0;
-    for (noisy_ch, mut enh_ch) in noisy
+    for (i, (noisy_ch, mut enh_ch)) in noisy
         .axis_chunks_iter(Axis(1), hop_size)
         .zip(enh.axis_chunks_iter_mut(Axis(1), hop_size))
+        .enumerate()
     {
         for ((noisy_frame, mut enh_frame), state) in noisy_ch
             .axis_iter(Axis(0))
@@ -357,7 +357,6 @@ fn main() -> Result<()> {
                 enh_frame.as_slice_mut().unwrap(),
             );
         }
-        i += 1;
     }
     let duration_ms = t0.elapsed().as_millis();
     let audio_len_ms = noisy.len_of(Axis(1)) as f32 / sr as f32 * 1000.;
