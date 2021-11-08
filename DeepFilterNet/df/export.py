@@ -6,7 +6,8 @@ import onnxruntime
 import torch
 from icecream import ic
 
-from df import DF, config
+from libdf import DF
+from df import config
 from df.dfop import DfDelaySpec, DfOpInitSpecBuf, DfOpTimeStep
 from df.enhance import df_features
 from df.logger import init_logger
@@ -121,7 +122,7 @@ def export(
 
     print("exporting mask op")
     erb_inverse = erb_fb(state.erb_widths(), p.sr, inverse=True)
-    mask_op = Mask(erb_inverse, post_filter=p.mask_pf, delay_spec=p.conv_lookahead)
+    mask_op = Mask(erb_inverse, post_filter=p.mask_pf)
     # mask_op = torch.jit.script(mask_op)
     args = (spec, m)
     spec_m = mask_op(*args)

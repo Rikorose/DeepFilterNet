@@ -5,12 +5,9 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use df::{wav_utils::*, Complex32, DFState};
 use ini::Ini;
-use ndarray::prelude::*;
-use ndarray::Axis;
-use tract_onnx::prelude::*;
-use tract_onnx::tract_hir::shapefactoid;
-use tract_pulse::internal::ToDim;
-use tract_pulse::model::*;
+use ndarray::{prelude::*, Axis};
+use tract_onnx::{prelude::*, tract_hir::shapefactoid};
+use tract_pulse::{internal::ToDim, model::*};
 
 fn constantize_input(
     model: &mut InferenceModel,
@@ -239,8 +236,13 @@ fn main() -> Result<()> {
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
     let nb_freq_bins = fft_size / 2 + 1;
     let df_order = model_cfg.get("df_order").unwrap().parse::<usize>()?;
-    let alpha = df_cfg.get("norm_alpha").unwrap().parse::<f32>()?;
-    let min_db = df_cfg.get("min_db").unwrap().parse::<f32>()?;
+    let alpha = if let Some(a) = df_cfg.get("norm_alpha") {
+        a.parse::<f32>()?
+    } else {
+        let tau = df_cfg.get("norm_tau").unwrap().parse::<f32>()?;
+        calc_norm_alpha(sr, hop_size, tau)
+    };
+    let min_db = df_cfg.get("min_db").unwrap_or("-100").parse::<f32>()?;
     let clamp_min = 10f32.powf(min_db / 20.0);
     assert!(clamp_min < 1.0);
     dbg!(clamp_min);
@@ -324,7 +326,7 @@ fn main() -> Result<()> {
                 .pop()
                 .unwrap()
                 .into_tensor();
-            if lsnr < 30.0 {
+            if lsnr < -15.0 {
                 // Run Deep Filter Module
                 let mut df = df_net.run(tvec!(emb.into_tensor(), c0.into_tensor()))?;
                 let _alpha = df.pop().unwrap();
@@ -368,6 +370,18 @@ fn main() -> Result<()> {
     write_wav_arr2("out/enh.wav", enh.view(), sr as u32)?;
 
     Ok(())
+}
+
+fn calc_norm_alpha(sr: usize, hop_size: usize, tau: f32) -> f32 {
+    let dt = hop_size as f32 / sr as f32;
+    let alpha = f32::exp(-dt / tau);
+    let mut a = 1.0;
+    let mut precision = 3;
+    while a >= 1.0 {
+        a = (alpha * 10i32.pow(precision) as f32).round() / 10i32.pow(precision) as f32;
+        precision += 1;
+    }
+    a
 }
 
 pub fn convert_to_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
