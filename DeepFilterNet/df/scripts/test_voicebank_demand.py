@@ -17,7 +17,7 @@ from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
 from df.train import load_model
-from df.utils import as_complex
+from df.utils import as_complex, resample
 
 
 def main():
@@ -71,8 +71,9 @@ def main():
         noisy, sr = torchaudio.load(noisyfn)
         clean, sr = torchaudio.load(cleanfn)
         if sr != p.sr:
-            noisy = torchaudio.functional.resample(noisy, sr, p.sr)
-            clean = torchaudio.functional.resample(clean, sr, p.sr)
+            noisy = resample(noisy, sr, p.sr)
+            clean = resample(clean, sr, p.sr)
+            sr = p.sr
         enh = enhance(model, df_state, noisy)[0]
         clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
         noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]

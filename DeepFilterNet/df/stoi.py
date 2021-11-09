@@ -6,6 +6,8 @@ import torchaudio
 from torch import Tensor
 from torch.nn import functional as F
 
+from df.utils import resample
+
 EPS = np.finfo("float").eps
 
 
@@ -183,8 +185,8 @@ def stoi(x, y, fs_source):
     obm, _ = thirdoct(fs, N_fft, N_bands, min_freq)  # [N_fft//2-1, N_bands]
     obm = torch.from_numpy(obm).to(x)
 
-    x = torchaudio.functional.resample(x, fs_source, fs)
-    y = torchaudio.functional.resample(y, fs_source, fs)
+    x = resample(x, fs_source, fs)
+    y = resample(y, fs_source, fs)
 
     x_, y_ = remove_silent_frames(x, y, dyn_range, N_frame, N_frame // 2)
 

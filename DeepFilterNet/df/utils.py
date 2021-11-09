@@ -8,12 +8,19 @@ from typing import Any, Set, Union
 
 import numpy as np
 import torch
+import torchaudio
 from loguru import logger
 from torch import Tensor
 from torch._six import string_classes
 from torch.types import Number
 
 from df.model import ModelParams
+
+
+if torchaudio.__version__ < "0.9":
+    resample = torchaudio.compliance.kaldi.resample_waveform
+else:
+    resample = torchaudio.functional.resample
 
 
 def as_complex(x: Tensor):
