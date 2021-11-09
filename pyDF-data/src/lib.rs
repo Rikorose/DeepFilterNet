@@ -23,6 +23,7 @@ struct _TdDataLoader {
 #[pyclass]
 struct _FdDataLoader {
     loader: DataLoader<Complex32>,
+    finished: bool,
 }
 
 // TODO: Does not work due to pyo3 restrictions; instead return tuples
@@ -245,10 +246,14 @@ impl _FdDataLoader {
             dl_builder = dl_builder.overfit(overfit);
         }
         let loader = dl_builder.build().to_py_err()?;
-        Ok(_FdDataLoader { loader })
+        Ok(_FdDataLoader {
+            loader,
+            finished: false,
+        })
     }
 
     fn start_epoch(&mut self, split: &str, seed: usize) -> PyResult<()> {
+        self.finished = false;
         match self.loader.start_epoch(split, seed) {
             Err(e) => Err(PyValueError::new_err(e.to_string())),
             Ok(()) => Ok(()),
@@ -256,6 +261,9 @@ impl _FdDataLoader {
     }
 
     fn get_batch<'py>(&'py mut self, py: Python<'py>) -> PyResult<FdBatch<'py>> {
+        if self.finished {
+            return Err(PyStopIteration::new_err("Epoch finished"));
+        }
         match self.loader.get_batch::<Complex32>().to_py_err()? {
             Some(batch) => {
                 let erb = batch.feat_erb.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
@@ -274,7 +282,7 @@ impl _FdDataLoader {
                 ))
             }
             None => {
-                println!("Epoch Finished");
+                self.finished = true;
                 Err(PyStopIteration::new_err("Epoch finished"))
             }
         }
