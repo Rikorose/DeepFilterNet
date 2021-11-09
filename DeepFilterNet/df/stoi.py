@@ -2,7 +2,6 @@ from typing import List, Tuple
 
 import numpy as np
 import torch
-import torchaudio
 from torch import Tensor
 from torch.nn import functional as F
 
