@@ -1,66 +1,130 @@
 name: publish-DeepFilterNet
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Which tag to deploy as:"
+        required: true
   push:
     tags:
-       - 'v*'
+      - "v*[0-9]+.[0-9]+.[0-9]+"
+    branches:
+      feat_ci
 
 jobs:
-
-  linux-libdf-wheels:
-    runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux2014_x86_64:latest
-    strategy:
-      matrix:
-        python-version: [3.7, 3.8, 3.9, "3.10"]
-    steps:
-     - uses: actions/checkout@v1
-     - name: Build wheels
-       run: |
-         curl https://sh.rustup.rs -sSf | sh -s -- -y
-         source $HOME/.cargo/env
-         bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF/Cargo.toml
-     - uses: actions/upload-artifact@v2
-       with:
-         name: linux-libdf-wheels
-         path: wheelhouse/
-
-  linux-libdfdata-wheels:
-    runs-on: ubuntu-latest
-    container: ghcr.io/h5py/manylinux2010_x86_64-hdf5
-    strategy:
-      matrix:
-        python-version: [3.7, 3.8, 3.9, "3.10"]
-    steps:
-     - uses: actions/checkout@v1
-     - name: Build wheels
-       run: |
-         curl https://sh.rustup.rs -sSf | sh -s -- -y
-         source $HOME/.cargo/env
-         bash .github/workflows/build_linux_wheel.sh ${{ matrix.python-version }} pyDF-data/Cargo.toml
-     - uses: actions/upload-artifact@v1
-       with:
-         name: linux-libdfdata-wheels
-         path: wheelhouse/
-
-  linux-deepfilternet-wheels:
+  build-libdf-wheels:
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.7, 3.8, 3.9, "3.10"]
-        os: [ubuntu-18.04]
-    runs-on: ${{ matrix.os }}
+        python:
+          - version: "3.7"
+            tag: "37"
+            abi: "37m"
+          - version: "3.8"
+            tag: "38"
+            abi: "38"
+          - version: "3.9"
+            tag: "39"
+            abi: "39"
+          - version: "3.10"
+            tag: "310"
+            abi: "310"
+        df_wheel: ["pyDF", "pyDF-data"]
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            container: quay.io/pypa/manylinux_2_24_x86_64:latest
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+        exclude:
+          - os: windows-latest
+            df_wheel: pyDF-data
+          - os: macos-latest
+            df_wheel: pyDF-data
     steps:
-     - uses: actions/checkout@v2
-     - uses: actions/setup-python@v2
-       with:
-         python-version: ${{ matrix.python-version }}
-     - name: Install poetry
-       run: pip install poetry
-     - name: Build wheels
-       run: poetry build -vvv
-       working-directory: DeepFilterNet
-     - uses: actions/upload-artifact@v2
-       with:
-         name: linux-deepfilternet-wheels
-         path: DeepFilterNet/dist/
+      - name: Checkout DeepFilterNet
+        uses: actions/checkout@v1
+
+      - name: Install HDF5
+        if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libhdf5-dev
+
+      - name: Install Python
+        if: matrix.os != 'ubuntu-latest'
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python.version }}
+      - name: Setup Python manylinux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/"
+          ls -l /etc/*release
+          echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/" >> $GITHUB_PATH
+
+      - name: Install Maturin
+        run: |
+          python -m pip install maturin
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v1
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build wheel unix
+        if: matrix.os != 'windows-latest'
+        run: |
+          maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python${{ matrix.python.version }}
+
+      - name: Build wheel windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe
+
+      - name: Repair linux pyDF-data wheel
+        if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
+        shell: bash
+        run: |
+          auditwheel repair ./target/wheels/DeepFilterDataLoader*cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}*.whl
+          rm target/wheels/*-linux_*.whl
+          mv wheelhouse/*whl target/wheels
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: libdf-wheels
+          path: target/wheels/
+
+  build-deepfilternet-wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.7", "3.8", "3.9", "3.10"]
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install poetry
+        run: pip install poetry
+      - name: Build wheels
+        run: poetry build -vvv
+        working-directory: DeepFilterNet
+      - uses: actions/upload-artifact@v2
+        with:
+          name: deepfilternet-wheels
+          path: DeepFilterNet/dist/
