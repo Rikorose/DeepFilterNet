@@ -3,6 +3,10 @@ name = "deep_filter"
 version = "0.1.6"
 authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2021"
+description = "Noise supression using deep filtering"
+repository = "https://github.com/Rikorose/DeepFilterNet"
+license = "MIT or Apache"
+readme = "../README.md"
 
 [lib]
 name = "df"
