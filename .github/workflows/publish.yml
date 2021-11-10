@@ -9,8 +9,6 @@ on:
   push:
     tags:
       - "v*[0-9]+.[0-9]+.[0-9]+"
-    branches:
-      feat_ci
 
 jobs:
   build-libdf-wheels:
@@ -128,3 +126,29 @@ jobs:
         with:
           name: deepfilternet-wheels
           path: DeepFilterNet/dist/
+
+  publish-pypi-wheels:
+    runs-on: ubuntu-18.04
+    needs: [build-libdf-wheels, build-deepfilternet-wheels]
+    steps:
+      - uses: actions/setup-python@v2
+      - name: Get libdf wheels
+        uses: actions/download-artifact@v2
+        with:
+          name: libdf-wheels
+          path: libdf-wheels
+      - name: Get deepfilternet wheels
+        uses: actions/download-artifact@v2
+        with:
+          name: deepfilternet-wheels
+          path: deepfilternet-wheels
+      - name: Install Maturin
+        run: python -m pip install maturin
+      - name: Publish
+        shell: bash
+        env:
+          USER: ${{ secrets.PYPI_USER }}
+          PW: ${{ secrets.PYPI_PW }}
+        run: |
+          maturin upload -u "$USER" -p "$PW" libdf-wheels/*
+          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*
