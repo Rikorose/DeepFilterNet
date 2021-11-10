@@ -16,11 +16,10 @@ from torch.types import Number
 
 from df.model import ModelParams
 
-
-if torchaudio.__version__ < "0.9":
-    resample = torchaudio.compliance.kaldi.resample_waveform
-else:
-    resample = torchaudio.functional.resample
+try:
+    from torchaudio.functional import resample
+except ImportError:
+    from torchaudio.compliance.kaldi import resample_waveform as resample
 
 
 def as_complex(x: Tensor):
