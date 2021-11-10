@@ -5,7 +5,7 @@ authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2021"
 description = "Noise supression using deep filtering"
 repository = "https://github.com/Rikorose/DeepFilterNet"
-license = "MIT or Apache"
+license = "MIT/Apache-2.0"
 readme = "../README.md"
 
 [lib]
@@ -37,3 +37,9 @@ ogg = { version = "^0.8", optional=true }
 
 [dev-dependencies]
 dirs = "4.0"
+
+[package.metadata.deb]
+assets = [
+  ["LICENSE-MIT", "usr/share/doc/deep_filter/", "644"],
+  ["LICENSE-APACHE", "usr/share/doc/deep_filter/", "644"],
+]
