@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-df = { path = "../libDF", features = ["dataset"] }
+deep_filter = { path = "../libDF", features = ["dataset"] }
 pyo3 = { version = "^0.15", default_features = true, features = ["extension-module"]}
 numpy = "^0.15"
 ndarray = "^0.15"
