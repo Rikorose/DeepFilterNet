@@ -8,7 +8,6 @@ from typing import Any, Set, Union
 
 import numpy as np
 import torch
-import torchaudio
 from loguru import logger
 from torch import Tensor
 from torch._six import string_classes
@@ -19,7 +18,9 @@ from df.model import ModelParams
 try:
     from torchaudio.functional import resample
 except ImportError:
-    from torchaudio.compliance.kaldi import resample_waveform as resample
+    from torchaudio.compliance.kaldi import resample_waveform as resample  # type: ignore
+
+resample = resample
 
 
 def as_complex(x: Tensor):
