@@ -3,11 +3,10 @@ import sys
 from typing import Dict, Optional
 
 import torch
-from icecream import ic
 from loguru import logger
 from torch.types import Number
 
-from df.utils import get_branch_name, get_commit_hash, get_host
+from df.utils import get_branch_name, get_commit_hash, get_host, get_device
 
 
 def init_logger(file: Optional[str] = None, level: str = "INFO"):
@@ -52,7 +51,6 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
 
 
 def log_model_summary(model: torch.nn.Module, verbose=False):
-    ic(verbose)
     import ptflops
 
     from df.model import ModelParams
@@ -65,9 +63,10 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
     p = ModelParams()
     b = 1
     t = p.sr // p.hop_size
-    spec = torch.randn([b, 1, t, p.fft_size // 2 + 1, 2])
-    feat_erb = torch.randn([b, 1, t, p.nb_erb])
-    feat_spec = torch.randn([b, 1, t, p.nb_df, 2])
+    device = get_device()
+    spec = torch.randn([b, 1, t, p.fft_size // 2 + 1, 2]).to(device)
+    feat_erb = torch.randn([b, 1, t, p.nb_erb]).to(device)
+    feat_spec = torch.randn([b, 1, t, p.nb_df, 2]).to(device)
 
     macs, params = ptflops.get_model_complexity_info(
         model,

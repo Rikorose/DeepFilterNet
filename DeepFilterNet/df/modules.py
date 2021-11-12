@@ -8,22 +8,9 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from typing_extensions import Final
 
-from df.config import config
 from df.model import ModelParams
-from df.utils import as_complex, as_real, get_norm_alpha
+from df.utils import as_complex, as_real, get_norm_alpha, get_device
 from libdf import unit_norm_init
-
-
-def get_device():
-    s = config("DEVICE", default="", section="train")
-    if s == "":
-        if torch.cuda.is_available():
-            DEVICE = torch.device("cuda:0")
-        else:
-            DEVICE = torch.device("cpu")
-    else:
-        DEVICE = torch.device(s)
-    return DEVICE
 
 
 def convkxf(
@@ -683,6 +670,7 @@ def test_grouped_gru():
 
 def test_erb():
     import df
+    from df.config import config
 
     config.use_defaults()
     p = ModelParams()
@@ -702,6 +690,7 @@ def test_erb():
 
 def test_unit_norm():
     import df
+    from df.config import config
 
     config.use_defaults()
     p = ModelParams()
@@ -720,6 +709,8 @@ def test_unit_norm():
 
 
 def test_dfop():
+    from df.config import config
+
     config.use_defaults()
     p = ModelParams()
     f = p.nb_df

@@ -13,6 +13,7 @@ from torch import Tensor
 from torch._six import string_classes
 from torch.types import Number
 
+from df.config import config
 from df.model import ModelParams
 
 try:
@@ -21,6 +22,18 @@ except ImportError:
     from torchaudio.compliance.kaldi import resample_waveform as resample  # type: ignore
 
 resample = resample
+
+
+def get_device():
+    s = config("DEVICE", default="", section="train")
+    if s == "":
+        if torch.cuda.is_available():
+            DEVICE = torch.device("cuda:0")
+        else:
+            DEVICE = torch.device("cpu")
+    else:
+        DEVICE = torch.device(s)
+    return DEVICE
 
 
 def as_complex(x: Tensor):
