@@ -79,10 +79,11 @@ def main():
     os.makedirs(checkpoint_dir, exist_ok=True)
     mask_only: bool = config("MASK_ONLY", False, bool, section="train")
     train_df_only: bool = config("DF_ONLY", False, bool, section="train")
+    jit = config("JIT", False, cast=bool, section="train")
     model, epoch = load_model(
         checkpoint_dir,
         state,
-        jit=config("JIT", False, cast=bool, section="train"),
+        jit=False,
         mask_only=mask_only,
         train_df_only=train_df_only,
     )
@@ -92,6 +93,9 @@ def main():
         log_model_summary(model, verbose=args.debug)
     except Exception as e:
         logger.warning(f"Failed to print model summary: {e}")
+    if jit:
+        # Load as jit after log_model_summary
+        model = torch.jit.script(model)
 
     bs: int = config("BATCH_SIZE", 1, int, section="train")
     bs_eval: int = config("BATCH_SIZE_EVAL", 0, int, section="train")
