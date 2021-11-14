@@ -116,7 +116,21 @@ function _at_exit {
     exit 0
   fi
 }
+
+# Copy data from shared file system to a local folder
+if [[ -d /scratch ]]; then
+  mkdir /scratch/"$USER"
+  NEW_DATA_DIR=$(mktmp -d /scratch/"$USER"/XXXXXXXX)
+  bash "$PROJECT_HOME"/scripts/prepare_datadir.sh "$DATA_DIR" "$NEW_DATA_DIR"
+  DATA_DIR="$NEW_DATA_DIR"
+  if [[ -d "$NEW_DATA_DIR" ]]; then
+    echo "cleaning up data dir $NEW_DATA_DIR"
+    rm -r "$NEW_DATA_DIR"
+  fi
+fi
+exit
 trap _at_exit EXIT
+
 function _usr1 {
   echo "Caught SIGUSR1 signal!"
   kill -USR1 "$trainprocess" 2>/dev/null
