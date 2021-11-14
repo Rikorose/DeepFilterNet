@@ -107,12 +107,12 @@ function _at_exit {
   conda deactivate
   # Check for return code if training was completed
   echo "Checking if need to resubmit training script"
-  python3 $PROJECT_HOME/sbatch/has_continue_file.py $BASE_DIR; retVal=$?
+  python3 $PROJECT_HOME/scripts/has_continue_file.py $BASE_DIR; retVal=$?
   if [ $retVal -eq 0 ]; then
     echo "Training not completed. Resubmitting to continue training."
     sh -c "sbatch --exclude=$EXCLUDE \
       --job-name="$SLURM_JOB_NAME" \
-      $PROJECT_HOME/sbatch/train.sh $BASE_DIR $PROJECT_HOME $PROJECT_BRANCH"
+      $PROJECT_HOME/scripts/sbatch_train.sh $BASE_DIR $PROJECT_HOME $PROJECT_BRANCH"
     exit 0
   fi
 }
@@ -127,11 +127,10 @@ trap _usr1 SIGUSR1
 # Setup conda environment.
 # This installs miniconda environment if not existing, pytorch with cuda
 # integration and pip packages in requirements.txt
-. $PROJECT_HOME/sbatch/setup_env.sh --source-only
+. $PROJECT_HOME/scripts/setup_env.sh --source-only
 setup_env $CLUSTER $PROJECT_HOME $MODEL_NAME
 
 cd $PROJECT_HOME/DeepFilterNet/df/
-MODEL_DIR=$CLUSTER/models/
 
 # Start training
 printf "\n***Starting training***\n\n"
