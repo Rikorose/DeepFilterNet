@@ -46,11 +46,12 @@ setup_env() {
       "$pytorch_v_arg" \
       torchaudio \
       maturin \
+      poetry \
       cudatoolkit=$cuda_version -c "pytorch$nightly" -c conda-forge
     source activate $env
 
-    echo "Installing requirements.txt"
-    pip install -q -r $PROJECT_HOME/requirements.txt
+    echo "Installing requirements"
+    (cd $PROJECT_HOME/DeepFilterNet && poetry install)
     INSTALL_LIBDF=1
   else
     # Only need to activate the existing env
