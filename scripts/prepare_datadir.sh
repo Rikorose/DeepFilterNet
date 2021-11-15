@@ -3,7 +3,7 @@
 DATADIR="$1"
 DATACFG="$2"
 TARGETDIR="$3"
-MAX_GB=${MAX_GB:-500}  # rest will be linked
+MAX_GB=${MAX_GB:-10}  # rest will be linked
 
 USAGE="usage: prepare_datadir.sh <DATADIR> <DATACFG> <TARGETDIR>"
 
@@ -17,13 +17,7 @@ if ! [[ -f "$DATACFG" ]]; then
   exit 2
 fi
 
-if [[ -d "$TARGETDIR" ]]; then
-  if [ $(ls "$TARGETDIR" | wc -l) -gt 0 ]; then
-    echo "TARGETDIR must be empty"
-    echo "$USAGE"
-    exit 3
-  fi
-else
+if ! [[ -d "$TARGETDIR" ]]; then
   mkdir "$TARGETDIR"
 fi
 
@@ -32,17 +26,18 @@ gb_copied=0
 function copy_or_link() {
   HDF5="$1"
   s=$(ls -lH --block-size=G "$HDF5" | cut -f5 -d ' ' | tr -d G)
-  gb_copied=$(($gb_copied+$s))
-  if [ "$gb_copied" -gt "$MAX_GB" ]; then
-    echo "$HDF5"
+  new_gb=$(($gb_copied+$s))
+  if [ "$new_gb" -gt "$MAX_GB" ]; then
+    echo "linking: $HDF5"
     ln -Ls "$HDF5" "$TARGETDIR"
   else
-    if ! rsync -aPL "$HDF5" "$TARGETDIR"; then
+    if ! rsync -aL --info=name,progress2 "$HDF5" "$TARGETDIR" | stdbuf -oL tr '\r' '\n'; then
       # Most likely file system is full
-      HDF5_N=$(basename "$HDF5")
-      rm "$TARGETDIR/$HDF5_N"
-      echo "$HDF5"
+      echo
+      echo "copy failed, linking: $HDF5"
       ln -Ls "$HDF5" "$TARGETDIR"
+    else
+      gb_copied=$(($gb_copied+$s))
     fi
   fi
 }
@@ -55,18 +50,22 @@ while read -r row; do
   row="$file $factor"
   hdf5s+=("$row")
 done <<< "$(jq -c '.train[]' "$DATACFG")"
-sorted=($(printf '%s\n' "${hdf5s[@]}" | sort -k 2 -r))
+sorted=($(printf '%s\n' "${hdf5s[@]}" | sort -n -k 2 -r))
 
-for HDF5 in "${hdf5s[@]}"; do
-  # HDF5 contains the sampling factor
-  HDF5=$(echo "$HDF5" | cut -f1 -d " ")
-  copy_or_link "$DATADIR/$HDF5"
-  break
+for HDF5 in "${sorted[@]}"; do
+  # Every second element is the sampling factor.
+  # Thus, check if $HDF5 is a file
+  if [[ -e "$DATADIR/$HDF5" ]]; then
+    if ! [[ -e "$TARGETDIR"/$(basename "$HDF5") ]]; then
+      copy_or_link "$DATADIR/$HDF5"
+    fi
+  fi
 done
 
 # Copy or link the rest
-for HDF5 in "$DATADIR"/*hdf5; do
+while read -r row; do
+  HDF5=$(echo "$row" | jq '.[0]' | tr -d '\"')
   if ! [[ -e "$TARGETDIR"/$(basename "$HDF5") ]]; then
     copy_or_link "$HDF5"
   fi
-done
+done <<< "$(jq -c '.valid, .test | .[]' "$DATACFG")"
