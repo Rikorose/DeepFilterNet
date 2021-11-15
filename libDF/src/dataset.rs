@@ -714,10 +714,10 @@ impl<'a> DatasetBuilder<'a> {
             if (!path.is_file())
                 || match path.read_link() {
                     Err(_) => false,
-                    Ok(p) => p.is_file(),
+                    Ok(p) => !p.is_file(),
                 }
             {
-                eprintln!("Dataset {} not found. Skipping.", name);
+                eprintln!("Dataset {:?} not found. Skipping.", path);
                 continue;
             }
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
