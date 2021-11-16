@@ -3,7 +3,7 @@
 DATADIR="$1"
 DATACFG="$2"
 TARGETDIR="$3"
-MAX_GB=${MAX_GB:-10}  # rest will be linked
+MAX_GB=${MAX_GB:-100} # rest will be linked
 
 USAGE="usage: prepare_datadir.sh <DATADIR> <DATACFG> <TARGETDIR>"
 
@@ -25,8 +25,12 @@ fi
 gb_copied=0
 function copy_or_link() {
   HDF5="$1"
+  if ! [[ -e "$HDF5" ]]; then
+    echo "Dataset $HDF5 not found"
+    return
+  fi
   s=$(ls -lH --block-size=G "$HDF5" | cut -f5 -d ' ' | tr -d G)
-  new_gb=$(($gb_copied+$s))
+  new_gb=$(($gb_copied + $s))
   if [ "$new_gb" -gt "$MAX_GB" ]; then
     echo "linking: $HDF5"
     ln -Ls "$HDF5" "$TARGETDIR"
@@ -37,7 +41,7 @@ function copy_or_link() {
       echo "copy failed, linking: $HDF5"
       ln -Ls "$HDF5" "$TARGETDIR"
     else
-      gb_copied=$(($gb_copied+$s))
+      gb_copied=$(($gb_copied + $s))
     fi
   fi
 }
@@ -49,7 +53,7 @@ while read -r row; do
   factor=$(echo "$row" | jq '.[1]')
   row="$file $factor"
   hdf5s+=("$row")
-done <<< "$(jq -c '.train[]' "$DATACFG")"
+done <<<"$(jq -c '.train[]' "$DATACFG")"
 sorted=($(printf '%s\n' "${hdf5s[@]}" | sort -n -k 2 -r))
 
 for HDF5 in "${sorted[@]}"; do
@@ -66,6 +70,6 @@ done
 while read -r row; do
   HDF5=$(echo "$row" | jq '.[0]' | tr -d '\"')
   if ! [[ -e "$TARGETDIR"/$(basename "$HDF5") ]]; then
-    copy_or_link "$HDF5"
+    copy_or_link "$DATADIR/$HDF5"
   fi
-done <<< "$(jq -c '.valid, .test | .[]' "$DATACFG")"
+done <<<"$(jq -c '.valid, .test | .[]' "$DATACFG")"
