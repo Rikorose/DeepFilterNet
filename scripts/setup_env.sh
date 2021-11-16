@@ -70,7 +70,8 @@ setup_env() {
   fi
   if [ $INSTALL_LIBDF -eq 1 ]; then
     cd "$PROJECT_HOME"/ || exit 10
-    rustup default stable; rustup update
+    rustup default stable
+    rustup update
     maturin build --release -i python$PYTHON_V -m "$PROJECT_HOME"/pyDF/Cargo.toml
     maturin build --release -i python$PYTHON_V -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
     # Python version without dot
