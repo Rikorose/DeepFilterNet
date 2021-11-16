@@ -1,0 +1,10 @@
+[tool.black]
+line-length = 100
+target-version = ["py37", "py38", "py39"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+known_first_party = ["df", "libdf", "libdfdata"]
