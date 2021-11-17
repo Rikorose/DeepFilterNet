@@ -169,7 +169,7 @@ where
     idcs: Arc<Mutex<VecDeque<usize>>>,
     current_split: Split,
     fill_thread: Option<thread::JoinHandle<Result<()>>>,
-    out_receiver: Option<Receiver<Sample<T>>>,
+    out_receiver: Option<Receiver<Result<Sample<T>>>>,
     overfit: bool,
 }
 
@@ -329,7 +329,7 @@ where
                 // To make sure, we get the samples in the correct order, we could add another
                 // ordering index and some kind of cache to use in get_batch().
                 |(), idx| -> Result<()> {
-                    let sample = ds.get_sample(idx)?;
+                    let sample = ds.get_sample(idx);
                     if let Err(e) = out_sender.send(sample) {
                         return Err(DfDatasetError::SendError(e.to_string()));
                     }
@@ -399,7 +399,7 @@ where
                     tries += 1;
                     continue 'outer;
                 }
-                Ok(s) => samples.push(s),
+                Ok(s) => samples.push(s?),
             }
             i += 1;
             tries = 0;
@@ -1594,7 +1594,6 @@ mod tests {
                 sr as u32,
                 1,
             )?;
-            break;
         }
         loader.start_epoch("train", 2)?;
         for i in 0..2 {
