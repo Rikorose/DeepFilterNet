@@ -312,7 +312,7 @@ def setup_losses() -> Loss:
 
     p = ModelParams()
 
-    istft = Istft(p.sr, p.fft_size, p.hop_size, torch.as_tensor(state.fft_window().copy())).to(
+    istft = Istft(p.fft_size, p.hop_size, torch.as_tensor(state.fft_window().copy())).to(
         get_device()
     )
     loss = Loss(state, istft).to(get_device())

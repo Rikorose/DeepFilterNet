@@ -51,9 +51,8 @@ class angle(Function):
 
 
 class Istft(nn.Module):
-    def __init__(self, sr: int, n_fft_inv: int, hop_inv: int, window_inv: Tensor):
+    def __init__(self, n_fft_inv: int, hop_inv: int, window_inv: Tensor):
         super().__init__()
-        self.sr = sr
         # Synthesis back to time domain
         self.n_fft_inv = n_fft_inv
         self.hop_inv = hop_inv
