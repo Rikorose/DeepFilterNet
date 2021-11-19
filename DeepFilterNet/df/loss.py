@@ -1,13 +1,13 @@
 import warnings
 from collections import defaultdict
-from typing import Dict, Final, List, Optional
+from typing import Dict, Final, Iterable, List, Optional, Union
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.autograd import Function
 
-from df.config import config
+from df.config import Csv, config
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
@@ -50,6 +50,32 @@ class angle(Function):
         return torch.view_as_complex(torch.stack((-x.imag * grad_inv, x.real * grad_inv), dim=-1))
 
 
+class Stft(nn.Module):
+    def __init__(self, n_fft: int, hop: Optional[int] = None, window: Optional[Tensor] = None):
+        super().__init__()
+        self.n_fft = n_fft
+        self.hop = hop or n_fft // 4
+        if window is not None:
+            assert window.shape[0] == n_fft
+        else:
+            window = torch.hann_window(self.n_fft)
+        self.w: torch.Tensor
+        self.register_buffer("w", window)
+
+    def forward(self, input: Tensor):
+        # Time-domain input shape: [B, T]
+        input = as_complex(input)
+        t = input.shape[-1]
+        return torch.stft(
+            input.view(-1, t),
+            n_fft=self.n_fft,
+            hop_length=self.hop,
+            window=self.w,
+            normalized=True,
+            return_complex=True,
+        )
+
+
 class Istft(nn.Module):
     def __init__(self, n_fft_inv: int, hop_inv: int, window_inv: Tensor):
         super().__init__()
@@ -73,6 +99,47 @@ class Istft(nn.Module):
             window=self.w_inv,
             normalized=True,
         )
+
+
+class MultiResSpecLoss(nn.Module):
+    gamma: Final[float]
+    f: Final[float]
+    f_complex: Final[Optional[List[float]]]
+
+    def __init__(
+        self,
+        n_ffts: Iterable[int],
+        gamma: float = 1,
+        factor: float = 1,
+        f_complex: Optional[Union[float, Iterable[float]]] = None,
+    ):
+        self.gamma = gamma
+        self.f = factor
+        self.stfts = nn.ModuleDict({str(n_fft): Stft(n_fft) for n_fft in n_ffts})
+        if f_complex is None or f_complex == 0:
+            self.f_complex = None
+        elif isinstance(f_complex, Iterable):
+            self.f_complex = list(f_complex)
+        else:
+            self.f_complex = [f_complex] * len(self.stfts)
+
+    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+        loss = torch.zeros((), device=input.device, dtype=input.dtype)
+        for i, stft in enumerate(self.stfts.values()):
+            Y = stft(input)
+            S = stft(target)
+            Y_abs = Y.abs()
+            S_abs = S.abs()
+            if self.gamma != 1:
+                Y_abs = Y_abs.clamp_min(1e-12).pow(self.gamma)
+                S_abs = S_abs.clamp_min(1e-12).pow(self.gamma)
+            loss += F.mse_loss(Y_abs, S_abs) * self.f
+            if self.f_complex is not None:
+                if self.gamma != 1:
+                    Y = Y_abs * torch.exp(1j * angle.apply(Y))
+                    S = S_abs * torch.exp(1j * angle.apply(S))
+                loss += F.mse_loss(torch.view_as_real(Y), torch.view_as_real(S)) * self.f_complex[i]
+        return loss
 
 
 class SpectralLoss(nn.Module):
@@ -307,6 +374,7 @@ class Loss(nn.Module):
     ml_f: Final[float]
     cal_f: Final[float]
     sl_f: Final[float]
+    mrsl_f: Final[float]
 
     def __init__(self, state: DF, istft: Optional[Istft] = None):
         super().__init__()
@@ -347,6 +415,16 @@ class Loss(nn.Module):
             )
         else:
             self.sl = None
+        # Multi Resolution Spectrogram Loss
+        self.mrsl_f = config("factor", 0, float, section="MultiResSpecLoss")
+        self.mrsl_fc = config("factor_complex", 0, float, section="MultiResSpecLoss")
+        self.mrsl_gamma = config("gamma", 1, float, section="MultiResSpecLoss")
+        self.mrsl_ffts: List[int] = config("gamma", [512, 1024, 2048], Csv(), section="MultiResSpecLoss")  # type: ignore
+        if self.mrsl_f > 0:
+            assert istft is not None
+            self.mrsl = MultiResSpecLoss(self.mrsl_ffts, self.mrsl_gamma, self.mrsl_f, self.mrsl_fc)
+        else:
+            self.mrsl = None
 
     def forward(
         self,
@@ -366,31 +444,37 @@ class Loss(nn.Module):
                 .mul(self.fft_size)
                 .div(self.sr, rounding_mode="trunc")
             ).long()
+        enhanced_td = None
+        clean_td = None
+        if self.istft is not None:
+            if self.store_losses or self.mrsl is not None:
+                enhanced_td = self.istft(enhanced)
+                clean_td = self.istft(clean)
 
-        ml, sl, cal = [torch.zeros((), device=clean.device)] * 3
+        ml, sl, mrsl, cal = [torch.zeros((), device=clean.device)] * 4
         if self.ml_f != 0 and self.ml is not None:
             ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
             sl = self.sl(input=enhanced, target=clean)
+        if self.mrsl_f > 0 and self.mrsl is not None:
+            mrsl = self.mrsl(enhanced_td, clean_td)
         if self.cal_f != 0 and self.cal is not None:
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.store_losses and self.istft is not None:
-            enhanced_td = self.istft(enhanced)
-            clean_td = self.istft(clean)
-            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, cal)
+            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, cal)  # type: ignore
         return ml + sl + cal
 
     def reset_summaries(self):
         self.summaries = defaultdict(list)
         return self.summaries
 
-    @torch.jit.ignore
+    @torch.jit.ignore  # type: ignore
     def get_summaries(self):
         return self.summaries.items()
 
     @torch.no_grad()
-    @torch.jit.ignore
+    @torch.jit.ignore  # type: ignore
     def store_summaries(
         self,
         enh_td: Tensor,
