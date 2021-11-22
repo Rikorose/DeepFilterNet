@@ -301,6 +301,7 @@ def run_epoch(
                 df_alpha,
                 summary_dir,
                 mask_loss=losses.ml,
+                split=split,
             )
     cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     return torch.stack(l_mem).mean().cpu().item()
@@ -362,6 +363,7 @@ def summary_write(
     df_alpha: Tensor,
     summary_dir: str,
     mask_loss: Optional[MaskLoss] = None,
+    split="train",
 ):
     global state
     assert state is not None
@@ -376,14 +378,21 @@ def summary_write(
         ideal = mask_loss.erb_mask_compr(clean[0], noisy[0], compressed=False)
         ideal = noisy[0] * mask_loss.erb_inv(ideal)
         torchaudio.save(
-            os.path.join(summary_dir, f"idealmask_snr{snr}.wav"), synthesis(ideal), p.sr
+            os.path.join(summary_dir, f"{split}_idealmask_snr{snr}.wav"), synthesis(ideal), p.sr
         )
-    torchaudio.save(os.path.join(summary_dir, f"clean_snr{snr}.wav"), synthesis(clean[0]), p.sr)
-    torchaudio.save(os.path.join(summary_dir, f"noisy_snr{snr}.wav"), synthesis(noisy[0]), p.sr)
-    torchaudio.save(os.path.join(summary_dir, f"enh_snr{snr}.wav"), synthesis(enh[0]), p.sr)
-    np.savetxt(os.path.join(summary_dir, f"lsnr_snr{snr}.txt"), lsnr[0].detach().cpu().numpy())
+    torchaudio.save(
+        os.path.join(summary_dir, f"{split}_clean_snr{snr}.wav"), synthesis(clean[0]), p.sr
+    )
+    torchaudio.save(
+        os.path.join(summary_dir, f"{split}_noisy_snr{snr}.wav"), synthesis(noisy[0]), p.sr
+    )
+    torchaudio.save(os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[0]), p.sr)
     np.savetxt(
-        os.path.join(summary_dir, f"df_alpha_snr{snr}.txt"), df_alpha[0].detach().cpu().numpy()
+        os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"), lsnr[0].detach().cpu().numpy()
+    )
+    np.savetxt(
+        os.path.join(summary_dir, f"{split}_df_alpha_snr{snr}.txt"),
+        df_alpha[0].detach().cpu().numpy(),
     )
 
 
