@@ -64,7 +64,6 @@ class Stft(nn.Module):
 
     def forward(self, input: Tensor):
         # Time-domain input shape: [B, T]
-        input = as_complex(input)
         t = input.shape[-1]
         return torch.stft(
             input.view(-1, t),
@@ -113,6 +112,7 @@ class MultiResSpecLoss(nn.Module):
         factor: float = 1,
         f_complex: Optional[Union[float, Iterable[float]]] = None,
     ):
+        super().__init__()
         self.gamma = gamma
         self.f = factor
         self.stfts = nn.ModuleDict({str(n_fft): Stft(n_fft) for n_fft in n_ffts})
@@ -148,10 +148,7 @@ class SpectralLoss(nn.Module):
     f_c: Final[float]
 
     def __init__(
-        self,
-        gamma: float = 1,
-        factor_magnitude: float = 1,
-        factor_complex: float = 1,
+        self, gamma: float = 1, factor_magnitude: float = 1, factor_complex: float = 1,
     ):
         super().__init__()
         self.gamma = gamma
@@ -419,7 +416,7 @@ class Loss(nn.Module):
         self.mrsl_f = config("factor", 0, float, section="MultiResSpecLoss")
         self.mrsl_fc = config("factor_complex", 0, float, section="MultiResSpecLoss")
         self.mrsl_gamma = config("gamma", 1, float, section="MultiResSpecLoss")
-        self.mrsl_ffts: List[int] = config("gamma", [512, 1024, 2048], Csv(), section="MultiResSpecLoss")  # type: ignore
+        self.mrsl_ffts: List[int] = config("fft_sizes", [512, 1024, 2048], Csv(int), section="MultiResSpecLoss")  # type: ignore
         if self.mrsl_f > 0:
             assert istft is not None
             self.mrsl = MultiResSpecLoss(self.mrsl_ffts, self.mrsl_gamma, self.mrsl_f, self.mrsl_fc)
@@ -433,7 +430,7 @@ class Loss(nn.Module):
         enhanced: Tensor,
         mask: Tensor,
         lsnr: Tensor,
-        df_alpha: Tensor,
+        df_alpha: Optional[Tensor],
         snrs: Tensor,
         max_freq: Optional[Tensor] = None,
     ):
@@ -458,11 +455,11 @@ class Loss(nn.Module):
             sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
             mrsl = self.mrsl(enhanced_td, clean_td)
-        if self.cal_f != 0 and self.cal is not None:
+        if self.cal_f != 0 and self.cal is not None and df_alpha is not None:
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.store_losses and self.istft is not None:
-            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, cal)  # type: ignore
+            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, mrsl, cal)  # type: ignore
         return ml + sl + mrsl + cal
 
     def reset_summaries(self):
@@ -482,6 +479,7 @@ class Loss(nn.Module):
         snrs: Tensor,
         ml: Tensor,
         sl: Tensor,
+        mrsl: Tensor,
         cal: Tensor,
     ):
         if ml != 0:
@@ -490,6 +488,8 @@ class Loss(nn.Module):
             self.summaries["SpectralLoss"].append(sl.detach())
         if cal != 0:
             self.summaries["DfAlphaLoss"].append(cal.detach())
+        if mrsl != 0:
+            self.summaries["MultiResSpecLoss"].append(mrsl.detach())
         sdr = SiSdr()
         sdr_vals: Tensor = sdr(enh_td.detach(), target=clean_td.detach())
         stoi_vals: Tensor = stoi(y=enh_td.detach(), x=clean_td.detach(), fs_source=self.sr)
