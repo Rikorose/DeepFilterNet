@@ -463,7 +463,7 @@ class Loss(nn.Module):
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.store_losses and self.istft is not None:
             self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, cal)  # type: ignore
-        return ml + sl + cal
+        return ml + sl + mrsl + cal
 
     def reset_summaries(self):
         self.summaries = defaultdict(list)
