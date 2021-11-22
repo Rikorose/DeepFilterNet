@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -17,22 +17,55 @@ def convkxf(
     out_ch: Optional[int] = None,
     k: int = 1,
     f: int = 3,
-    fstride: int = 2,
+    f_stride: int = 2,
+    f_dilation: int = 1,
     lookahead: int = 0,
-    batch_norm: bool = False,
+    norm: Optional[Union[str, bool]] = None,
     act: nn.Module = nn.ReLU(inplace=True),
     mode="normal",  # must be "normal", "transposed" or "upsample"
     depthwise: bool = True,
     complex_in: bool = False,
+    n_freqs: Optional[int] = None,
+    batch_norm: Optional[bool] = None,  # Depracted
+    fstride: Optional[int] = None,  # Depracted
 ):
-    bias = batch_norm is False
+    """Conv2d - norm - activation.
+
+    Convolution input shape [B, C_in, T, F].
+    Output shape [B, C_out, T, F/fstride].
+
+    Args:
+        in_ch (int): Conv input channels.
+        out_ch (int): Conv output channels.
+        k (int): Kernel size over time axis.
+        f (int): Kernel size over frequency axis.
+        f_stride (int): Stride over frequency axis.
+        f_dilation (int): Dilation over frequency axis.
+        lookahead (int): Lookahead over time axis.
+        norm (str): Either 'batch_norm', 'layer_norm' or `None` (default None).
+        act (nn.Module): Activation function (default nn.ReLU).
+        mode (str): Convolution mode. "normal": Standard convolution, "transposed": Transposed
+            convolution, "upsample": Nearest neighbour upsample + standard convolution.
+        depthwise (bool): Use a fully grouped convolution followed by a 1x1 convolution (default
+            True).
+        complex_in (bool): Depracted.
+        n_freqs (int): Number of input frequencies (F) used for layer normalization (default None).
+    """
+    if fstride is not None:
+        f_stride = fstride
+    if batch_norm is not None:
+        norm = "batch_norm" if batch_norm is True else None
+    modules = []  # List of sequentially applied modules
+    bias = norm is None
     assert f % 2 == 1
-    stride = 1 if f == 1 else (1, fstride)
+    stride = 1 if f == 1 else (1, f_stride)
+    dilation = 1 if f_dilation == 1 else (1, f_dilation)
     if out_ch is None:
         out_ch = in_ch * 2 if mode == "normal" else in_ch // 2
-    fpad = (f - 1) // 2
+    # Frequency padding
+    fpad = (f - 1) // 2 + (f_dilation - 1)
+    ic(fpad, f_dilation)
     convpad = (0, fpad)
-    modules = []
     # Manually pad for time axis kernel to not introduce delay
     pad = (0, 0, k - 1 - lookahead, lookahead)
     if any(p > 0 for p in pad):
@@ -45,11 +78,14 @@ def convkxf(
         groups = 1
     if complex_in and groups % 2 == 0:
         groups //= 2
+    if k == 1 and f == 1:
+        groups = 1
     convkwargs = {
         "in_channels": in_ch,
         "out_channels": out_ch,
         "kernel_size": (k, f),
         "stride": stride,
+        "dilation": dilation,
         "groups": groups,
         "bias": bias,
     }
@@ -66,15 +102,23 @@ def convkxf(
             ("sconvt", nn.ConvTranspose2d(padding=padding, output_padding=convpad, **convkwargs))
         )
     elif mode == "upsample":
-        modules.append(("upsample", FreqUpsample(fstride)))
+        modules.append(("upsample", FreqUpsample(f_stride)))
         convkwargs["stride"] = 1
         modules.append(("sconv", nn.Conv2d(padding=convpad, **convkwargs)))
     else:
         raise NotImplementedError()
     if groups > 1:
         modules.append(("1x1conv", nn.Conv2d(out_ch, out_ch, 1, bias=False)))
-    if batch_norm:
-        modules.append(("norm", nn.BatchNorm2d(out_ch)))
+    if norm is not None:
+        if isinstance(norm, bool) or norm.lower() == "batch_norm":
+            modules.append(("norm", nn.BatchNorm2d(out_ch)))
+        elif norm.lower() == "layer_norm":
+            assert n_freqs is not None
+            # Output shape [N, C, T, F/fstride]
+            n_freqs = n_freqs // f_stride if mode == "normal" else n_freqs * f_stride
+            modules.append(("norm", nn.LayerNorm(n_freqs)))
+        else:
+            raise NotImplementedError(f"Norm {norm} not implemented.")
     modules.append(("act", act))
     return nn.Sequential(OrderedDict(modules))
 
