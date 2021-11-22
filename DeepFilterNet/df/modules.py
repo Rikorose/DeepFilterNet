@@ -28,6 +28,7 @@ def convkxf(
     n_freqs: Optional[int] = None,
     batch_norm: Optional[bool] = None,  # Depracted
     fstride: Optional[int] = None,  # Depracted
+    not_simplify_grouping: bool = False,
 ):
     """Conv2d - norm - activation.
 
@@ -77,7 +78,7 @@ def convkxf(
         groups = 1
     if complex_in and groups % 2 == 0:
         groups //= 2
-    if k == 1 and f == 1:
+    if k == 1 and f == 1 and not not_simplify_grouping:
         groups = 1
     convkwargs = {
         "in_channels": in_ch,
