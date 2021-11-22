@@ -64,7 +64,6 @@ def convkxf(
         out_ch = in_ch * 2 if mode == "normal" else in_ch // 2
     # Frequency padding
     fpad = (f - 1) // 2 + (f_dilation - 1)
-    ic(fpad, f_dilation)
     convpad = (0, fpad)
     # Manually pad for time axis kernel to not introduce delay
     pad = (0, 0, k - 1 - lookahead, lookahead)

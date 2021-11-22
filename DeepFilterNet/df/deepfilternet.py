@@ -268,7 +268,7 @@ class DfNet(nn.Module):
         self,
         spec: Tensor,
         feat_erb: Tensor,
-        feat_spec: Tensor,  # Not used, take spec modified by mask instead
+        feat_spec: Tensor,
         atten_lim: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         feat_spec = feat_spec.transpose(1, 4).squeeze(4)  # re/im into channel axis
