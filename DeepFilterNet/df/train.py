@@ -360,7 +360,7 @@ def summary_write(
     enh: Tensor,
     snrs: Tensor,
     lsnr: Tensor,
-    df_alpha: Tensor,
+    df_alpha: Optional[Tensor],
     summary_dir: str,
     mask_loss: Optional[MaskLoss] = None,
     split="train",
@@ -390,10 +390,11 @@ def summary_write(
     np.savetxt(
         os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"), lsnr[0].detach().cpu().numpy()
     )
-    np.savetxt(
-        os.path.join(summary_dir, f"{split}_df_alpha_snr{snr}.txt"),
-        df_alpha[0].detach().cpu().numpy(),
-    )
+    if df_alpha is not None:
+        np.savetxt(
+            os.path.join(summary_dir, f"{split}_df_alpha_snr{snr}.txt"),
+            df_alpha[0].detach().cpu().numpy(),
+        )
 
 
 def summary_noop(*__args, **__kwargs):  # type: ignore
