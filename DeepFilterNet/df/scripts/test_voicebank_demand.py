@@ -59,7 +59,10 @@ def main():
     assert os.path.isdir(args.dataset_dir)
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
-    enh_dir = os.path.join(args.dataset_dir, "enhanced")
+    if args.output_dir is not None:
+        enh_dir = args.output_dir
+    else:
+        enh_dir = os.path.join(args.dataset_dir, "enhanced")
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
     os.makedirs(enh_dir, exist_ok=True)
     enh_stoi = []
