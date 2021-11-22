@@ -9,8 +9,8 @@
 #SBATCH --mail-type=ALL
 # Time limit format: "hours:minutes:seconds"
 #SBATCH --time=24:00:00
-# Send the SIGUSR1 signal 1 h before time limit
-#SBATCH --signal=B:USR1@3600
+# Send the SIGUSR1 signal 2 h before time limit
+#SBATCH --signal=B:USR1@7200
 
 set -e
 
@@ -105,6 +105,28 @@ fi
 . "$PROJECT_HOME"/scripts/setup_env.sh --source-only
 setup_env "$CLUSTER" "$PROJECT_HOME" "$MODEL_NAME"
 
+# Copy data from shared file system to a local folder
+if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
+  test -d "/scratch/$USER" || mkdir "/scratch/$USER"
+  NEW_DATA_DIR=/scratch/"$USER"/"$PROJECT_NAME"
+  mkdir -p "$NEW_DATA_DIR"
+  # Check if another process is currently copying
+  while true; do
+    LOCK=$(rg lock "$NEW_DATA_DIR"/data_lock | sed "s/-lock//g")
+    if [[ -n $LOCK ]]; then
+      echo "Scratch dir is currently locked by: $LOCK"
+      sleep 30s
+    else
+      break
+    fi
+  done
+  echo "$MODEL_NAME-lock" >> "$NEW_DATA_DIR"/data_lock  # lock scratch dir
+  "$PROJECT_HOME"/scripts/prepare_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
+  # release copy lock; remaining $MODEL_NAME indicates we are using it
+  sed -i "s/$MODEL_NAME-lock/$MODEL_NAME/g"  "$NEW_DATA_DIR"/data_lock
+  DATA_DIR="$NEW_DATA_DIR"
+fi
+
 # Signal handlers.
 # This is used to indicate that maximum training time will be exceeded.
 # Therefore, we send a SIGUSR1 to the python training script which needs to
@@ -123,28 +145,20 @@ function _at_exit {
       $PROJECT_HOME/scripts/sbatch_train.sh $BASE_DIR $PROJECT_HOME $PROJECT_BRANCH"
     exit 0
   fi
+  echo "Checking if need to cleanup scratch: $NEW_DATA_DIR"
   if [[ -d $NEW_DATA_DIR ]]; then
     if [[ $COPY_DATA -eq 1 ]]; then
       cat "$NEW_DATA_DIR"/data_lock
       # Remove own lock
       sed -i /"$MODEL_NAME"/d "$NEW_DATA_DIR"/data_lock
       if ! wc -l "$NEW_DATA_DIR"/data_lock; then
+        # No other locks found. Cleanup space.
         echo "cleaning up data dir $NEW_DATA_DIR"
         rm -r "$NEW_DATA_DIR"
       fi
     fi
   fi
 }
-
-# Copy data from shared file system to a local folder
-if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
-  test -d "/scratch/$USER" || mkdir "/scratch/$USER"
-  NEW_DATA_DIR=/scratch/"$USER"/"$PROJECT_NAME"
-  mkdir -p "$NEW_DATA_DIR"
-  echo "$MODEL_NAME" >>"$NEW_DATA_DIR"/data_lock
-  "$PROJECT_HOME"/scripts/prepare_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
-  DATA_DIR="$NEW_DATA_DIR"
-fi
 trap _at_exit EXIT
 
 function _usr1 {
