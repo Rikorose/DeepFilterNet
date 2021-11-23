@@ -35,6 +35,13 @@ class ModelParams(DfParams):
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
 
+def softmax2d(input: Tensor) -> Tensor:
+    assert input.ndim == 4
+    num = input.exp()
+    denum = num.sum(dim=(2, 3), keepdim=True)
+    return num / denum
+
+
 class SpectalRecurrentAttention(nn.Module):
     def __init__(self, input_freqs: int, input_ch: int, hidden_dim: int):
         super().__init__()
@@ -42,39 +49,36 @@ class SpectalRecurrentAttention(nn.Module):
         self.input_freqs = input_freqs
         self.input_ch = input_ch
         self.hidden_dim = hidden_dim
-        self.gru_q = nn.GRU(input_ch, hidden_dim)
-        self.gru_k = nn.GRU(input_ch, hidden_dim)
-        self.gru_v = nn.GRU(input_ch, hidden_dim)
-        # self.gru_o = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
-        self.fc_o = nn.Linear(hidden_dim, input_ch)
+        kwargs = {
+            "in_ch": input_ch,
+            "out_ch": hidden_dim,
+            "k": 1,
+            "f": 3,
+            "f_stride": 1,
+            "n_freqs": input_freqs,
+            "norm": None,
+            "act": None,
+        }
+        self.conv_q = convkxf(**kwargs)
+        self.conv_k = convkxf(**kwargs)
+        self.conv_v = convkxf(**kwargs)
+        self.gru_o = nn.GRU(hidden_dim * input_freqs, input_ch * input_freqs, batch_first=True)
 
-    def get_h0(self, batch_size: int = 1, device: torch.device = torch.device("cpu")):
-        return torch.zeros(3, self.input_freqs * batch_size, self.hidden_dim, device=device)
-
-    def forward(self, input: Tensor, state: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-        # Input shape: [T, B, F, C]
-        if state is None:
-            state = self.get_h0(batch_size=input.shape[1], device=input.device)
-        h_q, h_k, h_v = torch.split(state, 1, dim=0)
-        t, b, f, c = input.shape
-        q, h_q = self.gru_q(input.flatten(1, 2), h_q)  # [T, B*F, H]
-        k, h_k = self.gru_k(input.flatten(1, 2), h_k)  # [T, B*F, H]
-        # TODO: Try fully connected value rnn via [T, B, F*C]
-        v, h_v = self.gru_v(input.flatten(1, 2), h_v)  # [T, B*F, H]
-        q = q.unflatten(1, (b, f))  # [T, B, F, H]
-        k = k.unflatten(1, (b, f)).transpose(2, 3)  # [T, B, H, F]
-        w = q.matmul(k).div(self.hidden_dim ** 0.5)
+    def forward(self, input: Tensor, h: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+        # Input shape: [B, C, T, F]
+        q = self.conv_q(input)  # [B, H, T, F]
+        k = self.conv_k(input)  # [B, H, T, F]
+        v = self.conv_v(input)  # [B, H, T, F]
+        q = q.permute(0, 2, 3, 1)  # [B, T, F, H]
+        k = k.transpose(1, 2)  # [B, T, H, F]
+        w = q.matmul(k).div(self.hidden_dim ** 0.5)  # [B, T, F, F]
         w = softmax2d(w)
-        v = w.matmul(v.view(t, b, f, self.hidden_dim))  # [B, T, H]
-        o = self.fc_o(v)  # [B, T, F, H]
-        state = torch.cat((h_q, h_k, h_v), dim=0)  # [B, T, F, C]
-        return o, state
-
-
-def softmax2d(input: Tensor) -> Tensor:
-    num = input.exp()
-    denum = num.sum(dim=(2, 3), keepdim=True)
-    return num / denum
+        v = v.permute(0, 2, 3, 1)  # [B, T, F, H]
+        v = w.matmul(v)  # [B, T, F, H]
+        o, h = self.gru_o.forward(v.flatten(2, 3), h)  # [B, T, F, H]
+        o = o.unflatten(2, (self.input_ch, self.input_freqs))  # [B, T, C, F]
+        o = o.transpose(1, 2)  # [B, C, T, F]
+        return o, h
 
 
 class SpectralRefinement(nn.Module):
@@ -123,17 +127,11 @@ class SpectralRefinement(nn.Module):
         # input shape: [B, 2, T, F]
         x0 = self.conv0(input)  # [B, C, T, F]
         x = self.conv1(x0)  # [B, C, T, F]
-        e = x.permute(2, 0, 3, 1)  # [T, B, F, C] (channels_last)
-        e, h_atten = self.ratten.forward(e, h_atten)  # [T, B, F, C]
-        e = e.permute(1, 3, 0, 2)  # [B, C, T, F]
+        e, h_atten = self.ratten.forward(x, h_atten)  # [B, C, T, F]
         e = self.ln(x + e)
-        x = self.conv2(e)  # [B, C, T, F]
-        x = self.conv3(x + x0)  # [B, 2, T, F]
-        # i_re = input[:, 0] * x[:, 0] - input[:, 1] * x[:, 1]
-        # i_im = input[:, 1] * x[:, 0] + input[:, 0] * x[:, 1]
-        # input = torch.stack((i_re, i_im), dim=-1)
-        # print(x.min(), x.max(), x.norm(), input.min(), input.max(), input.norm())
-        x = input + x
+        x = self.conv2(x)  # [B, C, T, F]
+        x = self.conv3(x + x0)
+        input = input + x
         return x, h_atten
 
 
@@ -160,21 +158,16 @@ class ErbStage(nn.Module):
         # input shape: [B, 1, T, F]
         x = self.conv0(input)  # [B, C, T, F]
         x = self.conv1(x)  # [B, C, T, F]
-        e = x.permute(2, 0, 3, 1)  # [T, B, F, C] (channels_last)
-        e, h_atten = self.ratten.forward(e, h_atten)  # [T, B, F, C]
-        lsnr, h_snr = self.gru_snr.forward(e.flatten(2, 3), h_snr)
+        e, h_atten = self.ratten.forward(x, h_atten)  # [B, C, T, F]
+        lsnr, h_snr = self.gru_snr.forward(e.transpose(1, 2).flatten(2, 3), h_snr)
         lsnr = self.fc_snr(lsnr) * self.lsnr_scale + self.lsnr_offset
-        e = e.permute(1, 3, 0, 2)  # [B, C, T, F]
-        e = self.ln(x + e)
-        m = self.conv2(e)  # [B, 1, T, F]
+        x = self.ln(x + e)
+        m = self.conv2(x)  # [B, 1, T, F]
         return m, lsnr, h_atten, h_snr
 
 
 class MSNet(nn.Module):
-    def __init__(
-        self,
-        erb_inv_fb: Tensor,
-    ):
+    def __init__(self, erb_inv_fb: Tensor):
         super().__init__()
         p = ModelParams()
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
@@ -190,12 +183,8 @@ class MSNet(nn.Module):
         )
 
     def forward(
-        self,
-        spec: Tensor,
-        feat_erb: Tensor,
-        feat_spec: Tensor,
-        atten_lim: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Tensor, Tensor, List[Tensor]]:
+        self, spec: Tensor, feat_erb: Tensor, feat_spec: Tensor, atten_lim: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Tensor, Tensor, None]:
         # Set memory format so stride represents NHWC order
         m, lsnr, _, _ = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
