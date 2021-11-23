@@ -21,7 +21,7 @@ def convkxf(
     f_dilation: int = 1,
     lookahead: int = 0,
     norm: Optional[Union[str, bool]] = None,
-    act: nn.Module = nn.ReLU(inplace=True),
+    act: Optional[nn.Module] = nn.ReLU(inplace=True),
     mode="normal",  # must be "normal", "transposed" or "upsample"
     depthwise: bool = True,
     complex_in: bool = False,
@@ -78,7 +78,7 @@ def convkxf(
         groups = 1
     if complex_in and groups % 2 == 0:
         groups //= 2
-    if k == 1 and f == 1 and not not_simplify_grouping:
+    if k == 1 and f == 1 and not_simplify_grouping:
         groups = 1
     convkwargs = {
         "in_channels": in_ch,
@@ -119,7 +119,8 @@ def convkxf(
             modules.append(("norm", nn.LayerNorm(n_freqs)))
         else:
             raise NotImplementedError(f"Norm {norm} not implemented.")
-    modules.append(("act", act))
+    if act is not None:
+        modules.append(("act", act))
     return nn.Sequential(OrderedDict(modules))
 
 
