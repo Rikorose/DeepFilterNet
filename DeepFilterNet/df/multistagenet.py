@@ -79,12 +79,18 @@ class SpectralRefinement(nn.Module):
         kwargs = {"k": 1, "f": 3, "norm": "layer_norm"}
         self.conv0 = convkxf(in_ch=2, fstride=1, out_ch=self.lw, n_freqs=p.nb_df, **kwargs)
         self.conv1 = convkxf(
-            in_ch=self.lw, out_ch=self.lw, fstride=2, f_dilation=dilation, n_freqs=p.nb_df, **kwargs
-        )
-        self.ratten = SpectalRecurrentAttention(self.fe, self.lw, p.erb_hidden_dim)
-        self.ln = nn.LayerNorm([p.nb_erb, self.lw])
-        self.conv2 = convkxf(
             in_ch=self.lw,
+            out_ch=self.lw // 2,
+            fstride=2,
+            f_dilation=dilation,
+            n_freqs=p.nb_df,
+            **kwargs,
+        )
+        self.hd = p.erb_hidden_dim
+        self.ratten = SpectalRecurrentAttention(self.fe, self.lw // 2, p.erb_hidden_dim)
+        self.ln = nn.LayerNorm([self.fe, self.lw // 2])
+        self.conv2 = convkxf(
+            in_ch=self.lw // 2,
             out_ch=self.lw,
             fstride=2,
             n_freqs=self.fe,
@@ -97,14 +103,20 @@ class SpectralRefinement(nn.Module):
 
     def forward(self, input: Tensor, h_atten: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         # input shape: [B, 2, T, F]
-        x = self.conv0(input)  # [B, C, T, F]
-        x = self.conv1(x)  # [B, C, T, F]
+        x0 = self.conv0(input)  # [B, C, T, F]
+        ic(x0.min(), x0.max(), x0.pow(2).mean())
+        x = self.conv1(x0)  # [B, C, T, F]
+        ic(x.min(), x.max()), x.pow(2).mean()
         e = x.permute(2, 0, 3, 1)  # [T, B, F, C] (channels_last)
         e, h_atten = self.ratten.forward(e, h_atten)  # [T, B, F, C]
+        ic(e.min(), e.max()), e.pow(2).mean()
         e = self.ln(e)
         e = e.permute(1, 3, 0, 2)  # [B, C, T, F]
+        ic(e.min(), e.max()), e.pow(2).mean()
         x = self.conv2(x + e)  # [B, 1, T, F]
-        x = self.conv3(x)
+        ic(x.min(), x.max()), x.pow(2).mean()
+        x = self.conv3(x + x0)
+        ic(x.min(), x.max(), x.pow(2).mean(), x.shape)
         input = input + x
         return x, h_atten
 
@@ -117,14 +129,14 @@ class ErbStage(nn.Module):
         self.fe = p.nb_erb  # Number of frequency bins in embedding
         kwargs = {"k": 1, "f": 3, "fstride": 1, "norm": "layer_norm", "n_freqs": p.nb_erb}
         self.conv0 = convkxf(in_ch=1, out_ch=self.lw, **kwargs)
-        self.conv1 = convkxf(in_ch=self.lw, out_ch=self.lw, **kwargs)
-        self.ratten = SpectalRecurrentAttention(p.nb_erb, self.lw, p.erb_hidden_dim)
-        self.ln = nn.LayerNorm([p.nb_erb, self.lw])
-        self.gru_snr = nn.GRU(self.lw * self.fe, 16)
+        self.conv1 = convkxf(in_ch=self.lw, out_ch=self.lw // 2, **kwargs)
+        self.ratten = SpectalRecurrentAttention(p.nb_erb, self.lw // 2, p.erb_hidden_dim)
+        self.ln = nn.LayerNorm([self.fe, self.lw // 2])
+        self.gru_snr = nn.GRU(self.lw // 2 * self.fe, 16)
         self.fc_snr = nn.Sequential(nn.Linear(16, 1), nn.Sigmoid())
         self.lsnr_scale = p.lsnr_max - p.lsnr_min
         self.lsnr_offset = p.lsnr_min
-        self.conv2 = convkxf(in_ch=self.lw, out_ch=1, act=nn.Sigmoid(), **kwargs)
+        self.conv2 = convkxf(in_ch=self.lw // 2, out_ch=1, act=nn.Sigmoid(), **kwargs)
 
     def forward(
         self, input: Tensor, h_atten: Optional[Tensor] = None, h_snr: Optional[Tensor] = None
@@ -144,8 +156,7 @@ class ErbStage(nn.Module):
 
 class MSNet(nn.Module):
     def __init__(
-        self,
-        erb_inv_fb: Tensor,
+        self, erb_inv_fb: Tensor,
     ):
         super().__init__()
         p = ModelParams()
@@ -162,24 +173,20 @@ class MSNet(nn.Module):
         )
 
     def forward(
-        self,
-        spec: Tensor,
-        feat_erb: Tensor,
-        feat_spec: Tensor,  # type: ignore, Not used, take spec modified by mask instead
-        atten_lim: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Tensor, Tensor]:
+        self, spec: Tensor, feat_erb: Tensor, feat_spec: Tensor, atten_lim: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor, Tensor, None]:
         # Set memory format so stride represents NHWC order
-        m, lsnr, _, _ = self.erb_stage(feat_erb.clone(memory_format=torch.channels_last))
+        m, lsnr, _, _ = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
         # re/im into channel axis
         spec_f = (
             spec.transpose(1, 4)
             .squeeze(4)[..., : self.df_bins]
-            .clone(memory_format=torch.channels_last)
         )
         for stage in self.refinement_stages:
             spec_f, _ = stage.forward(spec_f)
-        return spec, m, lsnr
+        spec[..., : self.df_bins, :] = spec_f.unsqueeze(-1).transpose(1, -1)
+        return spec, m, lsnr, None
 
 
 def init_model(df_state: Optional[DF] = None, run_df: bool = True, train_mask: bool = True):
