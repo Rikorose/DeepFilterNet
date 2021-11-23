@@ -268,12 +268,17 @@ def run_epoch(
         snrs = batch.snr.to(dev, non_blocking=True)
         with torch.autograd.set_detect_anomaly(detect_anomaly):
             with torch.set_grad_enabled(is_train):
-                enh, m, lsnr, df_alpha = model.forward(
+                enh, m, lsnr, other = model.forward(
                     spec=as_real(noisy),
                     feat_erb=feat_erb,
                     feat_spec=feat_spec,
                     atten_lim=atten,
                 )
+            df_alpha, multi_stage_specs = None, []
+            if isinstance(other, Tensor):
+                df_alpha = other
+            elif isinstance(other, (list, tuple)):
+                multi_stage_specs = other
             try:
                 err = losses.forward(
                     clean,
@@ -284,6 +289,7 @@ def run_epoch(
                     df_alpha=df_alpha,
                     max_freq=batch.max_freq,
                     snrs=snrs,
+                    multi_stage_specs=multi_stage_specs,
                 )
             except Exception as e:
                 if "nan" in str(e).lower() or "finite" in str(e).lower():
