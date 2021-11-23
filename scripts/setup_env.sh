@@ -13,6 +13,7 @@ else
   pytorch_v_arg="pytorch=$pytorch_v"
 fi
 INSTALL_LIBDF=${INSTALL_LIBDF:-1}
+INSTALL_PYDEPS=${INSTALL_PYDEPS:-0}
 SUFFIX=""
 
 setup_env() {
@@ -54,9 +55,8 @@ setup_env() {
       cudatoolkit=$cuda_version -c "pytorch$nightly" -c conda-forge
     source activate "$env"
 
-    echo "Installing requirements"
-    (cd "$PROJECT_HOME"/DeepFilterNet && poetry install -E "train")
     INSTALL_LIBDF=1
+    INSTALL_PYDEPS=1
   else
     # Only need to activate the existing env
     if ! [ -x "$(command -v conda)" ]; then
@@ -65,6 +65,8 @@ setup_env() {
     source activate "$env"
 
     echo "Running on env: $CONDA_DEFAULT_ENV"
+  fi
+  if [ $INSTALL_PYDEPS -eq 1 ]; then
     echo "Installing requirements"
     (cd "$PROJECT_HOME"/DeepFilterNet && poetry install -E "train")
   fi

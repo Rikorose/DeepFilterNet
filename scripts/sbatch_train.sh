@@ -38,10 +38,13 @@ EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 if [ "$DEBUG" -eq 1 ]; then
   DEBUG="--debug"
 else
-  DEBUG=""
+  DEBUG=
 fi
 
 echo "Started sbatch script at $(date) in $(pwd)"
+
+echo "Found cuda devices: $CUDA_VISIBLE_DEVICES"
+nvidia-smi -L || echo "nvidia-smi not found"
 
 # Check base dir file
 if [[ -z $1 ]]; then
@@ -95,7 +98,10 @@ if [ "$PROJECT_BRANCH_CUR" != "$PROJECT_BRANCH" ]; then
   stash_idx=$(git -C "$PROJECT_HOME" stash list | grep "$stash" | cut -d: -f1)
   if [ ! -z "$stash_idx" -a "$stash_idx" != " " ]; then
     # Try to apply current stash; If not possible just proceed.
-    git -C "$PROJECT_HOME" stash pop "$stash_idx" || echo "Could not apply stash to branch $PROJECT_BRANCH"
+    if ! git -C "$PROJECT_HOME" stash pop "$stash_idx"; then
+      echo "Could not apply stash to branch $PROJECT_BRANCH"
+      git -C "$PROJECT_HOME" checkout -f
+    fi
   fi
 fi
 
