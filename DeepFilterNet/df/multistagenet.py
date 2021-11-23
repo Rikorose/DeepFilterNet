@@ -1,8 +1,9 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torch.nn import init
 
 from df.config import DfParams, config
 from df.modules import Mask, convkxf, erb_fb
@@ -62,12 +63,18 @@ class SpectalRecurrentAttention(nn.Module):
         v, h_v = self.gru_v(input.flatten(1, 2), h_v)  # [T, B*F, H]
         q = q.unflatten(1, (b, f))  # [T, B, F, H]
         k = k.unflatten(1, (b, f)).transpose(2, 3)  # [T, B, H, F]
-        w = q.matmul(k)
+        w = q.matmul(k).div(self.hidden_dim ** 0.5)
+        w = softmax2d(w)
         v = w.matmul(v.view(t, b, f, self.hidden_dim))  # [B, T, H]
-        v = F.softmax(v, -2)
         o = self.fc_o(v)  # [B, T, F, H]
         state = torch.cat((h_q, h_k, h_v), dim=0)  # [B, T, F, C]
         return o, state
+
+
+def softmax2d(input: Tensor) -> Tensor:
+    num = input.exp()
+    denum = num.sum(dim=(2, 3), keepdim=True)
+    return num / denum
 
 
 class SpectralRefinement(nn.Module):
@@ -76,7 +83,7 @@ class SpectralRefinement(nn.Module):
         p = ModelParams()
         self.lw = p.conv_ch  # Layer width
         self.fe = p.nb_df // 2  # Number of frequency bins in embedding
-        kwargs = {"k": 1, "f": 3, "norm": "layer_norm"}
+        kwargs = {"k": 1, "f": 3, "norm": "layer_norm", "act": nn.PReLU()}
         self.conv0 = convkxf(in_ch=2, fstride=1, out_ch=self.lw, n_freqs=p.nb_df, **kwargs)
         self.conv1 = convkxf(
             in_ch=self.lw,
@@ -88,7 +95,7 @@ class SpectralRefinement(nn.Module):
         )
         self.hd = p.erb_hidden_dim
         self.ratten = SpectalRecurrentAttention(self.fe, self.lw // 2, p.erb_hidden_dim)
-        self.ln = nn.LayerNorm([self.fe, self.lw // 2])
+        self.ln = nn.LayerNorm(self.fe)
         self.conv2 = convkxf(
             in_ch=self.lw // 2,
             out_ch=self.lw,
@@ -97,27 +104,36 @@ class SpectralRefinement(nn.Module):
             mode="transposed",
             **kwargs,
         )
-        self.conv3 = convkxf(
-            in_ch=self.lw, out_ch=2, fstride=1, n_freqs=p.nb_df, act=nn.Tanh(), **kwargs
-        )
+        kwargs["norm"] = None
+        kwargs["act"] = None
+        # kwargs["act"] = nn.Tanh()
+        self.conv3 = convkxf(in_ch=self.lw, out_ch=2, fstride=1, n_freqs=p.nb_df, **kwargs)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        def init_weights(m):
+            if isinstance(m, nn.LayerNorm):
+                init.constant_(m.weight, 0.01)
+            elif isinstance(m, nn.Conv2d):
+                init.kaiming_uniform_(m.weight, a=20)
+
+        self.apply(init_weights)
 
     def forward(self, input: Tensor, h_atten: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         # input shape: [B, 2, T, F]
         x0 = self.conv0(input)  # [B, C, T, F]
-        ic(x0.min(), x0.max(), x0.pow(2).mean())
         x = self.conv1(x0)  # [B, C, T, F]
-        ic(x.min(), x.max()), x.pow(2).mean()
         e = x.permute(2, 0, 3, 1)  # [T, B, F, C] (channels_last)
         e, h_atten = self.ratten.forward(e, h_atten)  # [T, B, F, C]
-        ic(e.min(), e.max()), e.pow(2).mean()
-        e = self.ln(e)
         e = e.permute(1, 3, 0, 2)  # [B, C, T, F]
-        ic(e.min(), e.max()), e.pow(2).mean()
-        x = self.conv2(x + e)  # [B, 1, T, F]
-        ic(x.min(), x.max()), x.pow(2).mean()
-        x = self.conv3(x + x0)
-        ic(x.min(), x.max(), x.pow(2).mean(), x.shape)
-        input = input + x
+        e = self.ln(x + e)
+        x = self.conv2(e)  # [B, C, T, F]
+        x = self.conv3(x + x0)  # [B, 2, T, F]
+        # i_re = input[:, 0] * x[:, 0] - input[:, 1] * x[:, 1]
+        # i_im = input[:, 1] * x[:, 0] + input[:, 0] * x[:, 1]
+        # input = torch.stack((i_re, i_im), dim=-1)
+        # print(x.min(), x.max(), x.norm(), input.min(), input.max(), input.norm())
+        x = input + x
         return x, h_atten
 
 
@@ -131,7 +147,7 @@ class ErbStage(nn.Module):
         self.conv0 = convkxf(in_ch=1, out_ch=self.lw, **kwargs)
         self.conv1 = convkxf(in_ch=self.lw, out_ch=self.lw // 2, **kwargs)
         self.ratten = SpectalRecurrentAttention(p.nb_erb, self.lw // 2, p.erb_hidden_dim)
-        self.ln = nn.LayerNorm([self.fe, self.lw // 2])
+        self.ln = nn.LayerNorm(self.fe)
         self.gru_snr = nn.GRU(self.lw // 2 * self.fe, 16)
         self.fc_snr = nn.Sequential(nn.Linear(16, 1), nn.Sigmoid())
         self.lsnr_scale = p.lsnr_max - p.lsnr_min
@@ -146,17 +162,18 @@ class ErbStage(nn.Module):
         x = self.conv1(x)  # [B, C, T, F]
         e = x.permute(2, 0, 3, 1)  # [T, B, F, C] (channels_last)
         e, h_atten = self.ratten.forward(e, h_atten)  # [T, B, F, C]
-        e = self.ln(e)
         lsnr, h_snr = self.gru_snr.forward(e.flatten(2, 3), h_snr)
         lsnr = self.fc_snr(lsnr) * self.lsnr_scale + self.lsnr_offset
         e = e.permute(1, 3, 0, 2)  # [B, C, T, F]
-        m = self.conv2(x + e)  # [B, 1, T, F]
+        e = self.ln(x + e)
+        m = self.conv2(e)  # [B, 1, T, F]
         return m, lsnr, h_atten, h_snr
 
 
 class MSNet(nn.Module):
     def __init__(
-        self, erb_inv_fb: Tensor,
+        self,
+        erb_inv_fb: Tensor,
     ):
         super().__init__()
         p = ModelParams()
@@ -173,20 +190,23 @@ class MSNet(nn.Module):
         )
 
     def forward(
-        self, spec: Tensor, feat_erb: Tensor, feat_spec: Tensor, atten_lim: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Tensor, Tensor, None]:
+        self,
+        spec: Tensor,
+        feat_erb: Tensor,
+        feat_spec: Tensor,
+        atten_lim: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor, Tensor, List[Tensor]]:
         # Set memory format so stride represents NHWC order
         m, lsnr, _, _ = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
+        out_specs = [spec]
         # re/im into channel axis
-        spec_f = (
-            spec.transpose(1, 4)
-            .squeeze(4)[..., : self.df_bins]
-        )
+        spec_f = spec.transpose(1, 4).squeeze(4)[..., : self.df_bins]
         for stage in self.refinement_stages:
             spec_f, _ = stage.forward(spec_f)
+            out_specs.append(spec_f.unsqueeze(-1).transpose(1, -1))
         spec[..., : self.df_bins, :] = spec_f.unsqueeze(-1).transpose(1, -1)
-        return spec, m, lsnr, None
+        return spec, m, lsnr, out_specs
 
 
 def init_model(df_state: Optional[DF] = None, run_df: bool = True, train_mask: bool = True):
