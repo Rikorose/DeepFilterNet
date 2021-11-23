@@ -147,12 +147,7 @@ class SpectralLoss(nn.Module):
     f_m: Final[float]
     f_c: Final[float]
 
-    def __init__(
-        self,
-        gamma: float = 1,
-        factor_magnitude: float = 1,
-        factor_complex: float = 1,
-    ):
+    def __init__(self, gamma: float = 1, factor_magnitude: float = 1, factor_complex: float = 1):
         super().__init__()
         self.gamma = gamma
         self.f_m = factor_magnitude
@@ -436,6 +431,7 @@ class Loss(nn.Module):
         df_alpha: Optional[Tensor],
         snrs: Tensor,
         max_freq: Optional[Tensor] = None,
+        multi_stage_specs: List[Tensor] = [],
     ):
         max_bin: Optional[Tensor] = None
         if max_freq is not None:
@@ -455,7 +451,12 @@ class Loss(nn.Module):
         if self.ml_f != 0 and self.ml is not None:
             ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
-            sl = self.sl(input=enhanced, target=clean)
+            sl = torch.zeros((), device=clean.device)
+            for mss in multi_stage_specs:
+                mss = as_complex(mss.squeeze(1)).unsqueeze(1)
+                sl += self.sl(input=mss, target=clean[..., : mss.shape[-1]])
+            else:
+                sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
             mrsl = self.mrsl(enhanced_td, clean_td)
         if self.cal_f != 0 and self.cal is not None and df_alpha is not None:
