@@ -365,6 +365,17 @@ class SegSdrLoss(nn.Module):
         return -loss * self.factor
 
 
+class LocalSnrLoss(nn.Module):
+    def __init__(self, factor: float = 1):
+        super().__init__()
+        self.factor = factor
+
+    def forward(self, input: Tensor, target_lsnr: Tensor):
+        # input (freq-domain): [B, T, 1]
+        input = input.squeeze(-1)
+        return F.mse_loss(input, target_lsnr) * self.factor
+
+
 class Loss(nn.Module):
     ml_f: Final[float]
     cal_f: Final[float]
@@ -420,6 +431,7 @@ class Loss(nn.Module):
             self.mrsl = MultiResSpecLoss(self.mrsl_ffts, self.mrsl_gamma, self.mrsl_f, self.mrsl_fc)
         else:
             self.mrsl = None
+        self.lsnrl = LocalSnrLoss(factor=0.0005)
 
     def forward(
         self,
@@ -442,6 +454,7 @@ class Loss(nn.Module):
             ).long()
         enhanced_td = None
         clean_td = None
+        lsnr_gt = self.lsnr(clean, noise=noisy - clean)
         if self.istft is not None:
             if self.store_losses or self.mrsl is not None:
                 enhanced_td = self.istft(enhanced)
@@ -459,12 +472,13 @@ class Loss(nn.Module):
                 sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
             mrsl = self.mrsl(enhanced_td, clean_td)
+        lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
         if self.cal_f != 0 and self.cal is not None and df_alpha is not None:
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.store_losses and self.istft is not None:
-            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, mrsl, cal)  # type: ignore
-        return ml + sl + mrsl + cal
+            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, mrsl, lsnrl, cal)  # type: ignore
+        return ml + sl + mrsl + lsnrl + cal
 
     def reset_summaries(self):
         self.summaries = defaultdict(list)
@@ -484,6 +498,7 @@ class Loss(nn.Module):
         ml: Tensor,
         sl: Tensor,
         mrsl: Tensor,
+        lsnrl: Tensor,
         cal: Tensor,
     ):
         if ml != 0:
@@ -492,6 +507,8 @@ class Loss(nn.Module):
             self.summaries["SpectralLoss"].append(sl.detach())
         if cal != 0:
             self.summaries["DfAlphaLoss"].append(cal.detach())
+        if lsnrl != 0:
+            self.summaries["LocalSnrLoss"].append(lsnrl.detach())
         if mrsl != 0:
             self.summaries["MultiResSpecLoss"].append(mrsl.detach())
         sdr = SiSdr()
