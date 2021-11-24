@@ -75,7 +75,7 @@ class SpectalRecurrentAttention(nn.Module):
         w = softmax2d(w)
         v = v.permute(0, 2, 3, 1)  # [B, T, F, H]
         v = w.matmul(v)  # [B, T, F, H]
-        o, h = self.gru_o.forward(v.flatten(2, 3), h)  # [B, T, F, H]
+        o, h = self.gru_o(v.flatten(2, 3), h)  # [B, T, F, H]
         o = o.unflatten(2, (self.input_ch, self.input_freqs))  # [B, T, C, F]
         o = o.transpose(1, 2)  # [B, C, T, F]
         return o, h
@@ -127,11 +127,11 @@ class SpectralRefinement(nn.Module):
         # input shape: [B, 2, T, F]
         x0 = self.conv0(input)  # [B, C, T, F]
         x = self.conv1(x0)  # [B, C, T, F]
-        e, h_atten = self.ratten.forward(x, h_atten)  # [B, C, T, F]
+        e, h_atten = self.ratten(x, h_atten)  # [B, C, T, F]
         e = self.ln(x + e)
         x = self.conv2(x)  # [B, C, T, F]
         x = self.conv3(x + x0)
-        input = input + x
+        x = x + input
         return x, h_atten
 
 
@@ -158,8 +158,8 @@ class ErbStage(nn.Module):
         # input shape: [B, 1, T, F]
         x = self.conv0(input)  # [B, C, T, F]
         x = self.conv1(x)  # [B, C, T, F]
-        e, h_atten = self.ratten.forward(x, h_atten)  # [B, C, T, F]
-        lsnr, h_snr = self.gru_snr.forward(e.transpose(1, 2).flatten(2, 3), h_snr)
+        e, h_atten = self.ratten(x, h_atten)  # [B, C, T, F]
+        lsnr, h_snr = self.gru_snr(e.transpose(1, 2).flatten(2, 3), h_snr)
         lsnr = self.fc_snr(lsnr) * self.lsnr_scale + self.lsnr_offset
         x = self.ln(x + e)
         m = self.conv2(x)  # [B, 1, T, F]
@@ -192,7 +192,7 @@ class MSNet(nn.Module):
         # re/im into channel axis
         spec_f = spec.transpose(1, 4).squeeze(4)[..., : self.df_bins]
         for stage in self.refinement_stages:
-            spec_f, _ = stage.forward(spec_f)
+            spec_f, _ = stage(spec_f)
             out_specs.append(spec_f.unsqueeze(-1).transpose(1, -1))
         spec[..., : self.df_bins, :] = spec_f.unsqueeze(-1).transpose(1, -1)
         return spec, m, lsnr, out_specs
