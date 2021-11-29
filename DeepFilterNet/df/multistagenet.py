@@ -184,7 +184,7 @@ class MSNet(nn.Module):
 
     def forward(
         self, spec: Tensor, feat_erb: Tensor, feat_spec: Tensor, atten_lim: Optional[Tensor] = None
-    ) -> Tuple[Tensor, Tensor, Tensor, None]:
+    ) -> Tuple[Tensor, Tensor, Tensor, List[Tensor]]:
         # Set memory format so stride represents NHWC order
         m, lsnr, _, _ = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
