@@ -5,6 +5,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torchaudio
+from distutils import util
 from loguru import logger
 from numpy import ndarray
 from torch import Tensor, nn
@@ -20,42 +21,16 @@ from df.utils import as_complex, as_real, get_norm_alpha
 from libdf import DF, erb, erb_norm, unit_norm
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--model-base-dir",
-        "-m",
-        type=str,
-        default=None,
-        help="Model directory containing checkpoints and config.",
-    )
-    parser.add_argument(
-        "noisy_audio_files",
-        type=str,
-        nargs="+",
-        help="List of noise files to mix with the clean speech file.",
-    )
-    parser.add_argument(
-        "--pf",
-        help="Postfilter that slightly overattenuates very noisy sections.",
-        action="store_true",
-    )
-    parser.add_argument("--output-dir", "-o", type=str, default=None)
-    parser.add_argument(
-        "--compensate-delay",
-        "-d",
-        action="store_true",
-        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
-    )
-    args = parser.parse_args()
+def main(args):
     if args.model_base_dir is None:
         args.model_base_dir = os.path.join(
             os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet"
         )
-        print(f"Using default model at {args.model_base_dir}")
+        if args.logging:
+            print(f"Using default model at {args.model_base_dir}")
     if not os.path.isdir(args.model_base_dir):
-        NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
-    init_logger(file=os.path.join(args.model_base_dir, "enhance.log"))
+        raise NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
+    init_logger(file=os.path.join(args.model_base_dir, "enhance.log"), enabled=args.logging)
     config.load(
         os.path.join(args.model_base_dir, "config.ini"),
         config_must_exist=True,
@@ -155,14 +130,14 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=Fa
     rtf = t_audio / t
     if log:
         logger.info(
-            "Enhanced noisy audio file '{}' in {:.1f}s (RT factor: {})".format(file, t, rtf)
+            f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.1f})"
         )
     if pad:
         # Overall, the STFT/ISTFT loop introduces a delay of p.fft_size. Since this python script
         # operates on the full signal and not on a per-frame-basis, the frame size (i.e. p.hop_size)
         # can be neglected.
         d = p.fft_size - p.hop_size
-        audio = audio[:, d : orig_len + d]
+        audio = audio[:, d: orig_len + d]
     return audio
 
 
@@ -191,6 +166,13 @@ if __name__ == "__main__":
         "--compensate-delay",
         "-d",
         action="store_true",
+        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+    )
+    parser.add_argument(
+        "--logging",
+        "-l",
+        default=True,
+        type=util.strtobool,
         help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
     )
     args = parser.parse_args()
