@@ -20,34 +20,7 @@ from df.utils import as_complex, as_real, get_norm_alpha
 from libdf import DF, erb, erb_norm, unit_norm
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--model-base-dir",
-        "-m",
-        type=str,
-        default=None,
-        help="Model directory containing checkpoints and config.",
-    )
-    parser.add_argument(
-        "noisy_audio_files",
-        type=str,
-        nargs="+",
-        help="List of noise files to mix with the clean speech file.",
-    )
-    parser.add_argument(
-        "--pf",
-        help="Postfilter that slightly overattenuates very noisy sections.",
-        action="store_true",
-    )
-    parser.add_argument("--output-dir", "-o", type=str, default=None)
-    parser.add_argument(
-        "--compensate-delay",
-        "-d",
-        action="store_true",
-        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
-    )
-    args = parser.parse_args()
+def main(args):
     if args.model_base_dir is None:
         args.model_base_dir = os.path.join(
             os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet"
@@ -104,12 +77,12 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
 
 
 def save_audio(
-    file: str,
-    audio: Union[Tensor, ndarray],
-    sr: int,
-    output_dir: Optional[str] = None,
-    suffix: str = None,
-    log: bool = False,
+        file: str,
+        audio: Union[Tensor, ndarray],
+        sr: int,
+        output_dir: Optional[str] = None,
+        suffix: str = None,
+        log: bool = False,
 ):
     outpath = file
     if suffix is not None:
@@ -162,9 +135,36 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=Fa
         # operates on the full signal and not on a per-frame-basis, the frame size (i.e. p.hop_size)
         # can be neglected.
         d = p.fft_size - p.hop_size
-        audio = audio[:, d : orig_len + d]
+        audio = audio[:, d: orig_len + d]
     return audio
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model-base-dir",
+        "-m",
+        type=str,
+        default=None,
+        help="Model directory containing checkpoints and config.",
+    )
+    parser.add_argument(
+        "noisy_audio_files",
+        type=str,
+        nargs="+",
+        help="List of noise files to mix with the clean speech file.",
+    )
+    parser.add_argument(
+        "--pf",
+        help="Postfilter that slightly overattenuates very noisy sections.",
+        action="store_true",
+    )
+    parser.add_argument("--output-dir", "-o", type=str, default=None)
+    parser.add_argument(
+        "--compensate-delay",
+        "-d",
+        action="store_true",
+        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+    )
+    args = parser.parse_args()
+    main(args)
