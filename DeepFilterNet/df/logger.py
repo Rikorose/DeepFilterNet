@@ -9,21 +9,21 @@ from torch.types import Number
 from df.utils import get_branch_name, get_commit_hash, get_host, get_device
 
 
-def init_logger(file: Optional[str] = None, level: str = "INFO"):
+def init_logger(file: Optional[str] = None, level: str = "INFO", enabled: bool = True):
     logger.remove()
+    if enabled:
+        log_format = get_log_format(debug=level == "DEBUG")
+        logger.add(sys.stdout, level=level, format=log_format)
+        if file is not None:
+            logger.add(file, level=level, format=log_format)
 
-    log_format = get_log_format(debug=level == "DEBUG")
-    logger.add(sys.stdout, level=level, format=log_format)
-    if file is not None:
-        logger.add(file, level=level, format=log_format)
-
-    logger.info(f"Running on torch {torch.__version__}")
-    logger.info(f"Running on host {get_host()}")
-    commit = get_commit_hash()
-    if commit is not None:
-        logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
-    if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
-        logger.info(f"Slurm jobid: {jobid}")
+        logger.info(f"Running on torch {torch.__version__}")
+        logger.info(f"Running on host {get_host()}")
+        commit = get_commit_hash()
+        if commit is not None:
+            logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
+        if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
+            logger.info(f"Slurm jobid: {jobid}")
 
 
 def get_log_format(debug=False):
