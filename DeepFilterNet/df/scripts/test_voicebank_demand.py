@@ -48,20 +48,7 @@ except ImportError:
             print()
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("model_base_dir", type=str, help="Directory e.g. for checkpoint loading.")
-    parser.add_argument(
-        "dataset_dir",
-        type=str,
-        help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'",
-    )
-    parser.add_argument("--disable-df", action="store_true")
-    parser.add_argument("--pf", action="store_true")
-    parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--output-dir", "-o", type=str, default=None)
-    parser.add_argument("--disable-output", action="store_true", default=None)
-    args = parser.parse_args()
+def main(args):
     if not os.path.isdir(args.model_base_dir):
         NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
     init_logger(file=os.path.join(args.model_base_dir, "test_voicebank_demand.log"))
@@ -218,4 +205,17 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("model_base_dir", type=str, help="Directory e.g. for checkpoint loading.")
+    parser.add_argument(
+        "dataset_dir",
+        type=str,
+        help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'",
+    )
+    parser.add_argument("--disable-df", action="store_true")
+    parser.add_argument("--pf", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--output-dir", "-o", type=str, default=None)
+    parser.add_argument("--disable-output", action="store_true", default=None)
+    args = parser.parse_args()
+    main(args)

@@ -167,4 +167,31 @@ def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=Fa
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model-base-dir",
+        "-m",
+        type=str,
+        default=None,
+        help="Model directory containing checkpoints and config.",
+    )
+    parser.add_argument(
+        "noisy_audio_files",
+        type=str,
+        nargs="+",
+        help="List of noise files to mix with the clean speech file.",
+    )
+    parser.add_argument(
+        "--pf",
+        help="Postfilter that slightly overattenuates very noisy sections.",
+        action="store_true",
+    )
+    parser.add_argument("--output-dir", "-o", type=str, default=None)
+    parser.add_argument(
+        "--compensate-delay",
+        "-d",
+        action="store_true",
+        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+    )
+    args = parser.parse_args()
+    main(args)
