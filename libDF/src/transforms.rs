@@ -64,8 +64,7 @@ pub fn fft(input: ArrayView2<f32>, state: &mut DFState) -> Result<Array2<Complex
             .fft_forward
             .process(
                 input_ch.into_owned().as_slice_mut().unwrap(),
-                //&mut apply_window(input_ch.as_slice().unwrap(), &c.window),
-                &mut output_ch.as_slice_mut().unwrap(),
+                output_ch.as_slice_mut().unwrap(),
             )
             .map_err(|e| TransformError::DfError(format!("Error in fft(): {:?}", e)))?;
     }
@@ -108,8 +107,8 @@ pub fn istft(mut input: ArrayViewMut3<Complex32>, state: &mut DFState, reset: bo
             input_ch.outer_iter_mut().zip(output_ch.exact_chunks_mut(state.frame_size))
         {
             frame_synthesis(
-                &mut ichunk.as_slice_mut().unwrap(),
-                &mut ochunk.as_slice_mut().unwrap(),
+                ichunk.as_slice_mut().unwrap(),
+                ochunk.as_slice_mut().unwrap(),
                 state,
             )
         }
