@@ -6,10 +6,16 @@ import torch
 from loguru import logger
 from torch.types import Number
 
-from df.utils import get_branch_name, get_commit_hash, get_host, get_device
+from df.utils import get_branch_name, get_commit_hash, get_device, get_host
+
+_logger_initialized = False
 
 
 def init_logger(file: Optional[str] = None, level: str = "INFO", enabled: bool = True):
+    global _logger_initialized
+    if _logger_initialized:
+        logger.debug("Logger already initialized.")
+        return
     logger.remove()
     if enabled:
         log_format = get_log_format(debug=level == "DEBUG")
@@ -24,6 +30,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", enabled: bool =
             logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
         if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
             logger.info(f"Slurm jobid: {jobid}")
+    _logger_initialized = True
 
 
 def get_log_format(debug=False):
