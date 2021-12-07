@@ -1,42 +1,88 @@
 import argparse
 import os
 import time
+import warnings
 from typing import Optional, Tuple, Union
 
 import torch
-import torchaudio
-from distutils import util
+import torchaudio as ta
 from loguru import logger
 from numpy import ndarray
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torchaudio.backend.common import AudioMetaData
 
 import df
 from df import config
-from df.checkpoint import load_model
+from df.checkpoint import load_model as load_model_cp
 from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
-from df.utils import as_complex, as_real, get_norm_alpha
+from df.utils import as_complex, as_real, get_norm_alpha, resample
 from libdf import DF, erb, erb_norm, unit_norm
 
 
 def main(args):
+    model, df_state, suffix = init_df(
+        args.model_base_dir, post_filter=args.pf, log_level=args.log_level
+    )
     if args.model_base_dir is None:
-        args.model_base_dir = os.path.join(
+        logger.error("Model base must be specified.")
+        exit()
+    if args.output_dir is None:
+        args.output_dir = "."
+    elif not os.path.isdir(args.output_dir):
+        os.mkdir(args.output_dir)
+    df_sr = ModelParams().sr
+    for file in args.noisy_audio_files:
+        audio, meta = load_audio(file, df_sr)
+        t0 = time.time()
+        audio = enhance(model, df_state, audio, pad=args.compensate_delay)
+        t1 = time.time()
+        t_audio = audio.shape[-1] / df_sr
+        t = t1 - t0
+        rtf = t_audio / t
+        logger.info(f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.1f})")
+        audio = resample(audio, df_sr, meta.sample_rate)
+        save_audio(
+            file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=True
+        )
+
+
+def init_df(
+    model_base_dir: Optional[str] = None, post_filter: bool = False, log_level: str = "INFO"
+) -> Tuple[nn.Module, DF, str]:
+    """Initializes and loads config, model and deep filtering state.
+
+    Args:
+        model_base_dir (str): Path to the model directory containing checkpoint and config. If None,
+            load the default pretrained model.
+        post_filter (bool): Enable post filter for some minor, extra noise reduction.
+        log (bool): Enable logging. This initializes the logger globaly if not already initilzed.
+
+    Returns:
+        model (nn.Modules): Intialized model, moved to GPU if available.
+        df_state (DF): Deep filtering state for stft/istft/erb
+        suffix (str): Suffix based on the model name. This can be used for saving the enhanced
+            audio.
+    """
+    use_default_model = False
+    if model_base_dir is None:
+        use_default_model = True
+        model_base_dir = os.path.join(
             os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet"
         )
-        if args.logging:
-            print(f"Using default model at {args.model_base_dir}")
-    if not os.path.isdir(args.model_base_dir):
-        raise NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
-    init_logger(file=os.path.join(args.model_base_dir, "enhance.log"), enabled=args.logging)
+    if not os.path.isdir(model_base_dir):
+        raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
+    init_logger(file=os.path.join(model_base_dir, "enhance.log"), level=log_level)
+    if use_default_model:
+        logger.info(f"Using default model at {model_base_dir}")
     config.load(
-        os.path.join(args.model_base_dir, "config.ini"),
+        os.path.join(model_base_dir, "config.ini"),
         config_must_exist=True,
         allow_defaults=False,
     )
-    if args.pf:
+    if post_filter:
         config.set(ModelParams().section, "mask_pf", True, bool)
     p = ModelParams()
     df_state = DF(
@@ -46,21 +92,15 @@ def main(args):
         nb_bands=p.nb_erb,
         min_nb_erb_freqs=p.min_nb_freqs,
     )
-    checkpoint_dir = os.path.join(args.model_base_dir, "checkpoints")
-    model, _ = load_model(checkpoint_dir, df_state)
+    checkpoint_dir = os.path.join(model_base_dir, "checkpoints")
+    model, _ = load_model_cp(checkpoint_dir, df_state)
     model = model.to(get_device())
-    logger.info("Model loaded")
-    if args.output_dir is None:
-        args.output_dir = "."
-    elif not os.path.isdir(args.output_dir):
-        os.mkdir(args.output_dir)
     # Set suffix to model name
-    suffix = os.path.basename(os.path.abspath(args.model_base_dir))
-    if args.pf:
+    suffix = os.path.basename(os.path.abspath(model_base_dir))
+    if post_filter:
         suffix += "_pf"
-    for file in args.noisy_audio_files:
-        audio = enhance(model, df_state, file, log=True, pad=args.compensate_delay)
-        save_audio(file, audio, p.sr, args.output_dir, log=True, suffix=suffix)
+    logger.info("Model loaded")
+    return model, df_state, suffix
 
 
 def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Tensor]:
@@ -68,7 +108,9 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     spec = df.analysis(audio.numpy())  # [C, Tf] -> [C, Tf, F]
     a = get_norm_alpha(False)
     erb_fb = df.erb_widths()
-    erb_feat = torch.as_tensor(erb_norm(erb(spec, erb_fb), a)).unsqueeze(1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        erb_feat = torch.as_tensor(erb_norm(erb(spec, erb_fb), a)).unsqueeze(1)
     spec_feat = as_real(torch.as_tensor(unit_norm(spec[..., : p.nb_df], a)).unsqueeze(1))
     spec = as_real(torch.as_tensor(spec).unsqueeze(1))
     if device is not None:
@@ -76,6 +118,28 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
         erb_feat = erb_feat.to(device)
         spec_feat = spec_feat.to(device)
     return spec, erb_feat, spec_feat
+
+
+def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
+    """Loads an audio file using torchaudio.
+
+    Args:
+        file (str): Path to an audio file.
+        sr (int): Target sampling rate. May resample the audio.
+        **kwargs: Passed to torchaudio.load(). Depend on the backend.
+
+    Returns:
+        audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
+        info (AudioMetaData): Meta data or the original audio file. Contains the original sr.
+    """
+    info = ta.info(file, format=kwargs.get("format", None))
+    audio, orig_sr = ta.load(file, **kwargs)
+    if orig_sr != sr:
+        logger.warning(
+            f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). Resampling..."
+        )
+        audio = resample(audio, orig_sr, sr)
+    return audio, info
 
 
 def save_audio(
@@ -99,49 +163,33 @@ def save_audio(
         audio.unsqueeze_(0)
     if audio.dtype != torch.int16:
         audio = (audio * (1 << 15)).to(torch.int16)
-
-    torchaudio.save(outpath, audio, sr)
+    ta.save(outpath, audio, sr)
 
 
 @torch.no_grad()
-def enhance(model: nn.Module, df_state: DF, file: str, log: bool = False, pad=False):
+def enhance(model: nn.Module, df_state: DF, audio: Tensor, pad=False):
     p = ModelParams()
     model.eval()
-    audio, sr = torchaudio.load(file)
     bs = audio.shape[0]
     if hasattr(model, "reset_h0"):
         model.reset_h0(batch_size=bs, device=get_device())
-    t_audio = audio.shape[-1] / sr
-    if sr != p.sr:
-        logger.warning(
-            f"Audio sampling rate does not match model sampling rate ({sr}, {p.sr}). Resampling..."
-        )
-        audio = torchaudio.functional.resample(audio, sr, p.sr)
     orig_len = audio.shape[-1]
     if pad:
         # Pad audio to compensate for the delay due to the real-time STFT implementation
         audio = F.pad(audio, (0, p.fft_size))
-    t0 = time.time()
     spec, erb_feat, spec_feat = df_features(audio, df_state, device=get_device())
     spec = model(spec, erb_feat, spec_feat)[0].cpu()
-    t1 = time.time()
-    audio = df_state.synthesis(as_complex(spec.squeeze(1)).numpy())
-    t = t1 - t0
-    rtf = t_audio / t
-    if log:
-        logger.info(
-            f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.1f})"
-        )
+    audio = torch.as_tensor(df_state.synthesis(as_complex(spec.squeeze(1)).numpy()))
     if pad:
         # Overall, the STFT/ISTFT loop introduces a delay of p.fft_size. Since this python script
         # operates on the full signal and not on a per-frame-basis, the frame size (i.e. p.hop_size)
         # can be neglected.
         d = p.fft_size - p.hop_size
-        audio = audio[:, d: orig_len + d]
+        audio = audio[:, d : orig_len + d]
     return audio
 
 
-if __name__ == "__main__":
+def setup_df_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-base-dir",
@@ -151,17 +199,22 @@ if __name__ == "__main__":
         help="Model directory containing checkpoints and config.",
     )
     parser.add_argument(
-        "noisy_audio_files",
-        type=str,
-        nargs="+",
-        help="List of noise files to mix with the clean speech file.",
-    )
-    parser.add_argument(
         "--pf",
         help="Postfilter that slightly overattenuates very noisy sections.",
         action="store_true",
     )
     parser.add_argument("--output-dir", "-o", type=str, default=None)
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="info",
+        help="Logger verbosity. Can be one of (debug, info, error, none)",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    parser = setup_df_argument_parser()
     parser.add_argument(
         "--compensate-delay",
         "-d",
@@ -169,11 +222,9 @@ if __name__ == "__main__":
         help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
     )
     parser.add_argument(
-        "--logging",
-        "-l",
-        default=True,
-        type=util.strtobool,
-        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+        "noisy_audio_files",
+        type=str,
+        nargs="+",
+        help="List of noise files to mix with the clean speech file.",
     )
-    args = parser.parse_args()
-    main(args)
+    main(parser.parse_args)

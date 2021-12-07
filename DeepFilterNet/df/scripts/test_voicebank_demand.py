@@ -1,25 +1,19 @@
-import argparse
 import glob
 import os
-import tempfile
 import sys
+import tempfile
 
 import numpy as np
 import pystoi
 import semetrics
 import torch
-import torchaudio
 from loguru import logger
 from pystoi.utils import resample_oct
 
-from df import config
-from df.enhance import df_features, save_audio
-from df.logger import init_logger
+from df.enhance import df_features, init_df, load_audio, save_audio, setup_df_argument_parser
 from df.model import ModelParams
 from df.modules import get_device
-from df.train import load_model
-from df.utils import as_complex, resample
-from libdf import DF
+from df.utils import as_complex
 
 try:
     from tqdm import tqdm
@@ -49,38 +43,16 @@ except ImportError:
 
 
 def main(args):
-    if not os.path.isdir(args.model_base_dir):
-        NotADirectoryError("Base directory not found at {}".format(args.model_base_dir))
-    init_logger(file=os.path.join(args.model_base_dir, "test_voicebank_demand.log"))
-    config.load(
-        os.path.join(args.model_base_dir, "config.ini"),
-        config_must_exist=True,
-        allow_defaults=False,
+    model, df_state, suffix = init_df(
+        args.model_base_dir, post_filter=args.pf, log_level=args.log_level
     )
-    if args.pf:
-        config.set(ModelParams().section, "mask_pf", True, bool)
-    p = ModelParams()
-    df_state = DF(
-        sr=p.sr,
-        fft_size=p.fft_size,
-        hop_size=p.hop_size,
-        nb_bands=p.nb_erb,
-        min_nb_erb_freqs=p.min_nb_freqs,
-    )
-    checkpoint_dir = os.path.join(args.model_base_dir, "checkpoints")
-    model_n = os.path.basename(os.path.abspath(args.model_base_dir))
-    model, _ = load_model(checkpoint_dir, df_state, mask_only=args.disable_df)
-    logger.info("Model loaded")
     assert os.path.isdir(args.dataset_dir)
+    sr = ModelParams().sr
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
-    if args.disable_output:
-        enh_dir = None
-    else:
-        if args.output_dir is not None:
-            enh_dir = args.output_dir
-        else:
-            enh_dir = os.path.join(args.dataset_dir, "enhanced")
+    enh_dir = None
+    if args.output_dir is not None:
+        enh_dir = args.output_dir
         os.makedirs(enh_dir, exist_ok=True)
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
     enh_stoi = []
@@ -92,12 +64,8 @@ def main(args):
     noisy_files = glob.glob(noisy_dir + "/*wav")
     clean_files = glob.glob(clean_dir + "/*wav")
     for noisyfn, cleanfn in tqdm(zip(noisy_files, clean_files), total=len(noisy_files)):
-        noisy, sr = torchaudio.load(noisyfn)
-        clean, sr = torchaudio.load(cleanfn)
-        if sr != p.sr:
-            noisy = resample(noisy, sr, p.sr)
-            clean = resample(clean, sr, p.sr)
-            sr = p.sr
+        noisy, _ = load_audio(noisyfn, sr)
+        clean, _ = load_audio(cleanfn, sr)
         enh = enhance(model, df_state, noisy)[0]
         clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
         noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
@@ -107,17 +75,16 @@ def main(args):
         noisy_sisdr.append(si_sdr_speechmetrics(clean, noisy))
         noisy_comp.append(composite(clean, noisy, sr))
         enh_comp.append(composite(clean, enh, sr))
-        if args.verbose:
+        if args.log_level.upper() == "DEBUG":
             print(cleanfn, enh_stoi[-1], enh_comp[-1], enh_sisdr[-1])
         enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
         if enh_dir is not None:
             save_audio(
                 os.path.basename(cleanfn),
                 enh,
-                p.sr,
+                sr,
                 output_dir=enh_dir,
-                suffix=f"{model_n}_{enh_comp[-1][0]:.3f}",
-                log=args.verbose,
+                suffix=f"{suffix}_{enh_comp[-1][0]:.3f}",
             )
     logger.info(f"noisy stoi: {np.mean(noisy_stoi)}")
     logger.info(f"enhanced stoi: {np.mean(enh_stoi)}")
@@ -205,17 +172,11 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("model_base_dir", type=str, help="Directory e.g. for checkpoint loading.")
+    parser = setup_df_argument_parser()
     parser.add_argument(
         "dataset_dir",
         type=str,
         help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'",
     )
-    parser.add_argument("--disable-df", action="store_true")
-    parser.add_argument("--pf", action="store_true")
-    parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--output-dir", "-o", type=str, default=None)
-    parser.add_argument("--disable-output", action="store_true", default=None)
     args = parser.parse_args()
     main(args)
