@@ -44,7 +44,7 @@ class Config:
                 self.parser.read_file(f)
         else:
             if config_must_exist:
-                raise ValueError("No config file found.")
+                raise ValueError(f"No config file found at '{path}'.")
         if not self.parser.has_section(self.DEFAULT_SECTION):
             self.parser.add_section(self.DEFAULT_SECTION)
         self._fix_clc()
@@ -160,6 +160,7 @@ class Config:
         """Renaming of some groups/options for compatibility with old models."""
         if (
             not self.parser.has_section("deepfilternet")
+            and self.parser.has_section("train")
             and self.parser.get("train", "model") == "convgru5"
         ):
             self.overwrite("train", "model", "deepfilternet")
