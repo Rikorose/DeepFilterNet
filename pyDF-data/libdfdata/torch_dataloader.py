@@ -1,6 +1,7 @@
 import atexit
 import queue
 import threading
+import warnings
 from typing import Iterator, Optional, Tuple
 
 import numpy as np
@@ -17,28 +18,30 @@ class Batch:
         # Pytorch complains that the returned numpy arrays are not writable. Since they were
         # allocated within the python GIL and their content is only used for this batch, it is
         # safe to assume writable.
-        if len(b) == 10:  # FftDataloader
-            speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, atten = b
-            if erb.size <= 1:
-                self.feat_erb = None
-            if spec.size <= 1:
-                self.feat_spec = None
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            if len(b) == 10:  # FftDataloader
+                speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, atten = b
+                if erb.size <= 1:
+                    self.feat_erb = None
+                if spec.size <= 1:
+                    self.feat_spec = None
+                else:
+                    self.feat_erb = torch.from_numpy(erb)
+                    self.feat_spec = torch.from_numpy(spec)
             else:
-                self.feat_erb = torch.from_numpy(erb)
-                self.feat_spec = torch.from_numpy(spec)
-        else:
-            speech, noise, noisy, lengths, max_freq, snr, gain, atten = b
-            self.feat_erb = None
-            self.feat_spec = None
-        self.speech = torch.from_numpy(speech)
-        self.noise = torch.from_numpy(noise)
-        self.noisy = torch.from_numpy(noisy)
-        self.lengths = torch.from_numpy(lengths.astype(np.int64)).long()
-        self.snr = torch.from_numpy(snr)
-        self.gain = torch.from_numpy(gain)
-        self.atten = torch.from_numpy(atten).long()
-        self.atten[self.atten == 0] = 1000
-        self.max_freq = torch.from_numpy(max_freq.astype(np.int32)).long()
+                speech, noise, noisy, lengths, max_freq, snr, gain, atten = b
+                self.feat_erb = None
+                self.feat_spec = None
+            self.speech = torch.from_numpy(speech)
+            self.noise = torch.from_numpy(noise)
+            self.noisy = torch.from_numpy(noisy)
+            self.lengths = torch.from_numpy(lengths.astype(np.int64)).long()
+            self.snr = torch.from_numpy(snr)
+            self.gain = torch.from_numpy(gain)
+            self.atten = torch.from_numpy(atten).long()
+            self.atten[self.atten == 0] = 1000
+            self.max_freq = torch.from_numpy(max_freq.astype(np.int32)).long()
 
     def pin_memory(self):
         self.speech = self.speech.pin_memory()
