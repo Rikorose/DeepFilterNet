@@ -4,6 +4,7 @@
 *.pdf
 out/
 export/
+DeepFilterNet/poetry.lock
 
 ### Rust gitignore ###
 
