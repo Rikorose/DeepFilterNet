@@ -11,13 +11,14 @@ from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 _logger_initialized = False
 
 
-def init_logger(file: Optional[str] = None, level: str = "INFO", enabled: bool = True):
+def init_logger(file: Optional[str] = None, level: str = "INFO"):
     global _logger_initialized
     if _logger_initialized:
         logger.debug("Logger already initialized.")
         return
     logger.remove()
-    if enabled:
+    level = level.upper()
+    if level != "NONE":
         log_format = get_log_format(debug=level == "DEBUG")
         logger.add(sys.stdout, level=level, format=log_format)
         if file is not None:
