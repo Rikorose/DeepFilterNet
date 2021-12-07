@@ -21,7 +21,7 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
 (
   cd DeepFilterNet/
   poetry add ../pyDF/
-  poetry add ../pyDF-data/
+  poetry add --optional ../pyDF-data/
 )
 echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF
 cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF deep_filter
