@@ -27,9 +27,12 @@ numpy = ">=1.20,<2.0"
 loguru = ">=0.5"
 DeepFilterDataLoader = { version = ">=0.1.6,<0.2", optional = true }
 icecream = { version = ">=2,<3", optional = true }
+pystoi = { version = "0.3", optional = true }
+semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true }
 
 [tool.poetry.extras]
 train = ["DeepFilterDataLoader", "icecream"]
+eval = ["pystoi", "semetrics"]
 
 [tool.poetry.scripts]
 deepFilter = "df.enhance:main"
