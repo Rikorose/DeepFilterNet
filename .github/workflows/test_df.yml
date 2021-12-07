@@ -15,9 +15,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Install Rust (${{matrix.rust}})
+      - name: Rust cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+      - name: Cache Poetry cache
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-cache-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ env.POETRY_VERSION }}
+      - name: Install Rust
         uses: actions-rs/toolchain@v1
-        with: {profile: minimal, toolchain: "stable"}
+        with: {profile: "minimal", toolchain: "stable"}
       - uses: actions/setup-python@v2
       - name: Install build dependencies
         run: pip install maturin poetry
