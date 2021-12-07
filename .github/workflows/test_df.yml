@@ -1,0 +1,28 @@
+name: Test DF
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 18 * * 0'
+
+jobs:
+  test-df-output:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (${{matrix.rust}})
+        uses: actions-rs/toolchain@v1
+        with: {profile: minimal, toolchain: "stable"}
+      - uses: actions/setup-python@v2
+      - name: Install build dependencies
+        run: pip install maturin poetry
+      - name: Install DeepFilterNet
+        working-directory: DeepFilterNet
+        run: poetry install
+      - name: Test
+        run: python DeepFilterNet/df/scripts/test_df.py
