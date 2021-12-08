@@ -1,12 +1,8 @@
 from importlib import import_module
 
-from icecream import ic, install
 from loguru import logger
 
 from df.config import DfParams, config
-
-install()
-ic.includeContext = True
 
 
 class ModelParams(DfParams):

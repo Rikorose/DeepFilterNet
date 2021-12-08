@@ -3,13 +3,12 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from icecream import ic  # noqa
 from torch import Tensor, nn
 from torch.nn import functional as F
 from typing_extensions import Final
 
 from df.model import ModelParams
-from df.utils import as_complex, as_real, get_norm_alpha, get_device
+from df.utils import as_complex, as_real, get_device, get_norm_alpha
 from libdf import unit_norm_init
 
 
@@ -621,6 +620,8 @@ def local_snr(
 
 
 def test_grouped_gru():
+    from icecream import ic
+    
     g = 2  # groups
     h = 4  # hidden_size
     i = 2  # input_size
