@@ -12,7 +12,17 @@ on:
 
 jobs:
   test-df-output:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9"]
+        os: ["ubuntu-latest"]
+        # python: ["3.7", "3.8", "3.9", "3.10"]
+        # os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v2
       - name: Rust cache
@@ -24,18 +34,20 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
       - name: Install Python
         uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python }}
       - name: Load cached Poetry installation
-        if: runner.os != 'Windows'
+        if: matrix.os != 'windows-latest'
         uses: actions/cache@v2
         with:
           path: ~/.local
-          key: poetry-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('.github/workflows/test_df.yml') }}
+          key: poetry-${{ matrix.os }}-${{ matrix.python }}-${{ hashFiles('.github/workflows/test_df.yml') }}
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
@@ -48,13 +60,14 @@ jobs:
           path: |
             .venv
             ~/.cache/pip/
-          key: venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('DeepFilterNet/pyproject.toml') }}
+          key: venv-${{ matrix.os }}-${{ matrix.python }}-${{ hashFiles('DeepFilterNet/pyproject.toml') }}
       - name: Install build dependencies
         run: pip install maturin
       - name: Install DeepFilterNet
         working-directory: DeepFilterNet
         run: poetry install -E eval --no-interaction
       - name: Run Test
+        working-directory: DeepFilterNet
         run: |
           source $VENV
-          # python DeepFilterNet/df/scripts/test_df.py
+          # python df/scripts/test_df.py
