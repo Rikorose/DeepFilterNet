@@ -27,7 +27,7 @@ python = ">=3.7,<4.0"
 numpy = ">=1.20,<2.0"
 loguru = ">=0.5"
 icecream = { version = ">=2,<3", optional = true }
-pystoi = { version = "0.3", optional = true }
+pystoi = { version = "^0.3", optional = true }
 semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true }
 
 [tool.poetry.extras]
