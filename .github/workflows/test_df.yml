@@ -25,19 +25,26 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-      - name: Cache Poetry cache
-        uses: actions/cache@v2
-        with:
-          path: ~/.cache/pypoetry
-          key: poetry-cache-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ env.POETRY_VERSION }}
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
       - uses: actions/setup-python@v2
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+      - name: Cache Poetry cache
+        uses: actions/cache@v2
+        with:
+          path: .venv
+          key: poetry-venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}
       - name: Install build dependencies
-        run: pip install maturin poetry
+        run: pip install maturin
       - name: Install DeepFilterNet
         working-directory: DeepFilterNet
-        run: poetry install
-      - name: Test
-        run: python DeepFilterNet/df/scripts/test_df.py
+        run: poetry install -E eval --no-interaction
+      - name: Run Test
+        run: |
+          poetry run python DeepFilterNet/df/scripts/test_df.py
