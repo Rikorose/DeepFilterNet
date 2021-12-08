@@ -8,12 +8,11 @@ import pystoi
 import semetrics
 import torch
 from loguru import logger
-from pystoi.utils import resample_oct
 
 from df.enhance import df_features, init_df, load_audio, save_audio, setup_df_argument_parser
 from df.model import ModelParams
 from df.modules import get_device
-from df.utils import as_complex
+from df.utils import as_complex, resample
 
 try:
     from tqdm import tqdm
@@ -115,9 +114,10 @@ def main(args):
 
 
 def stoi(clean, degraded, sr, extended=False):
+    assert len(clean.shape) == 1
     if sr != 10000:
-        clean = resample_oct(clean, 10000, sr)
-        degraded = resample_oct(degraded, 10000, sr)
+        clean = resample(torch.as_tensor(clean), sr, 10000).numpy()
+        degraded = resample(torch.as_tensor(degraded), sr, 10000).numpy()
         sr = 10000
     return pystoi.stoi(clean, degraded, sr, extended=extended)
 
@@ -125,8 +125,8 @@ def stoi(clean, degraded, sr, extended=False):
 def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
     """Compute pesq, csig, cbak, covl, ssnr"""
     if sr != 16000:
-        clean = resample_oct(clean, 16000, sr)
-        degraded = resample_oct(degraded, 16000, sr)
+        clean = resample(torch.as_tensor(clean), sr, 16000).numpy()
+        degraded = resample(torch.as_tensor(degraded), sr, 16000).numpy()
         sr = 16000
     cf = tempfile.NamedTemporaryFile(suffix=".wav")
     save_audio(cf.name, clean, sr)
