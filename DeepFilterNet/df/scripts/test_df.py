@@ -3,10 +3,7 @@
 import os
 
 import numpy as np
-from icecream import install
 from loguru import logger
-
-install()
 
 import df
 from df.deepfilternet import ModelParams
