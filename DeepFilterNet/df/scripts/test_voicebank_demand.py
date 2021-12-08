@@ -5,7 +5,6 @@ import tempfile
 
 import numpy as np
 import pystoi
-import semetrics
 import torch
 from loguru import logger
 
@@ -14,16 +13,22 @@ from df.model import ModelParams
 from df.modules import get_device
 from df.utils import as_complex, resample
 
+HAS_OCTAVE = True
+try:
+    import semetrics
+except OSError:
+    HAS_OCTAVE = False
+
 try:
     from tqdm import tqdm
 except ImportError:
 
     def tqdm(iterable, desc="Progress", total=None, fallback_estimate=1000):
         # tqdm not available using fallback
+        e = ""
         try:
             L = iterable.__len__()
         except AttributeError:
-            e = ""
             L = total or None
 
         print("{}:  {: >2d}".format(desc, 0), end="")
@@ -127,6 +132,7 @@ def stoi(clean, degraded, sr, extended=False):
 
 def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
     """Compute pesq, csig, cbak, covl, ssnr"""
+    assert HAS_OCTAVE
     assert len(clean.shape) == 1
     if sr != 16000:
         clean = resample(torch.as_tensor(clean), sr, 16000, method=__resample_method).numpy()

@@ -9,21 +9,20 @@ from loguru import logger
 import df
 from df.deepfilternet import ModelParams
 from df.enhance import enhance, init_df, load_audio
-from df.scripts.test_voicebank_demand import composite, si_sdr_speechmetrics, stoi
+from df.scripts.test_voicebank_demand import HAS_OCTAVE, composite, si_sdr_speechmetrics, stoi
 
 __a_tol = 1e-4
 
 
 def try_eval_composite(clean, enhanced, sr):
-    logger.info("Computing composite metrics")
-    try:
-        m_enh = torch.as_tensor(
-            composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr)
-        ).to(torch.float32)
-        logger.info(f"Got {m_enh}")
-    except OSError:
+    if not HAS_OCTAVE:
         logger.warning("Octave not found. Skipping.")
         return
+    logger.info("Computing composite metrics")
+    m_enh = torch.as_tensor(
+        composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr)
+    ).to(torch.float32)
+    logger.info(f"Got {m_enh}")
     m_target = torch.as_tensor(
         [2.3057448863983, 3.832368850708, 2.3624868392944, 3.054983377456, -2.792978048324]
     )
