@@ -12,12 +12,19 @@ on:
 
 jobs:
   test-df-output:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os.name }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.9"]
-        os: ["ubuntu-latest"]
+        pytorch: ["1.10.0"]
+        os:
+          - name: "ubuntu-latest"
+            platform: "linux"
+          - name: "macos-latest"
+            platform: "darwin"
+          - name: "windows-latest"
+            platform: "windows"
         # python: ["3.7", "3.8", "3.9", "3.10"]
         # os: ["ubuntu-latest", "macos-latest", "windows-latest"]
     defaults:
@@ -29,12 +36,13 @@ jobs:
         uses: actions/cache@v2
         with:
           path: |
+            ~/.rustup/
             ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ matrix.os.name }}-cargo-${{ hashFiles('**/Cargo.toml') }}
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
@@ -43,37 +51,33 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Load cached Poetry installation
-        if: matrix.os != 'windows-latest'
+        if: matrix.os.name != 'windows-latest'
         uses: actions/cache@v2
         with:
           path: ~/.local
-          key: poetry-${{ matrix.os }}-${{ matrix.python }}-${{ hashFiles('.github/workflows/test_df.yml') }}
+          key: poetry-${{ matrix.os.name }}-${{ matrix.python }}-${{ matrix.pytorch }}-${{ hashFiles('.github/workflows/test_df.yml') }}
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
           virtualenvs-create: true
           virtualenvs-in-project: true
-          installer-parallel: true
       - name: Python cache
         uses: actions/cache@v2
         id: cached-poetry-dependencies
         with:
           path: |
-            .venv
-            ~/.cache/pip/
-          key: venv-${{ matrix.os }}-${{ matrix.python }}-${{ hashFiles('DeepFilterNet/pyproject.toml') }}
-      - name: Install build dependencies
-        run: pip install maturin
-      - name: Install runtime dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != true
+            ~/.cache/
+          key: venv-${{ matrix.os.name }}-${{ matrix.python }}-${{ matrix.pytorch }}-${{ hashFiles('DeepFilterNet/pyproject.toml') }}
+      - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
-        run: poetry install -E eval --no-interaction --no-root
-      - name: Install DeepFilterNet
-        working-directory: DeepFilterNet
-        run: poetry install -E eval --no-interaction
+        run: |
+          poetry install -E eval --no-interaction --no-root
+          poetry run poe install-torch-cpu
+          # source $VENV
+          # pip install torch==${{matrix.pytorch}} torchaudio
+          # echo "PYTHONPATH=$PYTHONPATH:$PWD/DeepFilterNet" >> $GITHUB_ENV
       - name: Run Test
         working-directory: DeepFilterNet
         run: |
-          poetry run df/scripts/test_df.py
-          # source $VENV
-          # python df/scripts/test_df.py
+          source $VENV
+          python df/scripts/test_df.py
