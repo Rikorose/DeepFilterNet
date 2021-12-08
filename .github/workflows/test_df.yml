@@ -35,7 +35,7 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
           installer-parallel: true
-      - name: Cache Poetry cache
+      - name: Poetry cache
         uses: actions/cache@v2
         with:
           path: .venv
@@ -45,6 +45,6 @@ jobs:
       - name: Install DeepFilterNet
         working-directory: DeepFilterNet
         run: poetry install -E eval --no-interaction
-      - name: Run Test
-        run: |
-          poetry run python DeepFilterNet/df/scripts/test_df.py
+      # - name: Run Test
+      #   run: |
+      #     poetry run python DeepFilterNet/df/scripts/test_df.py
