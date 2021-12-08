@@ -37,6 +37,13 @@ eval = ["pystoi", "semetrics"]
 [tool.poetry.scripts]
 deepFilter = "df.enhance:main"
 
+[tool.poetry.dev-dependencies]
+poethepoet = "^0.11.0"
+
+[tool.poe.tasks]
+install-torch-cuda111 = "python -m pip install torch==1.10.0+cpu torchaudio==0.10.0+cu111 --extra-index-url https://download.pytorch.org/whl/cu111/"
+install-torch-cpu = "python -m pip install torch==1.10.0+cpu torchaudio==0.10.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu/"
+
 [build-system]
 requires = ["poetry>=1.0"]
 build-backend = "poetry.masonry.api"
