@@ -62,9 +62,8 @@ jobs:
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          poetry install -E eval --no-interaction --no-root
+          poetry install -E eval --no-interaction
           poetry run poe install-torch-cpu
-          echo "PYTHONPATH=$PYTHONPATH:$PWD/DeepFilterNet" >> $GITHUB_ENV
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install --no-install-recommends octave
