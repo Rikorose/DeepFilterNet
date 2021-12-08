@@ -17,11 +17,30 @@ from df.config import config
 from df.model import ModelParams
 
 try:
-    from torchaudio.functional import resample
+    from torchaudio.functional import resample as ta_resample
 except ImportError:
-    from torchaudio.compliance.kaldi import resample_waveform as resample  # type: ignore
+    from torchaudio.compliance.kaldi import resample_waveform as ta_resample  # type: ignore
 
-resample = resample
+
+def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
+    params = {
+        "sinc_fast": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 16},
+        "sinc_best": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 64},
+        "kaiser_fast": {
+            "resampling_method": "kaiser_window",
+            "lowpass_filter_width": 16,
+            "rolloff": 0.85,
+            "beta": 8.555504641634386,
+        },
+        "kaiser_best": {
+            "resampling_method": "kaiser_window",
+            "lowpass_filter_width": 16,
+            "rolloff": 0.9475937167399596,
+            "beta": 14.769656459379492,
+        },
+    }
+    assert method in params.keys()
+    return ta_resample(audio, orig_sr, new_sr, **params[method])
 
 
 def get_device():
