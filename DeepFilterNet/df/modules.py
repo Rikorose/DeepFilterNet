@@ -621,7 +621,7 @@ def local_snr(
 
 def test_grouped_gru():
     from icecream import ic
-    
+
     g = 2  # groups
     h = 4  # hidden_size
     i = 2  # input_size
