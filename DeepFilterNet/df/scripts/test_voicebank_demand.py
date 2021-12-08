@@ -41,6 +41,9 @@ except ImportError:
             print()
 
 
+__resample_method = "sinc_fast"
+
+
 def main(args):
     model, df_state, suffix = init_df(
         args.model_base_dir, post_filter=args.pf, log_level=args.log_level
@@ -116,17 +119,18 @@ def main(args):
 def stoi(clean, degraded, sr, extended=False):
     assert len(clean.shape) == 1
     if sr != 10000:
-        clean = resample(torch.as_tensor(clean), sr, 10000).numpy()
-        degraded = resample(torch.as_tensor(degraded), sr, 10000).numpy()
+        clean = resample(torch.as_tensor(clean), sr, 10000, method=__resample_method).numpy()
+        degraded = resample(torch.as_tensor(degraded), sr, 10000, method=__resample_method).numpy()
         sr = 10000
     return pystoi.stoi(clean, degraded, sr, extended=extended)
 
 
 def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
     """Compute pesq, csig, cbak, covl, ssnr"""
+    assert len(clean.shape) == 1
     if sr != 16000:
-        clean = resample(torch.as_tensor(clean), sr, 16000).numpy()
-        degraded = resample(torch.as_tensor(degraded), sr, 16000).numpy()
+        clean = resample(torch.as_tensor(clean), sr, 16000, method=__resample_method).numpy()
+        degraded = resample(torch.as_tensor(degraded), sr, 16000, method=__resample_method).numpy()
         sr = 16000
     cf = tempfile.NamedTemporaryFile(suffix=".wav")
     save_audio(cf.name, clean, sr)
