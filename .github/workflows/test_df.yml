@@ -28,23 +28,33 @@ jobs:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
-      - uses: actions/setup-python@v2
+      - name: Install Python
+        uses: actions/setup-python@v2
+      - name: Load cached Poetry installation
+        if: runner.os != 'Windows'
+        uses: actions/cache@v2
+        with:
+          path: ~/.local
+          key: poetry-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('.github/workflows/test_df.yml') }}
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
           virtualenvs-create: true
           virtualenvs-in-project: true
           installer-parallel: true
-      - name: Poetry cache
+      - name: Python cache
         uses: actions/cache@v2
         with:
-          path: .venv
-          key: poetry-venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}
+          path: |
+            .venv
+            ~/.cache/pip/
+          key: venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/poetry.lock') }}
       - name: Install build dependencies
         run: pip install maturin
       - name: Install DeepFilterNet
         working-directory: DeepFilterNet
         run: poetry install -E eval --no-interaction
-      # - name: Run Test
-      #   run: |
-      #     poetry run python DeepFilterNet/df/scripts/test_df.py
+      - name: Run Test
+        run: |
+          source $VENV
+          python DeepFilterNet/df/scripts/test_df.py
