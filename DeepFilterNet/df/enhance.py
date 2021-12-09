@@ -132,7 +132,10 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
         audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
         info (AudioMetaData): Meta data or the original audio file. Contains the original sr.
     """
-    info = ta.info(file, format=kwargs.get("format", None))
+    ikwargs = {}
+    if "format" in kwargs:
+        ikwargs["format"] = kwargs["format"]
+    info = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
     if orig_sr != sr:
         logger.warning(
