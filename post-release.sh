@@ -20,8 +20,9 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
 
 (
   cd DeepFilterNet/
-  poetry add ../pyDF/
-  poetry add --optional ../pyDF-data/
+  # Workaround for 'poetry add ../pyDF/' which gives some obscure error message
+  sed -i "s/^deepfilterlib.*/deepfilterlib = { path = \"..\/pyDF\/\" }/" pyproject.toml
+  sed -i "s/^deepfilterdataloader.*/deepfilterdataloader = { path = \"..\/pyDF-data\/\", optional = true }/" pyproject.toml
 )
 echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF
 cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF deep_filter
