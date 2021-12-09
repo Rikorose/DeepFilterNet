@@ -18,6 +18,9 @@ jobs:
       matrix:
         python: ["3.9"]
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        include:
+          - os: "windows-latest"
+            extra: "-E soundfile"  # Soundfile backend for torchaudio
     defaults:
       run:
         shell: bash
@@ -62,7 +65,7 @@ jobs:
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          poetry install -E eval --no-interaction
+          poetry install --no-interaction -E eval ${{matrix.extra}}
           poetry run poe install-torch-cpu
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
