@@ -4,16 +4,21 @@ on:
   push:
     branches:
       - main
+    tags-ignore:
+      - "v*[0-9]+.[0-9]+.[0-9]+"
   pull_request:
     branches:
       - main
+  workflow_run:
+    workflows: ["publish-DeepFilterNet"]
+    branches: [main]
+    types: 
+      - completed
   schedule:
     - cron: '0 18 * * 0'
 
 jobs:
   test-df-output:
-    if: ${{ always() }}
-    needs: [publish-pypi-wheels]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
