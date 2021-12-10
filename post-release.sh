@@ -24,7 +24,7 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
   sed -i "s/^deepfilterlib.*/deepfilterlib = { path = \"..\/pyDF\/\" }/" pyproject.toml
   sed -i "s/^deepfilterdataloader.*/deepfilterdataloader = { path = \"..\/pyDF-data\/\", optional = true }/" pyproject.toml
   # Add semetrics back again
-  poetry add --optional -E eval git+https://github.com/usimarit/semetrics.git
+  poetry add --optional git+https://github.com/usimarit/semetrics.git
 
 )
 echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF

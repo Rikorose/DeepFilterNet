@@ -12,7 +12,7 @@ on:
   workflow_run:
     workflows: ["publish-DeepFilterNet"]
     branches: [main]
-    types: 
+    types:
       - completed
   schedule:
     - cron: '0 18 * * 0'
