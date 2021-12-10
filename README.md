@@ -82,15 +82,17 @@ python df/prepare_data.py --sr 48000 speech training_set.txt TRAIN_SET_SPEECH.hd
 All datasets should be made available in one dataset folder for the train script.
 
 The dataset configuration file should contain 3 entries: "train", "valid", "test". Each of those
-contains a list of datasets (e.g. a speech, noise and a RIR dataset). Optionally a sampling factor
-may be specified that can be used to over/under-sample the dataset. Say, you have a specific dataset
-with transient noises and want to increase the amount of non-stationary noises by oversampling.
-In most cases you want to set this factor to 1.
+contains a list of datasets (e.g. a speech, noise and a RIR dataset). You can use multiple speech
+or noise dataset. Optionally, a sampling factor may be specified that can be used to over/under-sample
+the dataset. Say, you have a specific dataset with transient noises and want to increase the amount
+of non-stationary noises by oversampling. In most cases you want to set this factor to 1.
 
 <details>
-  <summary>
-`dataset.cfg` example:
-  </summary>
+  <summary>Dataset config example:</summary>
+<p>
+  
+`dataset.cfg`
+
 ```json
 {
   "train": [
@@ -137,6 +139,8 @@ In most cases you want to set this factor to 1.
   ]
 }
 ```
+
+</p>
 </details>
 
 Finally, start the training script. The training script may create a model `base_dir` if not
