@@ -48,6 +48,8 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
   # Workaround since 'poetry add' needs the specified package version to be at pypi
   sed -i "s/^deepfilterlib.*/deepfilterlib = \"$VERSION\"/" pyproject.toml
   sed -i "s/^deepfilterdataloader.*/deepfilterdataloader = { version = \"$VERSION\", optional = true }/" pyproject.toml
+  # Git dependency does not work when uploading to pypi
+  sed -i "/^semetrics.*/d" pyproject.toml
 )
 cargo add --manifest-path ./pyDF/Cargo.toml deep_filter@"$VERSION" --features transforms
 cargo add --manifest-path ./pyDF-data/Cargo.toml --features dataset deep_filter@"$VERSION"

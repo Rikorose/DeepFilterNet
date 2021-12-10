@@ -22,20 +22,15 @@ include = [
 
 [tool.poetry.dependencies]
 deepfilterlib = "0.1.9"
-deepfilterdataloader = { version = "0.1.9", optional = true }
+deepfilterdataloader = { version = "0.1.9", optional = true, extras = ["train"] }
 python = ">=3.7,<4.0"
 typing_extensions = "^4.0"
 numpy = ">=1.20,<2.0"
 loguru = ">=0.5"
-soundfile = { version = "^0.10", optional = true }
-icecream = { version = ">=2,<3", optional = true }
-pystoi = { version = "^0.3", optional = true }
-semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true }
-
-[tool.poetry.extras]
-train = ["deepfilterdataloader", "icecream"]
-eval = ["pystoi", "semetrics"]
-soundfile = ["soundfile"]
+soundfile = { version = "^0.10", optional = true, extras = ["soundfile"] }
+icecream = { version = ">=2,<3", optional = true, extras = ["train"] }
+pystoi = { version = "^0.3", optional = true, extras = ["eval"] }
+semetrics = {git = "https://github.com/usimarit/semetrics.git", optional = true, extras = ["eval"]}
 
 [tool.poetry.scripts]
 deepFilter = "df.enhance:main"
