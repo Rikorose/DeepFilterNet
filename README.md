@@ -3,11 +3,12 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) based 
 Audio samples from the voice bank/DEMAND test set can be found at https://rikorose.github.io/DeepFilterNet-Samples/
 
 * `libDF` contains Rust code used for data loading and augmentation.
-* `DeepFilterNet` contains Python code including a libDF wrapper for data loading, DeepFilterNet training, testing and visualization.
-* `models` contains DeepFilterNet model weights and config.
+* `DeepFilterNet` contains DeepFilterNet code training, evaluation and visualization as well as pretrained model weights.
+* `pyDF` contains a Python wrapper of libDF STFT/ISTFT processing loop.
+* `pyDF-data` contains a Python wrapper of libDF dataset functionality and provides a pytorch data loader.
 
 ## Usage
-This framework is currently only tested under Linux.
+This framework supports Linux, MacOS and Windows. Training is only tested under Linux.
 
 ### PyPI
 
@@ -17,6 +18,8 @@ Install the DeepFilterNet python package via pip:
 pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
 # Install DeepFilterNet
 pip install deepfilternet
+# Or install DeepFilterNet including data loading functionality for training (Linux only)
+pip install deepfilternet[train]
 ```
 
 To enhance noisy audio files using DeepFilterNet run
@@ -76,24 +79,65 @@ cd path/to/DeepFilterNet/DeepFilterNet
 #   hdf5_db: Output HDF5 dataset.
 python df/prepare_data.py --sr 48000 speech training_set.txt TRAIN_SET_SPEECH.hdf5
 ```
-All dataset should be made available in one dataset folder for the train script.
+All datasets should be made available in one dataset folder for the train script.
 
 The dataset configuration file should contain 3 entries: "train", "valid", "test". Each of those
 contains a list of datasets (e.g. a speech, noise and a RIR dataset). Optionally a sampling factor
 may be specified that can be used to over/under-sample the dataset. Say, you have a specific dataset
 with transient noises and want to increase the amount of non-stationary noises by oversampling.
+In most cases you want to set this factor to 1.
 
-File `dataset.cfg`:
+<details>
+  <summary>
+`dataset.cfg` example:
+  </summary>
 ```json
 {
   "train": [
     [
       "TRAIN_SET_SPEECH.hdf5",
       1.0
+    ],
+    [
+      "TRAIN_SET_NOISE.hdf5",
+      1.0
+    ],
+    [
+      "TRAIN_SET_RIR.hdf5",
+      1.0
+    ]
+  ],
+  "valid": [
+    [
+      "VALID_SET_SPEECH.hdf5",
+      1.0
+    ],
+    [
+      "VALID_SET_NOISE.hdf5",
+      1.0
+    ],
+    [
+      "VALID_SET_RIR.hdf5",
+      1.0
+    ]
+  ],
+  "test": [
+    [
+      "TEST_SET_SPEECH.hdf5",
+      1.0
+    ],
+    [
+      "TEST_SET_NOISE.hdf5",
+      1.0
+    ],
+    [
+      "TEST_SET_RIR.hdf5",
+      1.0
     ]
   ]
 }
 ```
+</details>
 
 Finally, start the training script. The training script may create a model `base_dir` if not
 existing used for logging, some audio samples, model checkpoints, and config. If no config file is
