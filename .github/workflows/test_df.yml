@@ -12,6 +12,8 @@ on:
 
 jobs:
   test-df-output:
+    if: ${{ always() }}
+    needs: [publish-pypi-wheels]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
