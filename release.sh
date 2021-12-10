@@ -59,4 +59,9 @@ git push
 git tag -f "v$VERSION"
 git push -f --tags
 
+(
+  cd libDF
+  cargo publish --allow-dirty
+)
+
 cargo update
