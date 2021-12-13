@@ -124,6 +124,93 @@ def convkxf(
     return nn.Sequential(OrderedDict(modules))
 
 
+class LongShortAttention(nn.Module):
+    def __init__(
+        self,
+        n_freqs: int,
+        input_dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        window_size: int = 128,
+        r: int = 1,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        assert n_freqs >= window_size
+        assert n_freqs % window_size == 0
+        self.dim = input_dim
+        self.dim_head = dim_head
+        self.inner_dim = heads * dim_head
+        self.scale = dim_head ** -0.5
+
+        self.heads = heads
+        self.window_size = window_size
+        self.n_windows = n_freqs // window_size
+
+        self.r = r
+        self.to_dynamic_proj = nn.Linear(dim_head, r, bias=False)
+        self.dual_ln_full = nn.LayerNorm(dim_head)
+        self.dual_ln_dp = nn.LayerNorm(dim_head)
+
+        self.attn_dropout = nn.Dropout(dropout)
+
+        self.W_qkv = nn.Linear(input_dim, self.inner_dim * 3, bias=False)
+        self.W_o = nn.Linear(self.inner_dim, input_dim)
+
+    def forward(self, x: Tensor):
+        # x: [B, T, F, C]
+        assert x.ndim == 4
+        assert x.shape[-1] == self.dim
+        q, k, v = torch.chunk(self.W_qkv(x), 3, dim=-1)
+        q = q.mul(self.scale)
+        b = x.shape[0]
+        # q: [B, T, F, I], I: heads*dim_head
+
+        # TODO: Original LS-Transformer code includes some full attention for a portion of features
+
+        # Split into heads
+        q = rearrange(q, "b t f (h d) -> (b h t) f d", h=self.heads)
+        k = rearrange(k, "b t f (h d) -> (b h t) f d", h=self.heads)
+        v = rearrange(v, "b t f (h d) -> (b h t) f d", h=self.heads)
+
+        k = self.dual_ln_full(k)
+        v = self.dual_ln_full(v)
+
+        # Local
+        lq = rearrange(q, "b (n w) d -> b n w d", w=self.window_size)  # windowed query
+        lk = rearrange(k, "b (n w) d -> b n w d", w=self.window_size)  # windowed key
+        lv = rearrange(v, "b (n w) d -> b n w d", w=self.window_size)  # windows value
+        # TODO rel positional encodings.
+        # Some transformer papers in speech/audio domain report, no positional encoding is needed
+        lsim = einsum("b w i d, b w j d -> b w i j", lq, lk)
+
+        # Global
+        pk = self.to_dynamic_proj(k).softmax(dim=2)  # projection matrix
+        gk = einsum("b n d, b n r -> b r d", k, pk)  # compressed global key
+        gv = einsum("b n d, b n r -> b r d", v, pk)  # compressed global value
+        gk = self.dual_ln_dp(gk)
+        gv = self.dual_ln_dp(gv)
+        gsim = einsum("b n d, b r d -> b n r", q, gk)
+        gsim = rearrange(gsim, "b (w n) r -> b w n r", w=self.n_windows)
+
+        # Attention over both, local and global qk
+        sim = torch.cat((lsim, gsim), dim=-1)
+        attn = sim.softmax(dim=-1)
+        attn = self.attn_dropout(attn)
+
+        out = 0
+        # Local atten out
+        lattn, gattn = torch.split(attn, (self.window_size, self.r), dim=-1)
+        out += rearrange(einsum("b w i j, b w j d -> b w i d", lattn, lv), "b w i d -> b (w i) d")
+        # Global atten out
+        gattn = rearrange(gattn, "b w n r -> b (w n) r")
+        out = +einsum("b i j, b j d -> b i d", gattn, gv)
+        out = rearrange(out, "(b h) n d -> b n (h d)", h=self.heads)
+        out = rearrange(out, "(b t) f d -> b t f d", b=b)
+        out = self.W_o(out)
+        return out
+
+
 class FreqUpsample(nn.Module):
     def __init__(self, factor: int, mode="nearest"):
         super().__init__()
