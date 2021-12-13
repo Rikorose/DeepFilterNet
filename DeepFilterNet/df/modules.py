@@ -211,6 +211,63 @@ class LongShortAttention(nn.Module):
         return out
 
 
+class ConvGRU(nn.Module):
+    def __init__(
+        self, in_ch: int, out_ch: int, out_act: Callable[[], nn.Module] = nn.ELU, **conv_kwargs
+    ):
+        super().__init__()
+        self.in_ch = in_ch
+        self.out_ch = out_ch
+        self.conv_zr = nn.Conv2d(in_ch + out_ch, out_ch * 2, **conv_kwargs)
+        self.conv_o = nn.Conv2d(in_ch + out_ch, out_ch, **conv_kwargs)
+        self.out_act = out_act()
+
+    def init_hidden(self, batch_size: int, h: int, w: int, device: Optional[torch.device] = None):
+        h0 = torch.zeros(batch_size, self.out_ch, h, w)
+        if device is not None:
+            h0 = h0.to(device)
+        return h0
+
+    def forward(self, x: Tensor, h: Tensor):
+        # x.shape: [B, Ci, H, W]
+        # h.shape: [B, Co, H, W]
+        x_in = torch.cat((x, h), dim=1)
+        z, r = torch.chunk(torch.sigmoid(self.conv_zr(x_in)), 2, dim=1)
+        o = self.out_act(self.conv_o(torch.cat((x_in, r * h), dim=1)))
+        h = h * (1 - z) + o * z
+        return h
+
+
+class ConvLSTM(nn.Module):
+    def __init__(
+        self, in_ch: int, out_ch: int, out_act: Callable[[], nn.Module] = nn.ELU, **conv_kwargs
+    ):
+        super().__init__()
+        self.in_ch = in_ch
+        self.out_ch = out_ch
+        self.conv = nn.Conv2d(in_ch + out_ch, out_ch * 4, **conv_kwargs)
+        self.out_act = out_act()
+
+    def init_hidden(self, batch_size: int, h: int, w: int, device: Optional[torch.device] = None):
+        h0 = torch.zeros(batch_size, self.out_ch, h, w, device=device)
+        c0 = torch.zeros(batch_size, self.out_ch, h, w, device=device)
+        return h0, c0
+
+    def forward(self, x: Tensor, states: Tuple[Tensor, Tensor]):
+        # x.shape: [B, Ci, H, W]
+        # h.shape: [B, Co, H, W]
+        h, c = states
+        x_in = torch.cat((x, h), dim=1)
+        i, f, o, g = torch.chunk(self.conv(x_in), 4, dim=1)
+        i = torch.sigmoid(i)
+        f = torch.sigmoid(f)
+        o = torch.sigmoid(o)
+        g = torch.tanh(g)
+        c = f * c + i * g
+        h = o * torch.tanh(c)
+        return h, c
+
+
 class FreqUpsample(nn.Module):
     def __init__(self, factor: int, mode="nearest"):
         super().__init__()
