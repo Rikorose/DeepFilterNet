@@ -43,6 +43,7 @@ pip install maturin poetry
 # Build and install libdf python package required for enhance.py
 maturin develop --release -m pyDF/Cargo.toml
 # Optional: Install libdfdata python package with dataset and dataloading functionality for training
+# Required build dependency: HDF5 headers (e.g. ubuntu: libhdf5-dev)
 maturin develop --release -m pyDF-data/Cargo.toml
 # Install remaining DeepFilterNet python dependencies
 cd DeepFilterNet
