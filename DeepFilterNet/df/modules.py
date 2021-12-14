@@ -1,9 +1,11 @@
+from abc import abstractmethod
 from collections import OrderedDict
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch import Tensor, nn
+from einops import rearrange
+from torch import Tensor, einsum, nn
 from torch.nn import functional as F
 from typing_extensions import Final
 
@@ -158,20 +160,20 @@ class LongShortAttention(nn.Module):
         self.W_o = nn.Linear(self.inner_dim, input_dim)
 
     def forward(self, x: Tensor):
-        # x: [B, T, F, C]
+        # x: [B, C, T, F]
         assert x.ndim == 4
         assert x.shape[-1] == self.dim
         q, k, v = torch.chunk(self.W_qkv(x), 3, dim=-1)
         q = q.mul(self.scale)
         b = x.shape[0]
-        # q: [B, T, F, I], I: heads*dim_head
+        # q: [B, I, T, F], I: heads*dim_head
 
         # TODO: Original LS-Transformer code includes some full attention for a portion of features
 
         # Split into heads
-        q = rearrange(q, "b t f (h d) -> (b h t) f d", h=self.heads)
-        k = rearrange(k, "b t f (h d) -> (b h t) f d", h=self.heads)
-        v = rearrange(v, "b t f (h d) -> (b h t) f d", h=self.heads)
+        q = rearrange(q, "b (h d) t f -> (b h t) f d", h=self.heads)
+        k = rearrange(k, "b (h d) t f -> (b h t) f d", h=self.heads)
+        v = rearrange(v, "b (h d) t f -> (b h t) f d", h=self.heads)
 
         k = self.dual_ln_full(k)
         v = self.dual_ln_full(v)
@@ -211,61 +213,155 @@ class LongShortAttention(nn.Module):
         return out
 
 
+class ConvRNNBase(nn.Module):
+    ks_t: Final[int]
+    ks_f: Final[int]
+    is_lstm: Final[bool]
+
+    def __init__(self, kernel_size: Tuple[int, int], is_lstem: bool):
+        super().__init__()
+        self.ks_f = kernel_size[0]
+        self.ks_t = kernel_size[1]
+        self.is_lstm = is_lstem
+        self.pad = (0, 0 // 2, 0, self.ks_t - 1)
+
+    @abstractmethod
+    def init_hidden(self, batch_size, h, w, device) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def forward_par(self, x: Tensor) -> Tuple[Tensor, ...]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def forward_cell(
+        self, x: Tensor, state: Union[Tensor, Tuple[Tensor, Tensor]]
+    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+        raise NotImplementedError()
+
+    def forward(self, x: Tensor, state: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None):
+        # x.shape: [B, C, T, F]
+        x = F.pad(x, self.pad).unfold(2, size=self.ks_t, step=1)
+        x = rearrange(x, "b c t f w -> b t c f w")
+        b, t, _, f, w = x.shape
+        if state is None:
+            state = self.init_hidden(b, f, w, device=x.device)
+        outputs: List[Tensor] = []
+        x_par = self.forward_par(x)
+        for i in range(t):
+            state = self.forward_cell(x[:, i], state)
+            if self.is_lstm:
+                outputs.append(state[0])
+            else:
+                outputs.append(state)  # type: ignore
+        outputs = torch.stack(outputs, dim=2)
+        return outputs, state
+
+
 class ConvGRU(nn.Module):
     def __init__(
-        self, in_ch: int, out_ch: int, out_act: Callable[[], nn.Module] = nn.ELU, **conv_kwargs
+        self,
+        in_ch: int,
+        out_ch: int,
+        kernel_size: Union[int, Tuple[int, int]] = 1,
+        stride: Union[int, Tuple[int, int]] = 1,
+        bias: bool = True,
+        out_act: nn.Module = nn.ELU(),
     ):
         super().__init__()
+        # Kernel size in [T, F]
+        if not isinstance(kernel_size, (tuple, list)):
+            self.ks = (kernel_size, kernel_size)
+        else:
+            self.ks = kernel_size
+        assert self.ks[0] == 1
         self.in_ch = in_ch
         self.out_ch = out_ch
-        self.conv_zr = nn.Conv2d(in_ch + out_ch, out_ch * 2, **conv_kwargs)
-        self.conv_o = nn.Conv2d(in_ch + out_ch, out_ch, **conv_kwargs)
-        self.out_act = out_act()
+        self.stride = stride
+        pad = (0, (self.ks[1] - 1) // 2)
+        self.conv_zr = nn.Conv2d(
+            in_ch + out_ch, out_ch * 2, self.ks, stride=stride, padding=pad, bias=bias
+        )
+        self.conv_o = nn.Conv2d(
+            in_ch + out_ch, out_ch, self.ks, stride=stride, padding=pad, bias=bias
+        )
+        self.out_act = out_act
 
     def init_hidden(self, batch_size: int, h: int, w: int, device: Optional[torch.device] = None):
-        h0 = torch.zeros(batch_size, self.out_ch, h, w)
-        if device is not None:
-            h0 = h0.to(device)
-        return h0
+        return torch.zeros((batch_size, self.out_ch, w, h), device=device)
 
-    def forward(self, x: Tensor, h: Tensor):
-        # x.shape: [B, Ci, H, W]
-        # h.shape: [B, Co, H, W]
-        x_in = torch.cat((x, h), dim=1)
-        z, r = torch.chunk(torch.sigmoid(self.conv_zr(x_in)), 2, dim=1)
-        o = self.out_act(self.conv_o(torch.cat((x_in, r * h), dim=1)))
-        h = h * (1 - z) + o * z
-        return h
+    def forward(self, x: Tensor, state: Optional[Tensor] = None):
+        # x.shape: [B, Ci, T, F]
+        # h.shape: [B, Co, 1, F]
+
+        b, _, t, f = x.shape
+        if state is None:
+            h = self.init_hidden(b, f, 1, device=x.device)
+        else:
+            h = state
+        outputs: List[Tensor] = []
+        for i in range(t):
+            x_t = x[:, :, [i]]
+            z, r = torch.chunk(torch.sigmoid(self.conv_zr(torch.cat((x_t, h), dim=1))), 2, dim=1)
+            o = self.out_act(self.conv_o(torch.cat((x_t, r * h), dim=1)))
+            h = h * (1 - z) + o * z
+            outputs.append(h)
+        return torch.cat(outputs, dim=2), h
 
 
 class ConvLSTM(nn.Module):
     def __init__(
-        self, in_ch: int, out_ch: int, out_act: Callable[[], nn.Module] = nn.ELU, **conv_kwargs
+        self,
+        in_ch: int,
+        out_ch: int,
+        kernel_size: Union[int, Tuple[int, int]] = 1,
+        stride: Union[int, Tuple[int, int]] = 1,
+        bias: bool = True,
+        out_act: nn.Module = nn.ELU(),
     ):
         super().__init__()
+        # Kernel size in [T, F]
+        if not isinstance(kernel_size, (tuple, list)):
+            self.ks = (kernel_size, kernel_size)
+        else:
+            self.ks = kernel_size
+        assert self.ks[0] == 1
         self.in_ch = in_ch
         self.out_ch = out_ch
-        self.conv = nn.Conv2d(in_ch + out_ch, out_ch * 4, **conv_kwargs)
-        self.out_act = out_act()
+        pad = (0, (self.ks[1] - 1) // 2)
+        self.conv = nn.Conv2d(
+            in_ch + out_ch, out_ch * 4, self.ks, stride=stride, bias=bias, padding=pad
+        )
+        self.out_act = out_act
 
     def init_hidden(self, batch_size: int, h: int, w: int, device: Optional[torch.device] = None):
-        h0 = torch.zeros(batch_size, self.out_ch, h, w, device=device)
-        c0 = torch.zeros(batch_size, self.out_ch, h, w, device=device)
+        h0 = torch.zeros(batch_size, self.out_ch, w, h, device=device)
+        c0 = torch.zeros(batch_size, self.out_ch, w, h, device=device)
         return h0, c0
 
-    def forward(self, x: Tensor, states: Tuple[Tensor, Tensor]):
+    def forward(self, x: Tensor, states: Optional[Tuple[Tensor, Tensor]] = None):
         # x.shape: [B, Ci, H, W]
         # h.shape: [B, Co, H, W]
-        h, c = states
-        x_in = torch.cat((x, h), dim=1)
-        i, f, o, g = torch.chunk(self.conv(x_in), 4, dim=1)
-        i = torch.sigmoid(i)
-        f = torch.sigmoid(f)
-        o = torch.sigmoid(o)
-        g = torch.tanh(g)
-        c = f * c + i * g
-        h = o * torch.tanh(c)
-        return h, c
+        # c.shape: [B, Co, H, W]
+
+        b, _, t, f = x.shape
+        if states is None:
+            h, c = self.init_hidden(b, f, 1, device=x.device)
+        else:
+            h, c = states
+        outputs: List[Tensor] = []
+
+        for i in range(t):
+            x_t = x[:, :, [i]]
+            i, f, o, g = torch.chunk(self.conv(torch.cat((x_t, h), dim=1)), 4, dim=1)
+            i = torch.sigmoid(i)
+            f = torch.sigmoid(f)
+            o = torch.sigmoid(o)
+            g = torch.tanh(g)
+            c = f * c + i * g
+            h = o * torch.tanh(c)
+            outputs.append(h)
+        return torch.stack(outputs, dim=2), (h, c)
 
 
 class FreqUpsample(nn.Module):
@@ -938,3 +1034,26 @@ def test_dfop():
     dfop.set_forward("real_hidden_state_loop")
     out6 = dfop(spec, coefs, alpha)
     torch.testing.assert_allclose(out1, out6)
+
+
+def test_long_short_attention():
+    b, t, f, d = 1, 100, 480, 32
+    spec = torch.randn(b, t, f, d)
+    atten = LongShortAttention(f, d, dim_head=64, heads=8, window_size=120, r=64)
+    out = atten(spec)
+    return out
+
+
+def test_conv_rnn():
+    from icecream import ic
+
+    b, t, f, c = 1, 100, 480, 32
+    x = torch.randn(b, c, t, f)
+    rnn = ConvGRU(c, c * 2, kernel_size=(1, 3))
+    x, h = rnn(x)
+    ic(x.shape, h.shape)
+
+    x = torch.randn(b, c, t, f)
+    rnn = ConvLSTM(c, c * 2, kernel_size=(1, 3))
+    x, h = rnn(x)
+    ic(x.shape, h[0].shape, h[1].shape)
