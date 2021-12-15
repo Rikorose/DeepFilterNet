@@ -1,4 +1,3 @@
-from abc import abstractmethod
 from collections import OrderedDict
 from typing import List, Optional, Tuple, Union
 
@@ -133,9 +132,10 @@ class LongShortAttention(nn.Module):
         input_dim: int,
         heads: int = 8,
         dim_head: int = 64,
-        window_size: int = 128,
+        window_size: int = 4,
         r: int = 1,
         dropout: float = 0.0,
+        output_dim: Optional[int] = None,
     ):
         super().__init__()
         assert n_freqs >= window_size
@@ -157,11 +157,13 @@ class LongShortAttention(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
 
         self.W_qkv = nn.Linear(input_dim, self.inner_dim * 3, bias=False)
-        self.W_o = nn.Linear(self.inner_dim, input_dim)
+        output_dim = output_dim or input_dim
+        self.W_o = nn.Linear(self.inner_dim, output_dim)
 
     def forward(self, x: Tensor):
         # x: [B, C, T, F]
         assert x.ndim == 4
+        x = rearrange(x, "b c t f -> b t f c")
         assert x.shape[-1] == self.dim
         q, k, v = torch.chunk(self.W_qkv(x), 3, dim=-1)
         q = q.mul(self.scale)
@@ -171,9 +173,9 @@ class LongShortAttention(nn.Module):
         # TODO: Original LS-Transformer code includes some full attention for a portion of features
 
         # Split into heads
-        q = rearrange(q, "b (h d) t f -> (b h t) f d", h=self.heads)
-        k = rearrange(k, "b (h d) t f -> (b h t) f d", h=self.heads)
-        v = rearrange(v, "b (h d) t f -> (b h t) f d", h=self.heads)
+        q = rearrange(q, "b t f (h d) -> (b h t) f d", h=self.heads)
+        k = rearrange(k, "b t f (h d) -> (b h t) f d", h=self.heads)
+        v = rearrange(v, "b t f (h d) -> (b h t) f d", h=self.heads)
 
         k = self.dual_ln_full(k)
         v = self.dual_ln_full(v)
@@ -210,6 +212,7 @@ class LongShortAttention(nn.Module):
         out = rearrange(out, "(b h) n d -> b n (h d)", h=self.heads)
         out = rearrange(out, "(b t) f d -> b t f d", b=b)
         out = self.W_o(out)
+        out = rearrange(out, "b t f c -> b c t f")
         return out
 
 
@@ -1009,7 +1012,7 @@ def test_dfop():
 
 def test_long_short_attention():
     b, t, f, d = 1, 100, 480, 32
-    spec = torch.randn(b, t, f, d)
+    spec = torch.randn(b, d, t, f)
     atten = LongShortAttention(f, d, dim_head=64, heads=8, window_size=120, r=64)
     out = atten(spec)
     return out
