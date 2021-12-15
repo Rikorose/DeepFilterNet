@@ -213,51 +213,6 @@ class LongShortAttention(nn.Module):
         return out
 
 
-class ConvRNNBase(nn.Module):
-    ks_t: Final[int]
-    ks_f: Final[int]
-    is_lstm: Final[bool]
-
-    def __init__(self, kernel_size: Tuple[int, int], is_lstem: bool):
-        super().__init__()
-        self.ks_f = kernel_size[0]
-        self.ks_t = kernel_size[1]
-        self.is_lstm = is_lstem
-        self.pad = (0, 0 // 2, 0, self.ks_t - 1)
-
-    @abstractmethod
-    def init_hidden(self, batch_size, h, w, device) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def forward_par(self, x: Tensor) -> Tuple[Tensor, ...]:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def forward_cell(
-        self, x: Tensor, state: Union[Tensor, Tuple[Tensor, Tensor]]
-    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-        raise NotImplementedError()
-
-    def forward(self, x: Tensor, state: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None):
-        # x.shape: [B, C, T, F]
-        x = F.pad(x, self.pad).unfold(2, size=self.ks_t, step=1)
-        x = rearrange(x, "b c t f w -> b t c f w")
-        b, t, _, f, w = x.shape
-        if state is None:
-            state = self.init_hidden(b, f, w, device=x.device)
-        outputs: List[Tensor] = []
-        x_par = self.forward_par(x)
-        for i in range(t):
-            state = self.forward_cell(x[:, i], state)
-            if self.is_lstm:
-                outputs.append(state[0])
-            else:
-                outputs.append(state)  # type: ignore
-        outputs = torch.stack(outputs, dim=2)
-        return outputs, state
-
-
 class ConvGRU(nn.Module):
     def __init__(
         self,
