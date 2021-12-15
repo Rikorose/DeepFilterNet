@@ -270,9 +270,14 @@ def run_epoch(
                     err.backward()
                     clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
                 except RuntimeError as e:
-                    if "nan" in str(e).lower():
+                    e_str = str(e)
+                    if "nan" in e_str.lower() or "non-finite" in e_str:
+                        check_finite_module(model)
                         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
-                        logger.error(str(e))
+                        logger.error(e_str)
+                        n_nans += 1
+                        if n_nans > 10:
+                            raise e
                         continue
                     else:
                         raise e
