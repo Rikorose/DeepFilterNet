@@ -6,6 +6,7 @@ from typing import Dict, Optional
 import numpy as np
 import torch
 import torchaudio
+from icecream import ic, install
 from loguru import logger
 from torch import Tensor, nn
 from torch.optim import Adam, AdamW, Optimizer, RMSprop
@@ -29,6 +30,9 @@ from df.utils import (
 )
 from libdf import DF
 from libdfdata import PytorchDataLoader as DataLoader
+
+ic.includeContext = True
+install()
 
 should_stop = False
 debug = False
