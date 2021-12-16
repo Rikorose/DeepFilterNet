@@ -243,12 +243,13 @@ def run_epoch(
         atten = batch.atten.to(dev, non_blocking=True)
         snrs = batch.snr.to(dev, non_blocking=True)
         with torch.autograd.set_detect_anomaly(detect_anomaly):
-            enh, m, lsnr, other = model.forward(
-                spec=as_real(noisy),
-                feat_erb=feat_erb,
-                feat_spec=feat_spec,
-                atten_lim=atten,
-            )
+            with torch.set_grad_enabled(is_train):
+                enh, m, lsnr, other = model.forward(
+                    spec=as_real(noisy),
+                    feat_erb=feat_erb,
+                    feat_spec=feat_spec,
+                    atten_lim=atten,
+                )
             df_alpha, multi_stage_specs = None, []
             if isinstance(other, Tensor):
                 df_alpha = other
@@ -398,7 +399,9 @@ def summary_write(
     )
     torchaudio.save(os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[0]), p.sr)
     np.savetxt(
-        os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"), lsnr[0].detach().cpu().numpy()
+        os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"),
+        lsnr[0].detach().cpu().numpy(),
+        fmt="%.3f",
     )
     if df_alpha is not None:
         np.savetxt(
