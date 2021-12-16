@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 from einops import rearrange
+from einops.layers.torch import Rearrange
 from torch import Tensor, einsum, nn
 from torch.nn import functional as F
 from typing_extensions import Final
@@ -169,30 +170,37 @@ class LongShortAttention(nn.Module):
         output_dim = output_dim or input_dim
         self.W_o = nn.Linear(self.inner_dim, output_dim)
 
+        self.rearrange_heads = Rearrange("b t f (h d) -> (b h t) f d", h=self.heads)
+        self.rearrange_windows = Rearrange("b (n w) d -> b n w d", w=self.window_size)
+        self.rearrange_unwindow = Rearrange("b n w d -> b (n w) d", w=self.window_size)
+        self.rearrange_unhead = Rearrange("(b h) f d -> b f (h d)", h=self.heads)
+        # self.rearrange_output = Rearrange("(b t) f c -> b c t f")
+
     def forward(self, x: Tensor):
         # x: [B, C, T, F]
         assert x.ndim == 4
         x = rearrange(x, "b c t f -> b t f c")
+        b, t, f, c = x.shape
         assert x.shape[-1] == self.dim
         q, k, v = torch.chunk(self.W_qkv(x), 3, dim=-1)
         q = q.mul(self.scale)
-        b = x.shape[0]
         # q: [B, I, T, F], I: heads*dim_head
 
         # TODO: Original LS-Transformer code includes some full attention for a portion of features
 
         # Split into heads
-        q = rearrange(q, "b t f (h d) -> (b h t) f d", h=self.heads)
-        k = rearrange(k, "b t f (h d) -> (b h t) f d", h=self.heads)
-        v = rearrange(v, "b t f (h d) -> (b h t) f d", h=self.heads)
+        q = self.rearrange_heads(q)
+        k = self.rearrange_heads(k)
+        v = self.rearrange_heads(v)
 
         k = self.dual_ln_full(k)
         v = self.dual_ln_full(v)
 
         # Local
-        lq = rearrange(q, "b (n w) d -> b n w d", w=self.window_size)  # windowed query
-        lk = rearrange(k, "b (n w) d -> b n w d", w=self.window_size)  # windowed key
-        lv = rearrange(v, "b (n w) d -> b n w d", w=self.window_size)  # windows value
+        lq = self.rearrange_windows(q)  # windowed query
+        lk = self.rearrange_windows(k)  # windowed key
+        lv = self.rearrange_windows(v)  # windows value
+        ic(lq.shape)
         # TODO rel positional encodings.
         # Some transformer papers in speech/audio domain report, no positional encoding is needed
         lsim = einsum("b w i d, b w j d -> b w i j", lq, lk)
@@ -204,7 +212,8 @@ class LongShortAttention(nn.Module):
         gk = self.dual_ln_dp(gk)
         gv = self.dual_ln_dp(gv)
         gsim = einsum("b n d, b r d -> b n r", q, gk)
-        gsim = rearrange(gsim, "b (w n) r -> b w n r", w=self.n_windows)
+        # gsim = rearrange(gsim, "b (w n) r -> b w n r", w=self.n_windows)
+        gsim = self.rearrange_windows(gsim)
 
         # Attention over both, local and global qk
         sim = torch.cat((lsim, gsim), dim=-1)
@@ -214,14 +223,16 @@ class LongShortAttention(nn.Module):
         out = 0
         # Local atten out
         lattn, gattn = torch.split(attn, (self.window_size, self.r), dim=-1)
-        out += rearrange(einsum("b w i j, b w j d -> b w i d", lattn, lv), "b w i d -> b (w i) d")
+        out += self.rearrange_unwindow(einsum("b w i j, b w j d -> b w i d", lattn, lv))
         # Global atten out
-        gattn = rearrange(gattn, "b w n r -> b (w n) r")
-        out += einsum("b i j, b j d -> b i d", gattn, gv)
-        out = rearrange(out, "(b h) n d -> b n (h d)", h=self.heads)
-        out = rearrange(out, "(b t) f d -> b t f d", b=b)
+        out += einsum("b i j, b j d -> b i d", self.rearrange_unwindow(gattn), gv)
+        ic(out.shape)
+        out = self.rearrange_unhead(out)
+        ic(out.shape)
         out = self.W_o(out)
-        out = rearrange(out, "b t f c -> b c t f")
+        ic(out.shape)
+        out = out.view(b, t, f, c).permute(0, 3, 1, 2)  # [B, C, T, F]
+        ic(out.shape)
         return out
 
 
@@ -1020,12 +1031,18 @@ def test_dfop():
 
 
 def test_long_short_attention():
+    from icecream import install, ic
+
+    ic.includeContext = True
+    install()
     b, t, f, d = 1, 100, 480, 32
     spec = torch.randn(b, d, t, f)
     atten = LongShortAttention(f, d, dim_head=64, heads=8, window_size=120, r=64)
     out = atten(spec)
+    ic(out.shape)
     atten = torch.jit.script(LongShortAttention(f, d, dim_head=64, heads=8, window_size=120, r=64))
     out = atten(spec)
+    ic(out.shape)
     return out
 
 
@@ -1041,4 +1058,5 @@ def test_conv_rnn():
     x = torch.randn(b, c, t, f)
     rnn = torch.jit.script(ConvLSTM(c, c * 2, kernel_size=(1, 3)))
     x, h = rnn(x)
+    ic(x.shape, h[0].shape, h[1].shape)
     ic(x.shape, h[0].shape, h[1].shape)
