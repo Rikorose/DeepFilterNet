@@ -126,6 +126,15 @@ def convkxf(
 
 
 class LongShortAttention(nn.Module):
+    dim: Final[int]
+    dim_head: Final[int]
+    inner_dim: Final[int]
+    scale: Final[float]
+    heads: Final[int]
+    window_size: Final[int]
+    n_windows: Final[int]
+    r: Final[int]
+
     def __init__(
         self,
         n_freqs: int,
@@ -208,7 +217,7 @@ class LongShortAttention(nn.Module):
         out += rearrange(einsum("b w i j, b w j d -> b w i d", lattn, lv), "b w i d -> b (w i) d")
         # Global atten out
         gattn = rearrange(gattn, "b w n r -> b (w n) r")
-        out = +einsum("b i j, b j d -> b i d", gattn, gv)
+        out += einsum("b i j, b j d -> b i d", gattn, gv)
         out = rearrange(out, "(b h) n d -> b n (h d)", h=self.heads)
         out = rearrange(out, "(b t) f d -> b t f d", b=b)
         out = self.W_o(out)
@@ -318,9 +327,9 @@ class ConvLSTM(nn.Module):
         # h.shape: [B, Co, H, W]
         # c.shape: [B, Co, H, W]
 
-        b, _, t, f = x.shape
+        b, _, t, f_ = x.shape
         if states is None:
-            h, c = self.init_hidden(b, f, 1, device=x.device)
+            h, c = self.init_hidden(b, f_, 1, device=x.device)
         else:
             h, c = states
         outputs: List[Tensor] = []
@@ -1015,6 +1024,8 @@ def test_long_short_attention():
     spec = torch.randn(b, d, t, f)
     atten = LongShortAttention(f, d, dim_head=64, heads=8, window_size=120, r=64)
     out = atten(spec)
+    atten = torch.jit.script(LongShortAttention(f, d, dim_head=64, heads=8, window_size=120, r=64))
+    out = atten(spec)
     return out
 
 
@@ -1023,11 +1034,11 @@ def test_conv_rnn():
 
     b, t, f, c = 1, 100, 480, 32
     x = torch.randn(b, c, t, f)
-    rnn = ConvGRU(c, c * 2, kernel_size=(1, 3))
+    rnn = torch.jit.script(ConvGRU(c, c * 2, kernel_size=(1, 3)))
     x, h = rnn(x)
     ic(x.shape, h.shape)
 
     x = torch.randn(b, c, t, f)
-    rnn = ConvLSTM(c, c * 2, kernel_size=(1, 3))
+    rnn = torch.jit.script(ConvLSTM(c, c * 2, kernel_size=(1, 3)))
     x, h = rnn(x)
     ic(x.shape, h[0].shape, h[1].shape)
