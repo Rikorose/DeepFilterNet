@@ -247,9 +247,10 @@ class ConvGRU(nn.Module):
         in_ch: int,
         out_ch: int,
         kernel_size: Union[int, Tuple[int, int]] = 1,
+        padding: Optional[Union[int, Tuple[int, int]]] = None,
         stride: Union[int, Tuple[int, int]] = 1,
         bias: bool = True,
-        out_act: nn.Module = nn.ELU(),
+        out_act: nn.Module = nn.Tanh(),
     ):
         super().__init__()
         # Kernel size in [T, F]
@@ -261,12 +262,12 @@ class ConvGRU(nn.Module):
         self.in_ch = in_ch
         self.out_ch = out_ch
         self.stride = stride
-        pad = (0, (self.ks[1] - 1) // 2)
+        padding = (0, (self.ks[1] - 1) // 2) if padding is None else padding
         self.conv_zr = nn.Conv2d(
-            in_ch + out_ch, out_ch * 2, self.ks, stride=stride, padding=pad, bias=bias
+            in_ch + out_ch, out_ch * 2, self.ks, stride=stride, padding=padding, bias=bias
         )
         self.conv_o = nn.Conv2d(
-            in_ch + out_ch, out_ch, self.ks, stride=stride, padding=pad, bias=bias
+            in_ch + out_ch, out_ch, self.ks, stride=stride, padding=padding, bias=bias
         )
         self.out_act = out_act
 
