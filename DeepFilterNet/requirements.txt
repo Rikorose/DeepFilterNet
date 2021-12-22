@@ -1,0 +1,7 @@
+torch
+torchaudio
+deepfilterdataloader
+deepfilterlib
+icecream>=2
+loguru>=0.5
+numpy>=1.20
