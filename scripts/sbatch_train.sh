@@ -30,6 +30,7 @@ export HDF5_USE_FILE_LOCKING='FALSE'
 PROJECT_NAME=DeepFilterNet
 DATA_DIR=${DATA_DIR:-$CLUSTER/Data/HDF5}     # Set to the directory containing the HDF5s
 DATA_CFG=${DATA_CFG:-$DATA_DIR/datasets.cfg} # Default dataset configuration
+DATA_CFG=$(readlink -f "$DATA_CFG")
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
 COPY_DATA=${COPY_DATA:-1}                    # Copy data
 DEBUG=${DEBUG:-0}                            # Debug mode passed to the python train script
