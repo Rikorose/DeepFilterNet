@@ -1452,7 +1452,7 @@ fn mix_audio_signal(
     let k = mix_f(clean.view(), noise.view(), snr_db);
     if let Some(atten_db) = atten_db {
         // Create a mixture with a higher SNR as target signal
-        let k_target = mix_f(clean.view(), noise.view(), snr_db + atten_db);
+        let k_target = mix_f(clean_out.view(), noise.view(), snr_db + atten_db);
         for (c, &n) in clean_out.iter_mut().zip(noise.iter()) {
             *c += n * k_target;
         }
