@@ -47,7 +47,11 @@ maturin develop --release -m pyDF/Cargo.toml
 maturin develop --release -m pyDF-data/Cargo.toml
 # Install remaining DeepFilterNet python dependencies
 cd DeepFilterNet
-poetry install
+poetry install -E train -E eval # Note: This globally installs DeepFilterNet in your environment
+# Alternatively for developement: Install only dependencies and work with the repository version
+poetry install -E train -E eval --no-root
+# You may need to set the python path
+export PYTHONPATH=$PWD
 ```
 
 To enhance noisy audio files using DeepFilterNet run

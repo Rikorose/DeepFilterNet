@@ -239,12 +239,13 @@ def run_epoch(
         atten = batch.atten.to(dev, non_blocking=True)
         snrs = batch.snr.to(dev, non_blocking=True)
         with torch.autograd.set_detect_anomaly(detect_anomaly):
-            enh, m, lsnr, df_alpha = model.forward(
-                spec=as_real(noisy),
-                feat_erb=feat_erb,
-                feat_spec=feat_spec,
-                atten_lim=atten,
-            )
+            with torch.set_grad_enabled(is_train):
+                enh, m, lsnr, df_alpha = model.forward(
+                    spec=as_real(noisy),
+                    feat_erb=feat_erb,
+                    feat_spec=feat_spec,
+                    atten_lim=atten,
+                )
             try:
                 err = losses.forward(
                     clean,
@@ -270,9 +271,14 @@ def run_epoch(
                     err.backward()
                     clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
                 except RuntimeError as e:
-                    if "nan" in str(e).lower():
+                    e_str = str(e)
+                    if "nan" in e_str.lower() or "non-finite" in e_str:
+                        check_finite_module(model)
                         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
-                        logger.error(str(e))
+                        logger.error(e_str)
+                        n_nans += 1
+                        if n_nans > 10:
+                            raise e
                         continue
                     else:
                         raise e
@@ -388,7 +394,9 @@ def summary_write(
     )
     torchaudio.save(os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[0]), p.sr)
     np.savetxt(
-        os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"), lsnr[0].detach().cpu().numpy()
+        os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"),
+        lsnr[0].detach().cpu().numpy(),
+        fmt="%.3f",
     )
     np.savetxt(
         os.path.join(summary_dir, f"{split}_df_alpha_snr{snr}.txt"),

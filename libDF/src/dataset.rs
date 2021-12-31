@@ -37,6 +37,14 @@ pub enum DfDatasetError {
     CodecNotSupportedError { codec: Codec, file: String },
     #[error("Channels not initialized. Have you already called start_epoch()?")]
     ChannelsNotInitializedError,
+    #[error(
+        "Dataset {split} size ({dataset_size}) smaller than batch size ({batch_size}). Try increasing the dataset sampling factor or decreasing the batch size."
+    )]
+    DatasetTooSmall {
+        split: Split,
+        dataset_size: usize,
+        batch_size: usize,
+    },
     #[error("Unsupported during PCM decode: {0}")]
     PcmUnspportedDimension(usize),
     #[error("Wav Reader Error")]
@@ -145,6 +153,16 @@ pub enum Split {
     Train = 0,
     Valid = 1,
     Test = 2,
+}
+
+impl fmt::Display for Split {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Train => write!(f, "train"),
+            Self::Valid => write!(f, "valid"),
+            Self::Test => write!(f, "test"),
+        }
+    }
 }
 
 impl From<&str> for Split {
@@ -290,10 +308,6 @@ where
         self.dataset_len(split) / bs
     }
 
-    pub fn cur_len(&self) -> usize {
-        self.dataset_len(self.current_split) / self.batch_size_train
-    }
-
     pub fn batch_size(&self, split: &Split) -> usize {
         if split == &Split::Train {
             self.batch_size_train
@@ -349,6 +363,13 @@ where
         }
         // Prepare for new epoch
         self.current_split = split;
+        if self.batch_size(&split) > self.dataset_len(split) {
+            return Err(DfDatasetError::DatasetTooSmall {
+                split,
+                dataset_size: self.dataset_len(split),
+                batch_size: self.batch_size(&split),
+            });
+        }
         seed_from_u64(seed as u64);
         {
             // Recreate indices to index into the dataset and shuffle them
@@ -1431,7 +1452,7 @@ fn mix_audio_signal(
     let k = mix_f(clean.view(), noise.view(), snr_db);
     if let Some(atten_db) = atten_db {
         // Create a mixture with a higher SNR as target signal
-        let k_target = mix_f(clean.view(), noise.view(), snr_db + atten_db);
+        let k_target = mix_f(clean_out.view(), noise.view(), snr_db + atten_db);
         for (c, &n) in clean_out.iter_mut().zip(noise.iter()) {
             *c += n * k_target;
         }
