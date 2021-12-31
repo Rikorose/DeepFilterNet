@@ -53,7 +53,7 @@ poetry install
 To enhance noisy audio files using DeepFilterNet run
 ```bash
 # usage: enhance.py [-h] [--output-dir OUTPUT_DIR] [--model_base_dir MODEL_BASE_DIR] noisy_audio_files [noisy_audio_files ...]
-python DeepFilterNet/df/enhance.py DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
+python DeepFilterNet/df/enhance.py -m DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
 ```
 
 ### Training
