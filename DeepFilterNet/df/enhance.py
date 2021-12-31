@@ -195,7 +195,7 @@ def enhance(model: nn.Module, df_state: DF, audio: Tensor, pad=False):
 def setup_df_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model-base-dir",
+        "--model_base_dir",
         "-m",
         type=str,
         default=None,
@@ -230,4 +230,4 @@ if __name__ == "__main__":
         nargs="+",
         help="List of noise files to mix with the clean speech file.",
     )
-    main(parser.parse_args)
+    main(parser.parse_args())
