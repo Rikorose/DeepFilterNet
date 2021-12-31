@@ -56,8 +56,26 @@ export PYTHONPATH=$PWD
 
 To enhance noisy audio files using DeepFilterNet run
 ```bash
-# usage: enhance.py [-h] [--output-dir OUTPUT_DIR] [--model_base_dir MODEL_BASE_DIR] noisy_audio_files [noisy_audio_files ...]
-python DeepFilterNet/df/enhance.py DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
+$ python DeepFilterNet/df/enhance.py --help
+usage: enhance.py [-h] [--model-base-dir MODEL_BASE_DIR] [--pf] [--output-dir OUTPUT_DIR] [--log-level LOG_LEVEL] [--compensate-delay]
+                  noisy_audio_files [noisy_audio_files ...]
+
+positional arguments:
+  noisy_audio_files     List of noise files to mix with the clean speech file.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --model-base-dir MODEL_BASE_DIR, -m MODEL_BASE_DIR
+                        Model directory containing checkpoints and config. By default, the pretrained model is loaded.
+  --pf                  Post-filter that slightly over-attenuates very noisy sections.
+  --output-dir OUTPUT_DIR, -o OUTPUT_DIR
+                        Directory in which the enhanced audio files will be stored.
+  --log-level LOG_LEVEL
+                        Logger verbosity. Can be one of (debug, info, error, none)
+  --compensate-delay, -d
+                        Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.
+
+python DeepFilterNet/df/enhance.py -m DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
 ```
 
 ### Training

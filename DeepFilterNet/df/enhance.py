@@ -26,9 +26,6 @@ def main(args):
     model, df_state, suffix = init_df(
         args.model_base_dir, post_filter=args.pf, log_level=args.log_level
     )
-    if args.model_base_dir is None:
-        logger.error("Model base must be specified.")
-        exit()
     if args.output_dir is None:
         args.output_dir = "."
     elif not os.path.isdir(args.output_dir):
@@ -199,14 +196,20 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
         "-m",
         type=str,
         default=None,
-        help="Model directory containing checkpoints and config.",
+        help="Model directory containing checkpoints and config. By default, the pretrained model is loaded.",
     )
     parser.add_argument(
         "--pf",
-        help="Postfilter that slightly overattenuates very noisy sections.",
+        help="Post-filter that slightly over-attenuates very noisy sections.",
         action="store_true",
     )
-    parser.add_argument("--output-dir", "-o", type=str, default=None)
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=str,
+        default=None,
+        help="Directory in which the enhanced audio files will be stored.",
+    )
     parser.add_argument(
         "--log-level",
         type=str,
@@ -230,4 +233,4 @@ if __name__ == "__main__":
         nargs="+",
         help="List of noise files to mix with the clean speech file.",
     )
-    main(parser.parse_args)
+    main(parser.parse_args())
