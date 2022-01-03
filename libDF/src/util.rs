@@ -63,6 +63,19 @@ impl SeededRng {
     }
 }
 
+pub(crate) fn rng_uniform<T>(n: usize, low: T, high: T) -> Result<Vec<T>>
+where
+    T: Default + Clone + SampleUniform,
+{
+    let mut rng = thread_rng()?;
+    let mut v = vec![T::default(); n];
+    let dist = Uniform::new_inclusive(low, high);
+    for x in v.iter_mut() {
+        *x = dist.sample(&mut rng);
+    }
+    Ok(v)
+}
+
 pub(crate) struct NonNan(f32);
 
 impl NonNan {
