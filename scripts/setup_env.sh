@@ -71,20 +71,14 @@ setup_env() {
     cd "$PROJECT_HOME"/ || exit 10
     rustup default stable
     rustup update stable
-    maturin build --release -i python$PYTHON_V -m "$PROJECT_HOME"/pyDF/Cargo.toml
-    maturin build --release -i python$PYTHON_V -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
-    # Python version without dot
-    PV=$(echo $PYTHON_V | tr -d ".")
-    # DF crate version
-    DFV=$(sed -nr "/^\[package\]/ { :l /^version[ ]*=/ { s/.*=[ ]*//; p; q;}; n; b l;}" pyDF/Cargo.toml | tr -d "\"")
-    DFV=$(echo "$DFV" | sed -r "s/-pre/_pre/g")
-    echo "Found df version: $DFV"
-    pip install --force-reinstall --no-deps "$PROJECT_HOME"/target/wheels/DeepFilterLib-"$DFV"-cp"$PV"-cp"$PV"-*linux*_x86_64.whl
-    pip install --force-reinstall --no-deps "$PROJECT_HOME"/target/wheels/DeepFilterDataLoader-"$DFV"-cp"$PV"-cp"$PV"-*linux*_x86_64.whl
+    cargo build --release
+    maturin develop --release -m "$PROJECT_HOME"/pyDF/Cargo.toml
+    maturin develop --release -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
   fi
   if [ $INSTALL_PYDEPS -eq 1 ]; then
     echo "Installing requirements"
-    (cd "$PROJECT_HOME"/DeepFilterNet && poetry install -E "train")
+    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
+    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
   fi
 }
 
