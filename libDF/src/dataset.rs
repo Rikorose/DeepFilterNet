@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fs;
@@ -9,14 +10,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crossbeam_channel::unbounded;
 use hdf5::{types::VarLenUnicode, File};
 use lewton::inside_ogg::OggStreamReader;
-use ndarray::prelude::*;
-use ndarray::Slice;
+use ndarray::{prelude::*, Slice};
 use ogg::reading::PacketReader as OggPacketReader;
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
-use rayon::prelude::*;
+use rayon;
+use rayon::{current_num_threads, prelude::*};
 use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
@@ -45,6 +47,8 @@ pub enum DfDatasetError {
         dataset_size: usize,
         batch_size: usize,
     },
+    #[error("Dataset Drained")]
+    DatasetDrained,
     #[error("Unsupported during PCM decode: {0}")]
     PcmUnspportedDimension(usize),
     #[error("Wav Reader Error")]
@@ -183,11 +187,14 @@ where
     datasets: Datasets<T>,
     batch_size_train: usize,
     batch_size_eval: usize,
+    num_workers: usize,
     num_prefech: usize,
-    idcs: Arc<Mutex<VecDeque<usize>>>,
+    idcs: Arc<Mutex<VecDeque<(usize, isize)>>>,
     current_split: Split,
     fill_thread: Option<thread::JoinHandle<Result<()>>>,
-    out_receiver: Option<Receiver<Result<Sample<T>>>>,
+    out_receiver: Option<Receiver<(isize, Result<Sample<T>>)>>,
+    out_buf: BTreeMap<isize, Sample<T>>,
+    cur_out_idx: isize,
     overfit: bool,
 }
 
@@ -269,9 +276,8 @@ where
     ) -> Result<Self> {
         // Register global rayon threadpool. It will only be used for data loader workers.
         let mut poolbuilder = rayon::ThreadPoolBuilder::new();
-        if let Some(num_threads) = num_threads {
-            poolbuilder = poolbuilder.num_threads(num_threads)
-        }
+        let num_workers = num_threads.unwrap_or_else(current_num_threads);
+        poolbuilder = poolbuilder.num_threads(num_workers);
         match poolbuilder
             .thread_name(|idx| format!("DataLoader Worker {}", idx))
             .build_global()
@@ -289,11 +295,14 @@ where
             datasets,
             batch_size_train,
             batch_size_eval,
+            num_workers,
             num_prefech,
             idcs: Arc::new(Mutex::new(VecDeque::new())),
             current_split: Split::Train,
             fill_thread: None,
             out_receiver: None,
+            out_buf: BTreeMap::new(),
+            cur_out_idx: 0,
             overfit: false,
         })
     }
@@ -319,7 +328,7 @@ where
     pub fn start_idx_worker(
         &mut self,
         split: Split,
-        seed: u64,
+        epoch_seed: u64,
     ) -> Result<thread::JoinHandle<Result<()>>> {
         let bs = self.batch_size(&split);
         if self.num_prefech < bs {
@@ -331,25 +340,32 @@ where
         let (out_sender, out_receiver) = sync_channel(self.num_prefech);
         self.out_receiver = Some(out_receiver);
         let ds = Arc::clone(self.datasets.get(split));
-        let idcs = self.idcs.clone();
+        // let (in_sender, in_receiver) = bounded(self.dataset_len(split));
+        let (in_sender, in_receiver) = unbounded();
+        for idx in self.idcs.lock().unwrap().drain(..) {
+            in_sender.send(idx).expect("Could not send index");
+        }
+        in_sender.send((0, -1)).expect("Could not send index");
+
+        let worker_recievers: Vec<_> = (0..self.num_workers).map(|_| in_receiver.clone()).collect();
         let handle = thread::spawn(move || -> Result<()> {
-            idcs.lock().unwrap().par_drain(..).try_for_each_init(
-                || {
-                    seed_from_u64(seed);
-                },
-                // TODO: This closure get's submitted to the thread pool in order. However,
-                // get_sample may take different amounts of time resulting in a different return
-                // order. This should be the last major thing that reduces reproducability a little.
-                // To make sure, we get the samples in the correct order, we could add another
-                // ordering index and some kind of cache to use in get_batch().
-                |(), idx| -> Result<()> {
-                    let sample = ds.get_sample(idx);
-                    if let Err(e) = out_sender.send(sample) {
+            worker_recievers.par_iter().try_for_each(|r| {
+                while let Ok((sample_idx, ordering_idx)) = r.recv() {
+                    if ordering_idx == -1 {
+                        if let Err(e) =
+                            out_sender.send((ordering_idx, Err(DfDatasetError::DatasetDrained)))
+                        {
+                            return Err(DfDatasetError::SendError(e.to_string()));
+                        }
+                        return Ok(());
+                    }
+                    let sample = ds.get_sample(sample_idx, Some(epoch_seed));
+                    if let Err(e) = out_sender.send((ordering_idx, sample)) {
                         return Err(DfDatasetError::SendError(e.to_string()));
                     }
-                    Ok(())
-                },
-            )?;
+                }
+                Ok(())
+            })?;
             Ok(())
         });
         Ok(handle)
@@ -361,6 +377,9 @@ where
         if self.fill_thread.is_some() {
             self.join_fill_thread()?;
         }
+        // Output buffers for ordering analogue to self.idcs
+        self.out_buf = BTreeMap::new();
+        self.cur_out_idx = 0;
         // Prepare for new epoch
         self.current_split = split;
         if self.batch_size(&split) > self.dataset_len(split) {
@@ -373,15 +392,19 @@ where
         seed_from_u64(seed as u64);
         {
             // Recreate indices to index into the dataset and shuffle them
-            let mut idcs = self.idcs.lock().unwrap();
-            if self.overfit {
+            let sample_idcs: Vec<usize> = if self.overfit {
                 println!("Overfitting on one batch.");
                 let bs = self.batch_size(&split);
-                idcs.clone_from(&(0..bs).cycle().take(self.dataset_len(split)).collect());
+                (0..bs).cycle().take(self.dataset_len(split)).collect()
             } else {
-                idcs.clone_from(&(0..self.dataset_len(split)).collect());
-                idcs.make_contiguous().shuffle(&mut thread_rng()?);
-            }
+                let mut tmp = (0..self.dataset_len(split)).collect::<Vec<usize>>();
+                tmp.shuffle(&mut thread_rng()?);
+                tmp
+            };
+            // Concatenate an ordering index
+            let idcs: VecDeque<(usize, isize)> =
+                sample_idcs.into_iter().zip(0..self.dataset_len(split) as isize).collect();
+            self.idcs.lock().unwrap().clone_from(&idcs);
         }
         // Start thread to submit dataset jobs for the pool workers
         self.fill_thread = Some(self.start_idx_worker(split, seed as u64)?);
@@ -394,7 +417,7 @@ where
     {
         let bs = self.batch_size(&self.current_split);
         let mut samples = Vec::with_capacity(bs);
-        let mut i = 0;
+        let target_idx = self.cur_out_idx + bs as isize;
         let mut tries = 0;
         let reciever = match self.out_receiver.as_ref() {
             None => {
@@ -402,27 +425,36 @@ where
             }
             Some(r) => r,
         };
-        'outer: while i < bs {
+        'outer: while self.cur_out_idx < target_idx {
             match reciever.recv_timeout(Duration::from_millis(100)) {
                 Err(_e) => {
-                    let isempty = if let Ok(idcs) = self.idcs.try_lock() {
-                        idcs.is_empty()
-                    } else {
-                        false
-                    };
-                    if isempty {
-                        self.join_fill_thread()?;
-                        return Ok(None);
-                    }
                     if tries > 1000 {
                         return Err(DfDatasetError::TimeoutError);
                     }
                     tries += 1;
                     continue 'outer;
                 }
-                Ok(s) => samples.push(s?),
+                Ok((_, Err(DfDatasetError::DatasetDrained))) => {
+                    self.join_fill_thread()?;
+                    return Ok(None);
+                }
+                Ok((_, Err(e))) => {
+                    return Err(e);
+                }
+                Ok((o_idx, Ok(s))) => {
+                    if o_idx == self.cur_out_idx {
+                        samples.push(s);
+                        self.cur_out_idx += 1;
+                    } else {
+                        assert!(self.out_buf.insert(o_idx, s).is_none());
+                    }
+                }
             }
-            i += 1;
+            // Check if we have some buffered samples
+            while let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
+                samples.push(s);
+                self.cur_out_idx += 1;
+            }
             tries = 0;
         }
 
@@ -644,7 +676,7 @@ pub trait Dataset<T>
 where
     T: Data,
 {
-    fn get_sample(&self, idx: usize) -> Result<Sample<T>>;
+    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<T>>;
     fn sr(&self) -> usize;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
@@ -851,8 +883,8 @@ pub struct FftDataset {
     min_nb_freqs: Option<usize>,
 }
 impl Dataset<Complex32> for FftDataset {
-    fn get_sample(&self, idx: usize) -> Result<Sample<Complex32>> {
-        let sample: Sample<f32> = self.ds.get_sample(idx)?;
+    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
+        let sample: Sample<f32> = self.ds.get_sample(idx, seed)?;
         let nb_erb = self.nb_erb.unwrap_or(1);
         let mut state = DFState::new(self.sr(), self.fft_size, self.hop_size, nb_erb, 1);
         let speech = stft(sample.get_speech_view()?, &mut state, false);
@@ -1011,8 +1043,8 @@ impl TdDataset {
 }
 
 impl Dataset<f32> for TdDataset {
-    fn get_sample(&self, idx: usize) -> Result<Sample<f32>> {
-        seed_from_u64(idx as u64 + self.seed);
+    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
+        seed_from_u64(idx as u64 + self.seed + seed.unwrap_or(0));
         let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
