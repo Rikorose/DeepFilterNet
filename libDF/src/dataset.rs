@@ -1447,18 +1447,17 @@ fn mix_audio_signal(
     // Apply gain to speech
     let g = 10f32.powf(gain_db / 20.);
     let mut clean_out = &clean * g;
+    // clean_mix may contain reverberant speech
     let clean_mix = clean_rev.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
     // For energy calculation use clean speech to also consider direct-to-reverberant ratio
-    let k = mix_f(clean.view(), noise.view(), snr_db);
+    noise *= mix_f(clean_out.view(), noise.view(), snr_db);
     if let Some(atten_db) = atten_db {
         // Create a mixture with a higher SNR as target signal
-        let k_target = mix_f(clean_out.view(), noise.view(), snr_db + atten_db);
-        for (c, &n) in clean_out.iter_mut().zip(noise.iter()) {
-            *c += n * k_target;
-        }
+        let k_target = 1. / mix_f(clean_out.view(), noise.view(), snr_db + atten_db);
+        clean_out *= k_target;
+        // clean_mix *= k_target;
+        clean_out += &noise;
     }
-    // Create mixture at given SNR
-    noise *= k;
     let mut mixture = clean_mix + &noise;
     // Guard against clipping
     let max = &([&clean_out, &noise, &mixture].iter().map(|x| find_max_abs(x.iter())))
@@ -1471,6 +1470,19 @@ fn mix_audio_signal(
         mixture *= f;
     }
     Ok((clean_out, noise, mixture))
+}
+
+fn calc_snr_mixture<'a, I>(y: I, v: I) -> f32
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut e_clean = 0.;
+    let mut e_noise = 0.;
+    for (xy, xv) in y.into_iter().zip(v.into_iter()) {
+        e_clean += (xy - xv).powi(2);
+        e_noise += xv.powi(2);
+    }
+    10. * (e_clean / e_noise).log10()
 }
 
 fn unpack_pad<Ts, To, F>(mut f: F, samples: &mut [Sample<Ts>], len: usize) -> Result<ArrayD<To>>
@@ -1512,29 +1524,89 @@ mod tests {
     use crate::util::seed_from_u64;
     use crate::wav_utils::*;
 
+    fn calc_rms(x: &[f32]) -> f32 {
+        let n = x.len() as f32;
+        (x.iter().map(|x| x.powi(2)).sum::<f32>() * (1. / n)).sqrt()
+    }
+    fn calc_snr<'a, I>(x: I, v: I) -> f32
+    where
+        I: IntoIterator<Item = &'a f32>,
+    {
+        let e_clean = x.into_iter().fold(0f32, |acc, x| acc + x.powi(2));
+        let e_noise = v.into_iter().fold(0f32, |acc, x| acc + x.powi(2));
+        10. * (e_clean / e_noise).log10()
+    }
+    fn calc_snr_mixture<'a, I>(y: I, v: I) -> f32
+    where
+        I: IntoIterator<Item = &'a f32>,
+    {
+        let mut e_clean = 0.;
+        let mut e_noise = 0.;
+        for (xy, xv) in y.into_iter().zip(v.into_iter()) {
+            e_clean += (xy - xv).powi(2);
+            e_noise += xv.powi(2);
+        }
+        10. * (e_clean / e_noise).log10()
+    }
+
     #[test]
     pub fn test_mix_audio_signal() -> Result<()> {
-        seed_from_u64(42);
-        // 2ch 10 second speech signal
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
-        let (sr, ch) = (reader.sr as u32, reader.channels as u16);
-        let clean = reader.samples_arr2()?;
-        // 1ch shorter then clean
-        let noise1 = ReadWav::new("../assets/noise_freesound_573577.wav")?.samples_arr2()?;
-        // 2ch longer then clean
-        let noise2 = ReadWav::new("../assets/noise_freesound_2530.wav")?.samples_arr2()?;
-        let noise = combine_noises(
-            ch as usize,
-            clean.len_of(Axis(1)),
-            &mut [noise1, noise2],
-            None,
-        )?;
-        let (clean, noise, noisy) =
-            mix_audio_signal(clean, None, noise, 0., 6., None, None).unwrap();
-        dbg!(noisy.len());
-        write_wav_iter("../out/clean.wav", clean.iter(), sr, ch)?;
-        write_wav_iter("../out/noise.wav", noise.iter(), sr, ch)?;
-        write_wav_iter("../out/noisy.wav", noisy.iter(), sr, ch)?;
+        seed_from_u64(0);
+        let sr = 48_000;
+        let n = sr;
+        let clean = arr1(rng_uniform(n, -0.1, 0.1)?.as_slice()).into_shape([1, n])?;
+        let noise = arr1(rng_uniform(n, -0.1, 0.1)?.as_slice()).into_shape([1, n])?;
+        let gains = [-6., 0., 6.];
+        let snrs = [-10., -5., 0., 5., 10., 20., 40.];
+        let atten_limits = [None, Some(20.), Some(10.), Some(3.)];
+        let atol = 1e-4;
+        for clean_rev in [None, Some(clean.clone())] {
+            for gain in gains {
+                for snr in snrs {
+                    for attn in atten_limits {
+                        let (c, n, m) = mix_audio_signal(
+                            clean.clone(),
+                            clean_rev.clone(),
+                            noise.clone(),
+                            snr,
+                            gain,
+                            attn,
+                            None,
+                        )?;
+                        if attn.is_none() {
+                            assert_eq!(&c + &n, m);
+                        }
+                        dbg!(clean_rev.is_some(), gain, snr, attn);
+                        // Input SNR of mixture
+                        let snr_inp_m = calc_snr_mixture(m.iter(), n.iter());
+                        assert!(
+                            (snr_inp_m - snr).abs() < atol,
+                            "Input SNR does not match: {}, {}",
+                            snr_inp_m,
+                            snr
+                        );
+                        // Target SNR between noise and target (clean) speech. Clean speech may
+                        // contain noise due to the attenuation limit, effectively resulting in an
+                        // `attn` higher SNR.
+                        let snr_target_c = if attn.is_none() {
+                            calc_snr(c.iter(), n.iter())
+                        } else {
+                            // With enabled attenuation limiting, the target signal `c` contains
+                            // some noise so that its SNR is `attn` higher then the input mixture.
+                            calc_snr_mixture(c.iter(), n.iter())
+                        };
+                        assert!(
+                            (snr_target_c - (snr + attn.unwrap_or(0.))).abs() < atol,
+                            "Target SNR does not match: {}, {}",
+                            snr_target_c,
+                            snr + attn.unwrap_or(0.),
+                        );
+                        // Test the SNR difference between input and target
+                        assert!((snr_inp_m + attn.unwrap_or(0.) - snr_target_c).abs() < atol);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
