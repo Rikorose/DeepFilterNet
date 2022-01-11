@@ -51,16 +51,13 @@ __resample_method = "sinc_fast"
 
 def main(args):
     model, df_state, suffix = init_df(
-        args.model_base_dir, post_filter=args.pf, log_level=args.log_level
+        args.model_base_dir, post_filter=args.pf, log_level=args.log_level, config_allow_defaults=True
     )
     assert os.path.isdir(args.dataset_dir)
     sr = ModelParams().sr
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
     enh_dir = None
-    if args.output_dir is not None:
-        enh_dir = args.output_dir
-        os.makedirs(enh_dir, exist_ok=True)
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
     enh_stoi = []
     noisy_stoi = []
