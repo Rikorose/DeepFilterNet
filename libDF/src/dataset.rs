@@ -195,6 +195,7 @@ where
     out_receiver: Option<Receiver<(isize, Result<Sample<T>>)>>,
     out_buf: BTreeMap<isize, Sample<T>>,
     cur_out_idx: isize,
+    drop_last: bool,
     overfit: bool,
 }
 
@@ -208,6 +209,7 @@ where
     _batch_size_eval: Option<usize>,
     _prefetch: Option<usize>,
     _num_threads: Option<usize>,
+    _drop_last: Option<bool>,
     _overfit: Option<bool>,
 }
 
@@ -222,6 +224,7 @@ where
             _batch_size_eval: None,
             _prefetch: None,
             _num_threads: None,
+            _drop_last: None,
             _overfit: None,
         }
     }
@@ -245,6 +248,10 @@ where
         self._overfit = Some(overfit);
         self
     }
+    pub fn drop_last(mut self, drop_last: bool) -> Self {
+        self._drop_last = Some(drop_last);
+        self
+    }
     pub fn build(self) -> Result<DataLoader<T>> {
         let bs = self._batch_size.unwrap_or(1);
         let prefetch = self._prefetch.unwrap_or(bs * self._num_threads.unwrap_or(4) * 2);
@@ -254,6 +261,7 @@ where
             self._batch_size_eval,
             prefetch,
             self._num_threads,
+            self._drop_last.unwrap_or(false),
         )?;
         loader.overfit = self._overfit.unwrap_or(false);
         Ok(loader)
@@ -273,6 +281,7 @@ where
         batch_size_eval: Option<usize>,
         num_prefech: usize,
         num_threads: Option<usize>,
+        drop_last: bool,
     ) -> Result<Self> {
         // Register global rayon threadpool. It will only be used for data loader workers.
         let mut poolbuilder = rayon::ThreadPoolBuilder::new();
@@ -303,6 +312,7 @@ where
             out_receiver: None,
             out_buf: BTreeMap::new(),
             cur_out_idx: 0,
+            drop_last,
             overfit: false,
         })
     }
@@ -425,6 +435,7 @@ where
             }
             Some(r) => r,
         };
+        let mut drained = false;
         'outer: while self.cur_out_idx < target_idx {
             match reciever.recv_timeout(Duration::from_millis(100)) {
                 Err(_e) => {
@@ -435,8 +446,8 @@ where
                     continue 'outer;
                 }
                 Ok((_, Err(DfDatasetError::DatasetDrained))) => {
-                    self.join_fill_thread()?;
-                    return Ok(None);
+                    drained = true;
+                    break;
                 }
                 Ok((_, Err(e))) => {
                     return Err(e);
@@ -458,15 +469,22 @@ where
             tries = 0;
         }
 
-        if samples.is_empty() {
-            println!("No more samples.");
-            return Ok(None);
+        let out = if drained && self.drop_last {
+            if samples.is_empty() {
+                println!("No more samples.");
+            }
+            None
+        } else {
+            Some(C::collate(
+                samples.as_mut_slice(),
+                self.datasets.get(self.current_split).max_sample_len(),
+            )?)
+        };
+
+        if drained {
+            self.join_fill_thread()?
         }
-        let out = C::collate(
-            samples.as_mut_slice(),
-            self.datasets.get(self.current_split).max_sample_len(),
-        )?;
-        Ok(Some(out))
+        Ok(out)
     }
 
     pub fn join_fill_thread(&mut self) -> Result<()> {

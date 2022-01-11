@@ -81,6 +81,7 @@ impl _TdDataLoader {
         prefetch: Option<usize>,
         p_atten_lim: Option<f32>,
         p_reverb: Option<f32>,
+        drop_last: Option<bool>,
         overfit: Option<bool>,
         seed: Option<u64>,
         min_nb_erb_freqs: Option<usize>,
@@ -118,6 +119,9 @@ impl _TdDataLoader {
         }
         if let Some(bs_eval) = batch_size_eval {
             builder = builder.batch_size_eval(bs_eval);
+        }
+        if let Some(drop_last) = drop_last {
+            builder = builder.drop_last(drop_last);
         }
         if let Some(overfit) = overfit {
             builder = builder.overfit(overfit);
@@ -196,6 +200,7 @@ impl _FdDataLoader {
         prefetch: Option<usize>,
         p_atten_lim: Option<f32>,
         p_reverb: Option<f32>,
+        drop_last: Option<bool>,
         overfit: Option<bool>,
         seed: Option<u64>,
         min_nb_erb_freqs: Option<usize>,
@@ -241,6 +246,9 @@ impl _FdDataLoader {
         }
         if let Some(bs_eval) = batch_size_eval {
             dl_builder = dl_builder.batch_size_eval(bs_eval);
+        }
+        if let Some(drop_last) = drop_last {
+            dl_builder = dl_builder.drop_last(drop_last);
         }
         if let Some(overfit) = overfit {
             dl_builder = dl_builder.overfit(overfit);
