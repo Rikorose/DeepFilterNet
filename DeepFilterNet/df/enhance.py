@@ -184,9 +184,11 @@ def enhance(model: nn.Module, df_state: DF, audio: Tensor, pad=False):
     spec = model(spec, erb_feat, spec_feat)[0].cpu()
     audio = torch.as_tensor(df_state.synthesis(as_complex(spec.squeeze(1)).numpy()))
     if pad:
-        # Overall, the STFT/ISTFT loop introduces a delay of p.fft_size. Since this python script
-        # operates on the full signal and not on a per-frame-basis, the frame size (i.e. p.hop_size)
-        # can be neglected.
+        # The frame size is equal to p.hop_size. Given a new frame, the STFT loop requires e.g.
+        # ceil((p.fft_size-p.hop_size)/p.hop_size). I.e. for 50% overlap, then p.hop_size=p.fft_size//2
+        # requires 1 additional frame lookahead; 75% requires 3 additional frames lookahead.
+        # Thus, the STFT/ISTFT loop introduces an algorithmic delay of p.fft_size - p.hop_size.
+        assert p.fft_size % p.hop_size == 0  # This is only tested for 50% and 75% overlap
         d = p.fft_size - p.hop_size
         audio = audio[:, d : orig_len + d]
     return audio
