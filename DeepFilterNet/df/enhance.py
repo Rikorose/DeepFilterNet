@@ -47,7 +47,10 @@ def main(args):
 
 
 def init_df(
-    model_base_dir: Optional[str] = None, post_filter: bool = False, log_level: str = "INFO"
+    model_base_dir: Optional[str] = None,
+    post_filter: bool = False,
+    log_level: str = "INFO",
+    config_allow_defaults: bool = False,
 ) -> Tuple[nn.Module, DF, str]:
     """Initializes and loads config, model and deep filtering state.
 
@@ -77,7 +80,7 @@ def init_df(
     config.load(
         os.path.join(model_base_dir, "config.ini"),
         config_must_exist=True,
-        allow_defaults=False,
+        allow_defaults=config_allow_defaults,
     )
     if post_filter:
         config.set(ModelParams().section, "mask_pf", True, bool)
