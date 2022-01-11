@@ -22,7 +22,7 @@ jobs:
       matrix:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check'}
-          - {command: clippy, rust: stable, args: '-- -D warnings'}
+          - {command: clippy, rust: stable, args: '--all-features -- -D warnings'}
           - {command: test, rust: stable, args: 'test_mix_audio_signal'}
     steps:
       - name: Checkout repository
