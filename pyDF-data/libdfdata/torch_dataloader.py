@@ -76,6 +76,7 @@ class PytorchDataLoader:
         prefetch=4,
         num_workers=None,
         pin_memory=True,
+        drop_last=False,  # Drop the last batch if it contains fewer samples then batch_size
         fft_dataloader=False,  # Following parameters are only used if fft_dataloader == True
         fft_size: int = None,  # FFT size for stft calcualtion
         hop_size: int = None,  # Hop size for stft calcualtion
@@ -112,6 +113,7 @@ class PytorchDataLoader:
                 p_atten_lim=p_atten_lim,
                 p_reverb=p_reverb,
                 prefetch=prefetch_loader,
+                drop_last=drop_last,
                 overfit=overfit,
                 seed=seed,
                 min_nb_erb_freqs=min_nb_erb_freqs,
@@ -128,6 +130,7 @@ class PytorchDataLoader:
                 p_atten_lim=p_atten_lim,
                 p_reverb=p_reverb,
                 prefetch=prefetch_loader,
+                drop_last=drop_last,
                 overfit=overfit,
                 seed=seed,
                 min_nb_erb_freqs=min_nb_erb_freqs,
@@ -178,6 +181,10 @@ class PytorchDataLoader:
 
     def len(self, split: str) -> int:
         return self.loader.len_of(split)
+
+    def __len__(self) -> int:
+        """Return training length."""
+        return self.len("train")
 
     def dataset_len(self, split: str) -> int:
         return self.loader.dataset_len(split)
