@@ -8,7 +8,7 @@ import torch
 import torchaudio
 from loguru import logger
 from torch import Tensor, nn
-from torch.optim import Adam, AdamW, Optimizer, RMSprop
+from torch.optim import Adam, AdamW, Optimizer, RMSprop, lr_scheduler
 from torch.types import Number
 
 from df.checkpoint import load_model, read_cp, write_cp
@@ -88,7 +88,6 @@ def main():
         train_df_only=train_df_only,
     )
     opt = load_opt(checkpoint_dir, model, mask_only, train_df_only)
-    lrs = torch.optim.lr_scheduler.StepLR(opt, 3, 0.9, last_epoch=epoch - 1)
     try:
         log_model_summary(model, verbose=args.debug)
     except Exception as e:
@@ -122,6 +121,26 @@ def main():
         min_nb_erb_freqs=p.min_nb_freqs,
     )
 
+    max_epochs = config("MAX_EPOCHS", 10, int, section="train")
+    n_epoch_iter = dataloader.len("train")
+    last_epoch = max(0, (epoch - 1) * n_epoch_iter)
+    lin_lrs = lr_scheduler.LinearLR(
+        opt, start_factor=0.1, total_iters=n_epoch_iter, last_epoch=last_epoch
+    )
+    cos_lrs = lr_scheduler.CosineAnnealingLR(
+        opt,
+        eta_min=1e-7,
+        T_max=n_epoch_iter * (max_epochs - 1),
+        last_epoch=max(0, last_epoch - n_epoch_iter),
+        verbose=True,
+    )
+    lrs = lr_scheduler.SequentialLR(
+        opt,
+        [lin_lrs, cos_lrs],
+        milestones=[1 * n_epoch_iter],
+        last_epoch=last_epoch,
+    )
+
     losses = setup_losses()
 
     if config("START_EVAL", False, cast=bool, section="train"):
@@ -140,7 +159,6 @@ def main():
         )
         log_metrics(f"[{epoch - 1}] [valid]", metrics)
     losses.reset_summaries()
-    max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     # Save default values to disk
     config.save(os.path.join(args.base_dir, "config.ini"))
     for epoch in range(epoch, max_epochs):
@@ -152,6 +170,7 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
+            lrs=lrs,
         )
         metrics = {"loss": train_loss, "lr": lrs.get_last_lr()[0]}
         if debug:
@@ -180,7 +199,6 @@ def main():
         if should_stop:
             logger.info("Stopping training")
             exit(0)
-        lrs.step()
     test_loss = run_epoch(
         model=model,
         epoch=epoch,
@@ -204,6 +222,7 @@ def run_epoch(
     opt: Optimizer,
     losses: Loss,
     summary_dir: str,
+    lrs: Optional[lr_scheduler._LRScheduler] = None,
 ) -> float:
     global debug
 
@@ -309,7 +328,12 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
-    cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
+        if lrs is not None:
+            lrs.step()
+    try:
+        cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
+    except UnboundLocalError as err:
+        logger.error(str(err))
     return torch.stack(l_mem).mean().cpu().item()
 
 
@@ -430,4 +454,7 @@ def cleanup(*args):
 
 
 if __name__ == "__main__":
+    from icecream import install
+
+    install()
     main()
