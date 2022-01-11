@@ -3,6 +3,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread_local;
 
+use rand::distributions::{
+    uniform::{SampleUniform, Uniform},
+    Distribution,
+};
 use rand::{Rng, RngCore};
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
