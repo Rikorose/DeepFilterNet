@@ -416,6 +416,27 @@ impl RandReverbSim {
         x.append(Axis(1), Array2::zeros((x.len_of(Axis(0)), npad)).view())?;
         Ok(())
     }
+    /// Applies random reverberation to either noise or speech or both.
+    ///
+    /// We have 3 scenarious:
+    ///
+    /// 1. Only noise will get some reverberation. No `speech_rev` will be returned.
+    /// 2. Only speech will get some reverberation. The return value`speech_rev` will contain the
+    ///    reverberant speech to be used for generating a noisy mixture and `speech` will be
+    ///    modified inplace to be a less reverberant version of `speech_rev` to be used as training
+    ///    target.
+    /// 3. Speech and noise will get reverberation.
+    ///
+    /// # Arguments
+    ///
+    /// * `speech` - A speech signal of shape `[C, N]`. Will be modified in place.
+    /// * `noise` - A noise signal of shape `[C, N]`. Will be modified in place.
+    /// * `rir_callback` - A callback which will generate a room impulse response.
+    ///
+    /// # Returns
+    ///
+    /// * `speech_rev` - An optional reverberant speech sample for mixing. This will contain a
+    ///                  more reverberation then the in place modified `speech` signal.
     pub fn transform<F>(
         &self,
         speech: &mut Array2<f32>,
@@ -425,6 +446,7 @@ impl RandReverbSim {
     where
         F: FnOnce() -> std::result::Result<Array2<f32>, Box<dyn std::error::Error>>,
     {
+        dbg!(self.prob_noise, self.prob_speech);
         if self.prob_noise == 0. && self.prob_speech == 0. {
             return Ok(None);
         }
@@ -440,6 +462,7 @@ impl RandReverbSim {
         let mut rng = thread_rng()?;
         let apply_speech = self.prob_speech > rng.gen_range(0f32..1f32);
         let apply_noise = self.prob_noise > rng.gen_range(0f32..1f32);
+        dbg!(apply_speech, apply_noise);
         if !(apply_speech || apply_noise) {
             return Ok(None);
         }
@@ -468,51 +491,22 @@ impl RandReverbSim {
         // speech_rev contains reverberant speech for mixing with noise
         let mut speech_rev = None;
         if apply_speech {
-            // Pad since STFT will truncate at the end
-            self.pad(speech, fft_size)?;
-            if !apply_noise {
-                speech_rev = match self.convolve(speech, rir_noise.view(), &mut state) {
-                    Ok(mut s) => {
-                        s.slice_collapse(s![.., ..orig_len]);
-                        if s.len_of(Axis(1)) != noise.len_of(Axis(1)) {
-                            panic!(
-                                "Len of speech {:?} and noise {:?} does not match.",
-                                s.shape(),
-                                noise.shape()
-                            );
-                        }
-                        Some(s)
-                    }
-                    Err(e) => {
-                        eprintln!("speech_rev {}", e);
-                        return Ok(None);
-                    }
-                };
-            }
+            self.pad(speech, fft_size)?; // Pad since STFT will truncate at the end
+            speech_rev =
+                Some(self.convolve(speech, rir_noise.view(), &mut state, Some(orig_len))?);
             // Speech should be a slightly dereverberant signal as target
+            // TODO: Make dereverberation parameters configurable.
             let rir_speech = self.supress_late(rir_noise.clone(), self.sr, 5., 0.2, false)?;
-            *speech = match self.convolve(speech, rir_speech.view(), &mut state) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("speech {}", e);
-                    return Ok(None);
-                }
-            };
-            speech.slice_collapse(s![.., ..orig_len]);
+            *speech = self.convolve(speech, rir_speech.view(), &mut state, Some(orig_len))?;
+            debug_assert_eq!(speech.shape(), speech_rev.as_ref().unwrap().shape());
+            debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
         if apply_noise {
             // Noisy contains reverberant noise
             self.pad(noise, fft_size)?;
-            *noise = match self.convolve(noise, rir_noise.view(), &mut state) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("noise {}", e);
-                    return Ok(None);
-                }
-            };
+            *noise = self.convolve(noise, rir_noise.view(), &mut state, Some(orig_len))?;
+            debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
-        // Trim zeros at the beginning
-        noise.slice_collapse(s![.., ..orig_len]);
         Ok(speech_rev)
     }
     fn convolve(
@@ -520,6 +514,7 @@ impl RandReverbSim {
         x: &Array2<f32>,
         rir: ArrayView2<f32>,
         state: &mut DFState,
+        truncate: Option<usize>,
     ) -> Result<Array2<f32>> {
         let mut x_ = stft(x.as_standard_layout().view(), state, true);
         let rir = fft(rir.view(), state)?;
@@ -536,6 +531,9 @@ impl RandReverbSim {
         x_ = x_ * rir;
         let mut out = istft(x_.view_mut(), state, true);
         out.slice_collapse(s![.., (state.window_size - state.frame_size)..]);
+        if let Some(max_len) = truncate {
+            out.slice_collapse(s![.., ..max_len]);
+        }
         Ok(out)
     }
     pub fn new(p: f32, sr: usize) -> Self
@@ -590,21 +588,20 @@ mod tests {
         seed_from_u64(42);
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr;
-        let len = 10 * sr;
+        let len = 4 * sr;
         let mut speech = reader.samples_arr2()?;
         speech.slice_collapse(s![0..1, 0..len]);
-        let mut noise = ReadWav::new("../assets/noise_freesound_2530.wav")?.samples_arr2()?;
+        let mut noise = ReadWav::new("../assets/noise_freesound_573577.wav")?.samples_arr2()?;
         noise.slice_axis_inplace(Axis(1), Slice::from(0..len));
-        //let rir = ReadWav::new("../assets/rir.wav")?.samples_arr2()?;
-        //let rir = ReadWav::new("../assets/aachen_rir_air_booth_0_0_1.wav")?.samples_arr2()?;
-        //let rir = ReadWav::new("../assets/rir_sim_0_w11.6_l7.4_h3.2_rt60_0.2164.wav")?.samples_arr2()?;
-        let rir =
-            ReadWav::new("../assets/rir_sim_0_w4.8_l10.2_h3.6_rt60_0.9466.wav")?.samples_arr2()?;
+        let rir = ReadWav::new("../assets/rir_sim_1001_w11.7_l2.6_h2.5_rt60_0.7919.wav")?
+            .samples_arr2()?;
         let reverb = RandReverbSim::new(1., sr);
-        let noisy = reverb.transform(&mut speech, &mut noise, move || Ok(rir))?.unwrap();
-        write_wav_arr2("../out/speech_reverb.wav", speech.view(), sr as u32)?;
+        write_wav_arr2("../out/speech_noreverb.wav", speech.view(), sr as u32)?;
+        write_wav_arr2("../out/noise_noreverb.wav", noise.view(), sr as u32)?;
+        let speech_rev = reverb.transform(&mut speech, &mut noise, move || Ok(rir))?.unwrap();
+        write_wav_arr2("../out/speech_target.wav", speech.view(), sr as u32)?;
+        write_wav_arr2("../out/speech_reverb.wav", speech_rev.view(), sr as u32)?;
         write_wav_arr2("../out/noise_reverb.wav", noise.view(), sr as u32)?;
-        write_wav_arr2("../out/noisy_reverb.wav", noisy.view(), sr as u32)?;
         Ok(())
     }
 }
