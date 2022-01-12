@@ -88,6 +88,12 @@ pub enum DfDatasetError {
     ThreadJoinError(String),
 }
 
+impl<T> From<std::sync::mpsc::SendError<T>> for DfDatasetError {
+    fn from(error: std::sync::mpsc::SendError<T>) -> Self {
+        DfDatasetError::SendError(error.to_string())
+    }
+}
+
 type Signal = Array2<f32>;
 
 fn one() -> f32 {
@@ -362,21 +368,15 @@ where
             worker_recievers.par_iter().try_for_each(|r| {
                 while let Ok((sample_idx, ordering_idx)) = r.recv() {
                     if ordering_idx == -1 {
-                        if let Err(e) =
-                            out_sender.send((ordering_idx, Err(DfDatasetError::DatasetDrained)))
-                        {
-                            return Err(DfDatasetError::SendError(e.to_string()));
-                        }
+                        out_sender.send((ordering_idx, Err(DfDatasetError::DatasetDrained)))?;
                         return Ok(());
                     }
+                    dbg!(sample_idx, ordering_idx);
                     let sample = ds.get_sample(sample_idx, Some(epoch_seed));
-                    if let Err(e) = out_sender.send((ordering_idx, sample)) {
-                        return Err(DfDatasetError::SendError(e.to_string()));
-                    }
+                    out_sender.send((ordering_idx, sample))?;
                 }
                 Ok(())
-            })?;
-            Ok(())
+            })
         });
         Ok(handle)
     }
