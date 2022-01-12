@@ -433,6 +433,9 @@ where
         let bs = self.batch_size(&self.current_split);
         let mut samples = Vec::with_capacity(bs);
         let target_idx = self.cur_out_idx + bs as isize;
+        if target_idx >= self.dataset_len(self.current_split) as isize {
+            self.drained = true;
+        }
         let mut tries = 0;
         let reciever = match self.out_receiver.as_ref() {
             None => {
@@ -472,11 +475,7 @@ where
             tries = 0;
         }
 
-        if samples.is_empty() {
-            println!("Unexpectedly no more samples.");
-            return Err(DfDatasetError::DatasetDrained);
-        }
-        let out = if self.drained && self.drop_last {
+        let out = if self.drained && (self.drop_last || samples.is_empty()) {
             None
         } else {
             Some(C::collate(
@@ -1707,7 +1706,7 @@ mod tests {
         seed_from_u64(42);
         let batch_size = 1;
         let sr = 48000;
-        let ds_dir = home_dir().unwrap().join("data/hdf5").to_str().unwrap().to_string();
+        let ds_dir = "../assets/";
         let cfg = DatasetConfig::open("../assets/dataset.cfg")?;
         let builder = DatasetBuilder::new(&ds_dir, sr);
         let ds = Datasets::new(
@@ -1756,16 +1755,16 @@ mod tests {
     pub fn test_fft_dataset() -> Result<()> {
         println!("******** Start test_data_loader() ********");
         seed_from_u64(42);
-        let batch_size = 2;
+        let batch_size = 1;
         let fft_size = 960;
         let hop_size = Some(480);
         let nb_erb = Some(32);
         let nb_spec = None;
         let norm_alpha = None;
         let sr = 48000;
-        let ds_dir = home_dir().unwrap().join("data/hdf5").to_str().unwrap().to_string();
+        let ds_dir = "../assets/";
         let cfg = DatasetConfig::open("../assets/dataset.cfg")?;
-        let builder = DatasetBuilder::new(&ds_dir, sr)
+        let builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha);
         let ds = Datasets::new(
             Arc::new(builder.clone().dataset(cfg.train).build_fft_dataset()?),
@@ -1773,11 +1772,15 @@ mod tests {
             Arc::new(builder.clone().dataset(cfg.test).build_fft_dataset()?),
         );
         let mut loader = DataLoader::builder(ds).num_threads(1).batch_size(batch_size).build()?;
-        loader.start_epoch("train", 1)?;
-        for i in 0..2 {
-            let batch = loader.get_batch::<Complex32>()?;
-            if let Some(batch) = batch {
-                dbg!(i, &batch, batch.feat_erb.as_ref().unwrap().shape());
+        for epoch in 0..2 {
+            loader.start_epoch("train", epoch)?;
+            loop {
+                let batch = loader.get_batch::<Complex32>()?;
+                if let Some(batch) = batch {
+                    dbg!(&batch, batch.feat_erb.as_ref().unwrap().shape());
+                } else {
+                    break;
+                }
             }
         }
         Ok(())
