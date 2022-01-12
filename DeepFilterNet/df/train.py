@@ -309,6 +309,11 @@ def run_epoch(
             if torch.isnan(l_mean):
                 check_finite_module(model)
             l_dict = {"loss": l_mean.item()}
+            if is_train and lrs is not None:
+                try:
+                    l_dict["lr"] = lrs.get_last_lr()[0]
+                except AttributeError as e:
+                    pass
             if debug:
                 l_dict.update(
                     {
