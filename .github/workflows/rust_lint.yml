@@ -23,7 +23,7 @@ jobs:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check'}
           - {command: clippy, rust: stable, args: '--all-features -- -D warnings'}
-          - {command: test, rust: stable, args: 'test_mix_audio_signal'}
+          - {command: test, rust: stable}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
