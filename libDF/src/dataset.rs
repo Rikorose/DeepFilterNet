@@ -1505,6 +1505,24 @@ fn combine_noises(
     Ok(noise)
 }
 
+/// Mix a clean signal with noise signal at given SNR.
+///
+/// Arguments
+///
+/// * `clean` - A clean speech signal of shape `[C, N]`.
+/// * `clean_rev` - A optional reverberant speech signal of shape `[C, N]`. If provided, this signal
+///                 will be used for creating the noisy mixture. `clean` may be used as a training
+///                 target and usually contains no or less reverberation. This can be used to learn
+///                 some dereverberation.
+/// * `noise` - A noise signal of shape `[C, N]`. Will be modified in place.
+/// * `snr_db` - Signal to noise ratio in decibel used for mixing.
+/// * `gain_db` - Gain to apply to the clean signal in decibel before mixing.
+/// * `atten_db` - Target attenuation limit in decibel. The resulting clean target will contain
+///                `atten_db` less noise compared to the noisy output.
+/// * `noise_resample`: Optional resample parameters which will be used to apply a low-pass via
+///                     resampling to the noise signal. This may be used to make sure a speech
+///                     signal with a lower sampling rate will also be mixed with noise having the
+///                     same sampling rate.
 fn mix_audio_signal(
     clean: Array2<f32>,
     clean_rev: Option<Array2<f32>>,
@@ -1592,13 +1610,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
-    use dirs::home_dir;
-
     use super::*;
     use crate::util::seed_from_u64;
-    use crate::wav_utils::*;
 
     fn calc_rms(x: &[f32]) -> f32 {
         let n = x.len() as f32;
@@ -1687,94 +1700,6 @@ mod tests {
     }
 
     #[test]
-    pub fn test_hdf5_read() -> Result<()> {
-        let hdf5 = Hdf5Dataset::new(
-            home_dir().unwrap().join("data/hdf5/EDINBURGH_56.hdf5").to_str().unwrap(),
-        )?;
-        let sr = hdf5.sr.unwrap() as u32;
-        let keys = hdf5.keys()?;
-        let signal = hdf5.read(&keys[0])?;
-        dbg!(signal.shape());
-        let max_len = 3 * sr as usize; // 1 second
-        let key = &keys[0];
-        let signal = hdf5.read_slc(key, 0..max_len.min(hdf5.sample_len(key)?))?;
-        dbg!(signal.shape());
-        let ch = signal.len_of(Axis(0));
-        write_wav_iter("../out/hdf5_signal.wav", &signal, sr, ch as u16)?;
-        Ok(())
-    }
-
-    #[test]
-    pub fn test_hdf5_vorbis_read() -> Result<()> {
-        seed_from_u64(42);
-        let hdf5 = Hdf5Dataset::new(
-            home_dir().unwrap().join("data/hdf5/OWN_NOISES_TRAIN.hdf5").to_str().unwrap(),
-        )?;
-        let sr = hdf5.sr.unwrap() as u32;
-        let keys = hdf5.keys()?;
-        let key = &keys[0];
-        let signal = hdf5.read(key)?;
-        write_wav_arr2("../out/hdf5_signal.wav", signal.view(), sr)?;
-        dbg!(signal.shape());
-        let max_len = 3 * sr as usize;
-        let signal = hdf5.read_slc(key, 0..max_len.min(hdf5.sample_len(key)?))?;
-        dbg!(signal.shape());
-        write_wav_arr2("../out/hdf5_signal_slc.wav", signal.view(), sr)?;
-        Ok(())
-    }
-
-    #[test]
-    pub fn test_data_loader() -> Result<()> {
-        println!("******** Start test_data_loader() ********");
-        seed_from_u64(42);
-        let batch_size = 1;
-        let sr = 48000;
-        let ds_dir = "../assets/";
-        let cfg = DatasetConfig::open("../assets/dataset.cfg")?;
-        let builder = DatasetBuilder::new(&ds_dir, sr);
-        let ds = Datasets::new(
-            Arc::new(builder.clone().dataset(cfg.train).build_td_dataset()?),
-            Arc::new(builder.clone().dataset(cfg.valid).build_td_dataset()?),
-            Arc::new(builder.clone().dataset(cfg.test).build_td_dataset()?),
-        );
-        let mut loader = DataLoader::builder(ds).batch_size(batch_size).build()?;
-        loader.start_epoch("train", 1)?;
-        for i in 0..10 {
-            let t0 = Instant::now();
-            let batch = loader.get_batch::<f32>()?.unwrap();
-            dbg!(i, &batch);
-            let t1 = Instant::now();
-            println!("test_data_loader: {:?}", t1 - t0);
-            write_wav_iter(
-                "../out/clean.wav",
-                &batch.speech.slice(s![0, 0, ..]),
-                sr as u32,
-                1,
-            )?;
-            write_wav_iter(
-                "../out/noise.wav",
-                &batch.noise.slice(s![0, 0, ..]),
-                sr as u32,
-                1,
-            )?;
-            write_wav_iter(
-                "../out/noisy.wav",
-                &batch.noisy.slice(s![0, 0, ..]),
-                sr as u32,
-                1,
-            )?;
-        }
-        loader.start_epoch("train", 2)?;
-        for i in 0..2 {
-            dbg!(i, loader.get_batch::<f32>()?);
-        }
-        println!("Dropping loader");
-        drop(loader);
-        println!("Done");
-        Ok(())
-    }
-
-    #[test]
     pub fn test_fft_dataset() -> Result<()> {
         println!("******** Start test_data_loader() ********");
         seed_from_u64(42);
@@ -1788,11 +1713,12 @@ mod tests {
         let mut cfg = DatasetConfig::open("../assets/dataset.cfg")?;
         let split = Split::Train;
         let builder = DatasetBuilder::new(ds_dir, sr)
-            .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha);
+            .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
+            .max_len(1.);
         for dataset_size in [1, 2, 4, 17] {
             for c in cfg.train.iter_mut() {
-                // Set sampling factor
-                c.1 = dataset_size as f32;
+                c.1 = dataset_size as f32; // Set sampling factor
+                assert_eq!(c.sampling_factor(), dataset_size as f32);
             }
             'inner: for batch_size in [1, 2, 16] {
                 let ds = Datasets::new(
