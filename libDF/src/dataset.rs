@@ -198,9 +198,9 @@ where
     idcs: Arc<Mutex<VecDeque<(usize, isize)>>>,
     current_split: Split,
     fill_thread: Option<thread::JoinHandle<Result<()>>>,
-    out_receiver: Option<Receiver<(isize, Result<Sample<T>>)>>,
-    out_buf: BTreeMap<isize, Sample<T>>,
-    cur_out_idx: isize,
+    out_receiver: Option<Receiver<(usize, Result<Sample<T>>)>>,
+    out_buf: BTreeMap<usize, Sample<T>>,
+    cur_out_idx: usize,
     drop_last: bool,
     drained: bool,
     overfit: bool,
@@ -259,12 +259,30 @@ where
         self._drop_last = Some(drop_last);
         self
     }
+    fn check_dataset_size(&self, bs_train: usize) -> Result<()> {
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            let batch_size = match split {
+                Split::Train => bs_train,
+                _ => self._batch_size_eval.unwrap_or(bs_train),
+            };
+            let dataset_size = self._ds.as_ref().unwrap().get(split).len();
+            if dataset_size < batch_size {
+                return Err(DfDatasetError::DatasetTooSmall {
+                    split,
+                    dataset_size,
+                    batch_size,
+                });
+            }
+        }
+        Ok(())
+    }
     pub fn build(self) -> Result<DataLoader<T>> {
-        let bs = self._batch_size.unwrap_or(1);
-        let prefetch = self._prefetch.unwrap_or(bs * self._num_threads.unwrap_or(4) * 2);
+        let bs_train = self._batch_size.unwrap_or(1);
+        self.check_dataset_size(bs_train)?;
+        let prefetch = self._prefetch.unwrap_or(bs_train * self._num_threads.unwrap_or(4) * 2);
         let mut loader = DataLoader::new(
             self._ds.unwrap(),
-            bs,
+            bs_train,
             self._batch_size_eval,
             prefetch,
             self._num_threads,
@@ -370,11 +388,12 @@ where
             worker_recievers.par_iter().try_for_each(|r| {
                 while let Ok((sample_idx, ordering_idx)) = r.recv() {
                     if ordering_idx == -1 {
-                        out_sender.send((ordering_idx, Err(DfDatasetError::DatasetDrained)))?;
+                        out_sender.send((0, Err(DfDatasetError::DatasetDrained)))?;
                         return Ok(());
                     }
+                    assert!(ordering_idx >= 0);
                     let sample = ds.get_sample(sample_idx, Some(epoch_seed));
-                    out_sender.send((ordering_idx, sample))?;
+                    out_sender.send((ordering_idx as usize, sample))?;
                 }
                 Ok(())
             })
@@ -393,13 +412,6 @@ where
         self.cur_out_idx = 0;
         // Prepare for new epoch
         self.current_split = split;
-        if self.batch_size(&split) > self.dataset_len(split) {
-            return Err(DfDatasetError::DatasetTooSmall {
-                split,
-                dataset_size: self.dataset_len(split),
-                batch_size: self.batch_size(&split),
-            });
-        }
         seed_from_u64(seed as u64);
         {
             // Recreate indices to index into the dataset and shuffle them
@@ -432,8 +444,8 @@ where
         }
         let bs = self.batch_size(&self.current_split);
         let mut samples = Vec::with_capacity(bs);
-        let target_idx = self.cur_out_idx + bs as isize;
-        if target_idx >= self.dataset_len(self.current_split) as isize {
+        let target_idx = self.dataset_len(self.current_split).min(self.cur_out_idx + bs);
+        if target_idx >= self.dataset_len(self.current_split) {
             self.drained = true;
         }
         let mut tries = 0;
@@ -605,6 +617,17 @@ where
     pub gain: Vec<i8>,
     pub atten: Vec<u8>, // attenuation limit in dB; 0 stands for no limit
 }
+impl<T> DsBatch<T>
+where
+    T: Data,
+{
+    fn batch_size(&self) -> usize {
+        self.speech.len_of(Axis(0))
+    }
+    fn sample_len(&self) -> usize {
+        self.speech.len_of(Axis(2))
+    }
+}
 impl<T> fmt::Debug for DsBatch<T>
 where
     T: Data,
@@ -612,8 +635,8 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
             "Dataset Batch with batch_size: '{}, len: '{}', snrs: '{:?}', gain: '{:?}')",
-            self.speech.len_of(Axis(0)),
-            self.speech.len_of(Axis(2)),
+            self.batch_size(),
+            self.sample_len(),
             self.snr,
             self.gain
         ))
@@ -1755,7 +1778,6 @@ mod tests {
     pub fn test_fft_dataset() -> Result<()> {
         println!("******** Start test_data_loader() ********");
         seed_from_u64(42);
-        let batch_size = 1;
         let fft_size = 960;
         let hop_size = Some(480);
         let nb_erb = Some(32);
@@ -1763,23 +1785,60 @@ mod tests {
         let norm_alpha = None;
         let sr = 48000;
         let ds_dir = "../assets/";
-        let cfg = DatasetConfig::open("../assets/dataset.cfg")?;
+        let mut cfg = DatasetConfig::open("../assets/dataset.cfg")?;
+        let split = Split::Train;
         let builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha);
-        let ds = Datasets::new(
-            Arc::new(builder.clone().dataset(cfg.train).build_fft_dataset()?),
-            Arc::new(builder.clone().dataset(cfg.valid).build_fft_dataset()?),
-            Arc::new(builder.clone().dataset(cfg.test).build_fft_dataset()?),
-        );
-        let mut loader = DataLoader::builder(ds).num_threads(1).batch_size(batch_size).build()?;
-        for epoch in 0..2 {
-            loader.start_epoch("train", epoch)?;
-            loop {
-                let batch = loader.get_batch::<Complex32>()?;
-                if let Some(batch) = batch {
-                    dbg!(&batch, batch.feat_erb.as_ref().unwrap().shape());
-                } else {
-                    break;
+        for dataset_size in [1, 2, 4, 17] {
+            for c in cfg.train.iter_mut() {
+                // Set sampling factor
+                c.1 = dataset_size as f32;
+            }
+            'inner: for batch_size in [1, 2, 16] {
+                let ds = Datasets::new(
+                    Arc::new(builder.clone().dataset(cfg.train.clone()).build_fft_dataset()?),
+                    Arc::new(builder.clone().dataset(cfg.valid.clone()).build_fft_dataset()?),
+                    Arc::new(builder.clone().dataset(cfg.test.clone()).build_fft_dataset()?),
+                );
+                dbg!(dataset_size, batch_size);
+                let mut loader = match DataLoader::builder(ds)
+                    .num_threads(1)
+                    .batch_size(batch_size)
+                    .batch_size_eval(1)
+                    .build()
+                {
+                    Ok(loader) => loader,
+                    Err(e) => match e {
+                        DfDatasetError::DatasetTooSmall {
+                            split: s_,
+                            dataset_size: ds_,
+                            batch_size: bs_,
+                        } => {
+                            if dataset_size < batch_size {
+                                continue 'inner; // This is expected
+                            }
+                            return Err(DfDatasetError::DatasetTooSmall {
+                                split: s_,
+                                dataset_size: ds_,
+                                batch_size: bs_,
+                            });
+                        }
+                        e => return Err(e),
+                    },
+                };
+                for epoch in 0..2 {
+                    loader.start_epoch(split, epoch)?;
+                    let mut n_samples = 0;
+                    loop {
+                        let batch = loader.get_batch::<Complex32>()?;
+                        if let Some(batch) = batch {
+                            n_samples += batch.batch_size();
+                            dbg!(n_samples);
+                        } else {
+                            break;
+                        }
+                    }
+                    assert_eq!(n_samples, dataset_size);
                 }
             }
         }
