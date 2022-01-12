@@ -51,6 +51,7 @@ setup_env() {
       "$pytorch_v_arg" \
       torchaudio \
       maturin \
+      patchelf \
       poetry \
       cudatoolkit=$cuda_version -c "pytorch$nightly" -c conda-forge
     source activate "$env"
