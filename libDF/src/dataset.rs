@@ -202,6 +202,7 @@ where
     out_buf: BTreeMap<isize, Sample<T>>,
     cur_out_idx: isize,
     drop_last: bool,
+    drained: bool,
     overfit: bool,
 }
 
@@ -319,6 +320,7 @@ where
             out_buf: BTreeMap::new(),
             cur_out_idx: 0,
             drop_last,
+            drained: false,
             overfit: false,
         })
     }
@@ -371,7 +373,6 @@ where
                         out_sender.send((ordering_idx, Err(DfDatasetError::DatasetDrained)))?;
                         return Ok(());
                     }
-                    dbg!(sample_idx, ordering_idx);
                     let sample = ds.get_sample(sample_idx, Some(epoch_seed));
                     out_sender.send((ordering_idx, sample))?;
                 }
@@ -418,6 +419,7 @@ where
         }
         // Start thread to submit dataset jobs for the pool workers
         self.fill_thread = Some(self.start_idx_worker(split, seed as u64)?);
+        self.drained = false;
         Ok(())
     }
 
@@ -425,6 +427,9 @@ where
     where
         C: Collate<T>,
     {
+        if self.drained {
+            return Ok(None);
+        }
         let bs = self.batch_size(&self.current_split);
         let mut samples = Vec::with_capacity(bs);
         let target_idx = self.cur_out_idx + bs as isize;
@@ -435,7 +440,6 @@ where
             }
             Some(r) => r,
         };
-        let mut drained = false;
         'outer: while self.cur_out_idx < target_idx {
             match reciever.recv_timeout(Duration::from_millis(100)) {
                 Err(_e) => {
@@ -446,8 +450,7 @@ where
                     continue 'outer;
                 }
                 Ok((_, Err(DfDatasetError::DatasetDrained))) => {
-                    drained = true;
-                    break;
+                    self.drained = true;
                 }
                 Ok((_, Err(e))) => {
                     return Err(e);
@@ -469,10 +472,11 @@ where
             tries = 0;
         }
 
-        let out = if drained && self.drop_last {
-            if samples.is_empty() {
-                println!("No more samples.");
-            }
+        if samples.is_empty() {
+            println!("Unexpectedly no more samples.");
+            return Err(DfDatasetError::DatasetDrained);
+        }
+        let out = if self.drained && self.drop_last {
             None
         } else {
             Some(C::collate(
@@ -481,7 +485,7 @@ where
             )?)
         };
 
-        if drained {
+        if self.drained {
             self.join_fill_thread()?
         }
         Ok(out)
