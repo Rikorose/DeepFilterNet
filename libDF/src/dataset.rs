@@ -489,6 +489,7 @@ where
         }
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
+            assert!(self.cur_out_idx >= target_idx);
             self.join_fill_thread()?;
             None
         } else {
