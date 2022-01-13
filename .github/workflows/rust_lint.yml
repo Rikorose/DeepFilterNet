@@ -14,16 +14,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: lint
+  test:
     runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: 1
     strategy:
       fail-fast: false
       matrix:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check'}
           - {command: clippy, rust: stable, args: '--all-features -- -D warnings'}
-          - {command: test, rust: stable}
+          - {command: test, rust: stable, args: '--all-features -p deep_filter'}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -40,7 +41,6 @@ jobs:
         uses: actions-rs/toolchain@v1
         with: {profile: minimal, toolchain: '${{matrix.rust}}', override: true, components: 'rustfmt, clippy'}
       - name: Install HDF5
-        if: matrix.comand != 'test'
         run: sudo apt-get install libhdf5-dev
       - name: Run cargo ${{matrix.command}}
         uses: actions-rs/cargo@v1

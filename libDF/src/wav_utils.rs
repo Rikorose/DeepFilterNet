@@ -1,5 +1,6 @@
 use std::result::Result;
 use std::{
+    fs,
     fs::File,
     io::{BufReader, Read},
 };
@@ -13,6 +14,8 @@ use thiserror::Error;
 pub enum WavUtilsError {
     #[error("Hound Error")]
     HoundError(#[from] hound::Error),
+    #[error("Hound Error Detail")]
+    HoundErrorDetail { source: hound::Error, msg: String },
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
 }
@@ -29,7 +32,23 @@ impl ReadWav {
     where
         Self: Sized,
     {
-        let reader = WavReader::open(path)?;
+        for dir in ["./", "../", "../assets"] {
+            println!("Printing files in directory {}", dir);
+            let paths = fs::read_dir(dir).unwrap();
+            for path in paths {
+                println!("Name: {}", path.unwrap().path().display())
+            }
+        }
+
+        let reader = match WavReader::open(path) {
+            Err(e) => {
+                return Err(WavUtilsError::HoundErrorDetail {
+                    source: e,
+                    msg: format!("Could not find audio file {}", path),
+                })
+            }
+            Ok(r) => r,
+        };
         let channels = reader.spec().channels as usize;
         let sr = reader.spec().sample_rate as usize;
         let len = reader.len() as usize / channels;
