@@ -1,6 +1,5 @@
 use std::result::Result;
 use std::{
-    fs,
     fs::File,
     io::{BufReader, Read},
 };
@@ -32,14 +31,6 @@ impl ReadWav {
     where
         Self: Sized,
     {
-        for dir in ["./", "../", "../assets"] {
-            println!("Printing files in directory {}", dir);
-            let paths = fs::read_dir(dir).unwrap();
-            for path in paths {
-                println!("Name: {}", path.unwrap().path().display())
-            }
-        }
-
         let reader = match WavReader::open(path) {
             Err(e) => {
                 return Err(WavUtilsError::HoundErrorDetail {

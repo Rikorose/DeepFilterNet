@@ -555,8 +555,16 @@ mod tests {
     use super::*;
     use crate::wav_utils::*;
 
+    fn create_out_dir() -> std::io::Result<()> {
+        match std::fs::create_dir("../out") {
+            Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            r => r,
+        }
+    }
+
     #[test]
     pub fn test_rand_resample() -> Result<()> {
+        create_out_dir().expect("Could not create output directory");
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let mut test_sample = reader.samples_arr2()?;
@@ -570,6 +578,7 @@ mod tests {
 
     #[test]
     pub fn test_low_pass() -> Result<()> {
+        create_out_dir().expect("Could not create output directory");
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let mut test_sample = reader.samples_arr2()?;
@@ -585,6 +594,7 @@ mod tests {
 
     #[test]
     pub fn test_reverb() -> Result<()> {
+        create_out_dir().expect("Could not create output directory");
         seed_from_u64(42);
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr;

@@ -47,3 +47,8 @@ jobs:
         with:
           command: ${{matrix.command}}
           args: ${{matrix.args}}
+      - uses: actions/upload-artifact@v2
+        if: matrix.command == 'test'
+        with:
+          name: test-artifacts
+          path: out/
