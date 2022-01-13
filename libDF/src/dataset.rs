@@ -496,7 +496,8 @@ where
                 samples.as_mut_slice(),
                 self.datasets.get(self.current_split).max_sample_len(),
             )?;
-            if !self.drained {
+            debug_assert!(batch.batch_size() <= self.batch_size(&self.current_split));
+            if !self.drained && self.cur_out_idx < target_idx {
                 debug_assert_eq!(batch.batch_size(), self.batch_size(&self.current_split));
             }
             Some(batch)
