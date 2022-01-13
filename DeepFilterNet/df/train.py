@@ -312,7 +312,7 @@ def run_epoch(
             if is_train and lrs is not None:
                 try:
                     l_dict["lr"] = lrs.get_last_lr()[0]
-                except AttributeError as e:
+                except AttributeError:
                     pass
             if debug:
                 l_dict.update(
