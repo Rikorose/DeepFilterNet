@@ -1,7 +1,7 @@
 import glob
 import os
 import re
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from loguru import logger
@@ -18,7 +18,7 @@ def get_epoch(cp) -> int:
 
 
 def load_model(
-    cp_dir: str,
+    cp_dir: Optional[str],
     df_state: DF,
     jit: bool = False,
     mask_only: bool = False,
@@ -30,8 +30,10 @@ def load_model(
     if jit:
         model = torch.jit.script(model)
     blacklist: List[str] = config("CP_BLACKLIST", [], Csv(), save=False, section="train")  # type: ignore
-    epoch = read_cp(model, "model", cp_dir, blacklist=blacklist)
-    epoch = 0 if epoch is None else epoch
+    epoch = 0
+    if cp_dir is not None:
+        epoch = read_cp(model, "model", cp_dir, blacklist=blacklist)
+        epoch = 0 if epoch is None else epoch
     return model, epoch
 
 

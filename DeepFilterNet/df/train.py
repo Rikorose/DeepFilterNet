@@ -48,6 +48,7 @@ def main():
     parser.add_argument(
         "base_dir", type=str, help="Directory to store logs, summaries, checkpoints, etc."
     )
+    parser.add_argument("--no-resume", action="store_false", dest="resume")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     if not os.path.isfile(args.data_config_file):
@@ -81,13 +82,13 @@ def main():
     train_df_only: bool = config("DF_ONLY", False, bool, section="train")
     jit = config("JIT", False, cast=bool, section="train")
     model, epoch = load_model(
-        checkpoint_dir,
+        checkpoint_dir if args.resume else None,
         state,
         jit=False,
         mask_only=mask_only,
         train_df_only=train_df_only,
     )
-    opt = load_opt(checkpoint_dir, model, mask_only, train_df_only)
+    opt = load_opt(checkpoint_dir if args.resume else None, model, mask_only, train_df_only)
     try:
         log_model_summary(model, verbose=args.debug)
     except Exception as e:
@@ -242,7 +243,7 @@ def run_epoch(
     summary_fn = summary_write  # or summary_noop
     model.train(mode=is_train)
     losses.store_losses = debug or not is_train
-    max_steps = loader.len(split)
+    max_steps = loader.len(split) - 1
     seed = epoch if is_train else 42
     n_nans = 0
     logger.info("Dataloader len: {}".format(loader.len(split)))
@@ -333,8 +334,6 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
-        if lrs is not None:
-            lrs.step()
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     except UnboundLocalError as err:
@@ -357,7 +356,7 @@ def setup_losses() -> Loss:
 
 
 def load_opt(
-    cp_dir: str, model: nn.Module, mask_only: bool = False, df_only: bool = False
+    cp_dir: Optional[str], model: nn.Module, mask_only: bool = False, df_only: bool = False
 ) -> torch.optim.Optimizer:
     lr = config("LR", 1e-4, float, section="train")
     decay = config("WEIGHT_DECAY", 1e-3, float, section="train")
@@ -379,10 +378,11 @@ def load_opt(
         opt = RMSprop(params, lr=lr, weight_decay=decay)
     else:
         raise ValueError(f"Unsupported optimizer: {optimizer}")
-    try:
-        read_cp(opt, "opt", cp_dir)
-    except ValueError as e:
-        logger.error(f"Could not load optimizer state: {e}")
+    if cp_dir is not None:
+        try:
+            read_cp(opt, "opt", cp_dir)
+        except ValueError as e:
+            logger.error(f"Could not load optimizer state: {e}")
     for group in opt.param_groups:
         group.setdefault("initial_lr", lr)
     return opt
@@ -459,7 +459,8 @@ def cleanup(*args):
 
 
 if __name__ == "__main__":
-    from icecream import install
+    from icecream import install, ic
 
+    ic.includeContext = True
     install()
     main()
