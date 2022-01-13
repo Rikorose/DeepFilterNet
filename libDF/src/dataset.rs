@@ -446,6 +446,7 @@ where
             self.drained = true;
         }
         let mut tries = 0;
+        let mut ids = Vec::with_capacity(self.batch_size(&self.current_split));
         let reciever = match self.out_receiver.as_ref() {
             None => {
                 return Err(DfDatasetError::ChannelsNotInitializedError);
@@ -454,12 +455,12 @@ where
         };
         'outer: while self.cur_out_idx < target_idx {
             // Check if we have some buffered samples
-            'inner: while self.cur_out_idx < target_idx {
+            if self.cur_out_idx < target_idx {
                 if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
+                    ids.push(self.cur_out_idx);
                     samples.push(s);
                     self.cur_out_idx += 1;
-                } else {
-                    break 'inner;
+                    break 'outer;
                 }
             }
             match reciever.recv_timeout(Duration::from_millis(100)) {
@@ -479,6 +480,7 @@ where
                 Ok((o_idx, Ok(s))) => {
                     if o_idx == self.cur_out_idx {
                         samples.push(s);
+                        ids.push(o_idx);
                         self.cur_out_idx += 1;
                     } else {
                         assert!(self.out_buf.insert(o_idx, s).is_none());
@@ -490,13 +492,15 @@ where
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
             assert!(self.cur_out_idx >= target_idx);
+            assert!(self.out_buf.is_empty());
             self.join_fill_thread()?;
             None
         } else {
-            let batch = C::collate(
+            let mut batch = C::collate(
                 samples.as_mut_slice(),
                 self.datasets.get(self.current_split).max_sample_len(),
             )?;
+            batch.ids.extend(ids);
             debug_assert!(batch.batch_size() <= self.batch_size(&self.current_split));
             if !self.drained && self.cur_out_idx < target_idx {
                 debug_assert_eq!(batch.batch_size(), self.batch_size(&self.current_split));
@@ -551,6 +555,7 @@ impl Collate<f32> for f32 {
             snr,
             gain,
             atten,
+            ids: Vec::new(),
         })
     }
 }
@@ -593,6 +598,7 @@ impl Collate<Complex32> for Complex32 {
             snr,
             gain,
             atten,
+            ids: Vec::new(),
         })
     }
 }
@@ -620,6 +626,7 @@ where
     pub snr: Vec<i8>,
     pub gain: Vec<i8>,
     pub atten: Vec<u8>, // attenuation limit in dB; 0 stands for no limit
+    pub ids: Vec<usize>,
 }
 impl<T> DsBatch<T>
 where
