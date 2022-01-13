@@ -36,6 +36,9 @@ serde = { version = "1.0", features = ["derive"], optional=true }
 lewton = { version = "^0.10", optional=true }
 ogg = { version = "^0.8", optional=true }
 
+[dev-dependencies]
+rand = "0.8"
+
 [package.metadata.deb]
 assets = [
   ["LICENSE-MIT", "usr/share/doc/deep_filter/", "644"],
