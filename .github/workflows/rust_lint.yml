@@ -43,6 +43,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with: {profile: minimal, toolchain: '${{matrix.rust}}', override: true, components: 'rustfmt, clippy'}
       - name: Install HDF5
+        if: matrix.command != 'fmt'
         run: sudo apt-get install libhdf5-dev
       - name: Run cargo ${{matrix.command}}
         uses: actions-rs/cargo@v1
