@@ -455,35 +455,34 @@ where
         };
         'outer: while self.cur_out_idx < target_idx {
             // Check if we have some buffered samples
-            if self.cur_out_idx < target_idx {
-                if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
-                    ids.push(self.cur_out_idx);
-                    samples.push(s);
-                    self.cur_out_idx += 1;
-                    break 'outer;
-                }
-            }
-            match reciever.recv_timeout(Duration::from_millis(100)) {
-                Err(_e) => {
-                    if tries > 1000 {
-                        return Err(DfDatasetError::TimeoutError);
+            if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
+                ids.push(self.cur_out_idx);
+                samples.push(s);
+                self.cur_out_idx += 1;
+            } else {
+                // Or check worker threads
+                match reciever.recv_timeout(Duration::from_millis(100)) {
+                    Err(_e) => {
+                        if tries > 1000 {
+                            return Err(DfDatasetError::TimeoutError);
+                        }
+                        tries += 1;
+                        continue 'outer;
                     }
-                    tries += 1;
-                    continue 'outer;
-                }
-                Ok((_, Err(DfDatasetError::DatasetDrained))) => {
-                    self.drained = true;
-                }
-                Ok((_, Err(e))) => {
-                    return Err(e);
-                }
-                Ok((o_idx, Ok(s))) => {
-                    if o_idx == self.cur_out_idx {
-                        samples.push(s);
-                        ids.push(o_idx);
-                        self.cur_out_idx += 1;
-                    } else {
-                        assert!(self.out_buf.insert(o_idx, s).is_none());
+                    Ok((_, Err(DfDatasetError::DatasetDrained))) => {
+                        self.drained = true;
+                    }
+                    Ok((_, Err(e))) => {
+                        return Err(e);
+                    }
+                    Ok((o_idx, Ok(s))) => {
+                        if o_idx == self.cur_out_idx {
+                            samples.push(s);
+                            ids.push(o_idx);
+                            self.cur_out_idx += 1;
+                        } else {
+                            assert!(self.out_buf.insert(o_idx, s).is_none());
+                        }
                     }
                 }
             }
