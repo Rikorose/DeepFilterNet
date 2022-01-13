@@ -439,13 +439,10 @@ where
     where
         C: Collate<T>,
     {
-        if self.drained {
-            return Ok(None);
-        }
         let bs = self.batch_size(&self.current_split);
         let mut samples = Vec::with_capacity(bs);
         let target_idx = self.dataset_len(self.current_split).min(self.cur_out_idx + bs);
-        if target_idx >= self.dataset_len(self.current_split) {
+        if self.cur_out_idx >= self.dataset_len(self.current_split) {
             self.drained = true;
         }
         let mut tries = 0;
@@ -456,6 +453,15 @@ where
             Some(r) => r,
         };
         'outer: while self.cur_out_idx < target_idx {
+            // Check if we have some buffered samples
+            'inner: while self.cur_out_idx < target_idx {
+                if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
+                    samples.push(s);
+                    self.cur_out_idx += 1;
+                } else {
+                    break 'inner;
+                }
+            }
             match reciever.recv_timeout(Duration::from_millis(100)) {
                 Err(_e) => {
                     if tries > 1000 {
@@ -479,26 +485,22 @@ where
                     }
                 }
             }
-            // Check if we have some buffered samples
-            while let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
-                samples.push(s);
-                self.cur_out_idx += 1;
-            }
             tries = 0;
         }
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
+            self.join_fill_thread()?;
             None
         } else {
-            Some(C::collate(
+            let batch = C::collate(
                 samples.as_mut_slice(),
                 self.datasets.get(self.current_split).max_sample_len(),
-            )?)
+            )?;
+            if !self.drained {
+                debug_assert_eq!(batch.batch_size(), self.batch_size(&self.current_split));
+            }
+            Some(batch)
         };
-
-        if self.drained {
-            self.join_fill_thread()?
-        }
         Ok(out)
     }
 
