@@ -141,7 +141,8 @@ def main():
             warmup_init_lr=0.1 * lr,
             min_lr=1e-6,
             t_mult=1.5,
-            lr_period_updates=4,
+            lr_period_updates=10,
+            lr_shrink=0.5,
         ),
         last_epoch=last_epoch,
     )
@@ -176,7 +177,11 @@ def main():
             losses=losses,
             summary_dir=summary_dir,
         )
-        metrics = {"loss": train_loss, "lr": lrs.get_last_lr()[0]}
+        metrics = {"loss": train_loss}
+        try:
+            metrics["loss"] = lrs.get_last_lr()[0]
+        except AttributeError:
+            pass
         if debug:
             metrics.update(
                 {n: torch.mean(torch.stack(vals)).item() for n, vals in losses.get_summaries()}
@@ -248,7 +253,6 @@ def run_epoch(
     model.train(mode=is_train)
     losses.store_losses = debug or not is_train
     max_steps = loader.len(split) - 1
-    ic(loader.len(split))
     seed = epoch if is_train else 42
     n_nans = 0
     logger.info("Dataloader len: {}".format(loader.len(split)))
@@ -459,7 +463,7 @@ def cleanup(*args):
 
 
 if __name__ == "__main__":
-    from icecream import install, ic
+    from icecream import ic, install
 
     ic.includeContext = True
     install()

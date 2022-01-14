@@ -53,6 +53,7 @@ def cosine_lr_scheduler(
             i = math.floor(cur_updates / period)
             t_i = period
             t_cur = cur_updates - (period * i)
+        ic(i)
 
         lr_shrink = lr_shrink_base ** i
         min_lr = min_lr_base * lr_shrink
