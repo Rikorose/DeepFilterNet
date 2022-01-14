@@ -129,6 +129,11 @@ class Config:
             raise ValueError("Parse error")
         return cast(value)
 
+    def get(self, option: str, section: str, cast: Type[T] = str) -> T:
+        assert self.parser.has_section(section)
+        assert self.parser.has_option(section, option)
+        return cast(self.parser.get(section, option))
+
     def read_from_section(
         self, section: str, option: str, default: Any = None, cast: Type = str, save: bool = True
     ) -> str:

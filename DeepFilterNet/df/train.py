@@ -15,6 +15,7 @@ from df.checkpoint import load_model, read_cp, write_cp
 from df.config import config
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
+from df.lr import cosine_lr_scheduler
 from df.model import ModelParams
 from df.modules import get_device
 from df.utils import (
@@ -88,7 +89,12 @@ def main():
         mask_only=mask_only,
         train_df_only=train_df_only,
     )
-    opt = load_opt(checkpoint_dir if args.resume else None, model, mask_only, train_df_only)
+    opt = load_opt(
+        checkpoint_dir if args.resume else None,
+        model,
+        mask_only,
+        train_df_only,
+    )
     try:
         log_model_summary(model, verbose=args.debug)
     except Exception as e:
@@ -123,22 +129,20 @@ def main():
     )
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
-    n_epoch_iter = dataloader.len("train")
-    last_epoch = max(0, (epoch - 1) * n_epoch_iter)
-    lin_lrs = lr_scheduler.LinearLR(
-        opt, start_factor=0.1, total_iters=n_epoch_iter, last_epoch=last_epoch
-    )
-    cos_lrs = lr_scheduler.CosineAnnealingLR(
+    assert epoch >= 0
+    n_warmup = 3
+    last_epoch = max(0, epoch) - 1
+    lr = config.get("lr", "train", float)
+    lrs = lr_scheduler.LambdaLR(
         opt,
-        eta_min=1e-7,
-        T_max=n_epoch_iter * (max_epochs - 1),
-        last_epoch=max(0, last_epoch - n_epoch_iter),
-        verbose=True,
-    )
-    lrs = lr_scheduler.SequentialLR(
-        opt,
-        [lin_lrs, cos_lrs],
-        milestones=[1 * n_epoch_iter],
+        cosine_lr_scheduler(
+            lr,
+            n_warmup=n_warmup,
+            warmup_init_lr=0.1 * lr,
+            min_lr=1e-6,
+            t_mult=1.5,
+            lr_period_updates=4,
+        ),
         last_epoch=last_epoch,
     )
 
@@ -171,7 +175,6 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
-            lrs=lrs,
         )
         metrics = {"loss": train_loss, "lr": lrs.get_last_lr()[0]}
         if debug:
@@ -196,10 +199,12 @@ def main():
             {n: torch.mean(torch.stack(vals)).item() for n, vals in losses.get_summaries()}
         )
         log_metrics(f"[{epoch}] [valid]", metrics)
-        losses.reset_summaries()
         if should_stop:
             logger.info("Stopping training")
             exit(0)
+        losses.reset_summaries()
+        lrs.step()
+        ic([group["lr"] for group in opt.param_groups])
     test_loss = run_epoch(
         model=model,
         epoch=epoch,
@@ -223,7 +228,6 @@ def run_epoch(
     opt: Optimizer,
     losses: Loss,
     summary_dir: str,
-    lrs: Optional[lr_scheduler._LRScheduler] = None,
 ) -> float:
     global debug
 
@@ -244,6 +248,7 @@ def run_epoch(
     model.train(mode=is_train)
     losses.store_losses = debug or not is_train
     max_steps = loader.len(split) - 1
+    ic(loader.len(split))
     seed = epoch if is_train else 42
     n_nans = 0
     logger.info("Dataloader len: {}".format(loader.len(split)))
@@ -310,11 +315,6 @@ def run_epoch(
             if torch.isnan(l_mean):
                 check_finite_module(model)
             l_dict = {"loss": l_mean.item()}
-            if is_train and lrs is not None:
-                try:
-                    l_dict["lr"] = lrs.get_last_lr()[0]
-                except AttributeError:
-                    pass
             if debug:
                 l_dict.update(
                     {
@@ -360,7 +360,7 @@ def load_opt(
 ) -> torch.optim.Optimizer:
     lr = config("LR", 1e-4, float, section="train")
     decay = config("WEIGHT_DECAY", 1e-3, float, section="train")
-    optimizer = config("OPTIMIZER", "adamw", str, section="train").lower()
+    optimizer = config("OPTIMIZER", "adam", str, section="train").lower()
     if mask_only:
         params = []
         for n, p in model.named_parameters():
@@ -371,9 +371,9 @@ def load_opt(
     else:
         params = model.parameters()
     if optimizer == "adamw":
-        opt = AdamW(params, lr=lr, weight_decay=decay)
+        opt = AdamW(params, lr=lr, weight_decay=decay, betas=(0.9, 0.98))
     elif optimizer == "adam":
-        opt = Adam(params, lr=lr, weight_decay=decay)
+        opt = Adam(params, lr=lr, weight_decay=decay, betas=(0.9, 0.98))
     elif optimizer == "rmsprop":
         opt = RMSprop(params, lr=lr, weight_decay=decay)
     else:
