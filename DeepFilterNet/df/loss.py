@@ -148,7 +148,10 @@ class SpectralLoss(nn.Module):
     f_c: Final[float]
 
     def __init__(
-        self, gamma: float = 1, factor_magnitude: float = 1, factor_complex: float = 1,
+        self,
+        gamma: float = 1,
+        factor_magnitude: float = 1,
+        factor_complex: float = 1,
     ):
         super().__init__()
         self.gamma = gamma
