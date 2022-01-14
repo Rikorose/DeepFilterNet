@@ -822,12 +822,7 @@ impl<'a> DatasetBuilder<'a> {
         for cfg in self.datasets.drain(..) {
             let name = cfg.filename();
             let path = Path::new(self.ds_dir).join(name);
-            if (!path.is_file())
-                || match path.read_link() {
-                    Err(_) => false,
-                    Ok(p) => !p.is_file(),
-                }
-            {
+            if (!path.is_file()) && path.read_link().is_err() {
                 eprintln!("Dataset {:?} not found. Skipping.", path);
                 continue;
             }

@@ -446,7 +446,6 @@ impl RandReverbSim {
     where
         F: FnOnce() -> std::result::Result<Array2<f32>, Box<dyn std::error::Error>>,
     {
-        dbg!(self.prob_noise, self.prob_speech);
         if self.prob_noise == 0. && self.prob_speech == 0. {
             return Ok(None);
         }
@@ -462,7 +461,6 @@ impl RandReverbSim {
         let mut rng = thread_rng()?;
         let apply_speech = self.prob_speech > rng.gen_range(0f32..1f32);
         let apply_noise = self.prob_noise > rng.gen_range(0f32..1f32);
-        dbg!(apply_speech, apply_noise);
         if !(apply_speech || apply_noise) {
             return Ok(None);
         }
