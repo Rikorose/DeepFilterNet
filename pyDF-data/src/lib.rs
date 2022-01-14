@@ -24,6 +24,7 @@ struct _TdDataLoader {
 struct _FdDataLoader {
     loader: DataLoader<Complex32>,
     finished: bool,
+    cur_id: isize,
 }
 
 // TODO: Does not work due to pyo3 restrictions; instead return tuples
@@ -257,11 +258,13 @@ impl _FdDataLoader {
         Ok(_FdDataLoader {
             loader,
             finished: false,
+            cur_id: -1,
         })
     }
 
     fn start_epoch(&mut self, split: &str, seed: usize) -> PyResult<()> {
         self.finished = false;
+        self.cur_id = -1;
         match self.loader.start_epoch(split, seed) {
             Err(e) => Err(PyValueError::new_err(e.to_string())),
             Ok(()) => Ok(()),
@@ -274,6 +277,10 @@ impl _FdDataLoader {
         }
         match self.loader.get_batch::<Complex32>().to_py_err()? {
             Some(batch) => {
+                debug_assert_eq!(&batch.ids, &sort(batch.ids.clone()));
+                let new_id = *batch.ids.iter().max().unwrap() as isize;
+                debug_assert_eq!(new_id, self.cur_id + batch.batch_size() as isize);
+                self.cur_id = new_id;
                 let erb = batch.feat_erb.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
                 let spec = batch.feat_spec.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
                 Ok((
@@ -308,6 +315,17 @@ impl _FdDataLoader {
     fn dataset_len(&self, split: &str) -> usize {
         self.loader.dataset_len(split)
     }
+}
+
+fn sort<A, T>(mut array: A) -> A
+where
+    A: AsMut<[T]>,
+    T: Ord,
+{
+    let slice = array.as_mut();
+    slice.sort();
+
+    array
 }
 
 trait ResultExt<T> {

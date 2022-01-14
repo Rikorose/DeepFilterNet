@@ -350,7 +350,11 @@ where
     pub fn len_of<S: Into<Split>>(&self, split: S) -> usize {
         let split = split.into();
         let bs = self.batch_size(&split);
-        self.dataset_len(split) / bs
+        if self.drop_last {
+            self.dataset_len(split) / bs
+        } else {
+            (self.dataset_len(split) as f32 / bs as f32).ceil() as usize
+        }
     }
 
     pub fn batch_size(&self, split: &Split) -> usize {
@@ -631,10 +635,10 @@ impl<T> DsBatch<T>
 where
     T: Data,
 {
-    fn batch_size(&self) -> usize {
+    pub fn batch_size(&self) -> usize {
         self.speech.len_of(Axis(0))
     }
-    fn sample_len(&self) -> usize {
+    pub fn sample_len(&self) -> usize {
         self.speech.len_of(Axis(2))
     }
 }
