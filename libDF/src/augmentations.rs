@@ -35,7 +35,7 @@ pub trait Transform {
     fn default_with_prob(p: f32) -> Self
     where
         Self: Sized;
-    fn box_clone(&self) -> Box<dyn Transform>;
+    fn box_clone(&self) -> Box<dyn Transform + Send>;
 }
 
 impl Clone for Box<dyn Transform> {
@@ -45,13 +45,13 @@ impl Clone for Box<dyn Transform> {
 }
 
 pub struct Compose {
-    transforms: Vec<Box<dyn Transform>>,
+    transforms: Vec<Box<dyn Transform + Send>>,
 }
 unsafe impl Send for Compose {}
 unsafe impl Sync for Compose {}
 
 impl Compose {
-    pub fn new(transforms: Vec<Box<dyn Transform>>) -> Self {
+    pub fn new(transforms: Vec<Box<dyn Transform + Send>>) -> Self {
         Compose { transforms }
     }
 
@@ -65,7 +65,7 @@ impl Compose {
 impl Clone for Compose {
     fn clone(&self) -> Self {
         Compose {
-            transforms: self.transforms.clone(),
+            transforms: self.transforms.iter().map(|t| t.box_clone()).collect(),
         }
     }
 }
@@ -101,7 +101,7 @@ impl Transform for RandLFilt {
     fn default_with_prob(p: f32) -> Self {
         Self::new(p, -3. / 8., 3. / 8.)
     }
-    fn box_clone(&self) -> Box<dyn Transform> {
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
 }
@@ -170,7 +170,7 @@ impl Transform for RandEQ {
             q_high: 1.5,
         }
     }
-    fn box_clone(&self) -> Box<dyn Transform> {
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
 }
@@ -286,7 +286,7 @@ impl Transform for RandResample {
             chunk_size: 1024,
         }
     }
-    fn box_clone(&self) -> Box<dyn Transform> {
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
 }
@@ -309,7 +309,7 @@ impl Transform for RandRemoveDc {
     fn default_with_prob(p: f32) -> Self {
         RandRemoveDc { prob: p }
     }
-    fn box_clone(&self) -> Box<dyn Transform> {
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
 }
