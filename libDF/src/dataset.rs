@@ -463,6 +463,24 @@ where
         if self.fill_thread.is_some() {
             self.join_fill_thread()?;
         }
+        // Check whether we need to regenerate. Typically only required for a custom sampling factor.
+        for split in Split::iter() {
+            if self.get_ds_arc(split).need_generate_keys() {
+                let mut ds = match Arc::try_unwrap(
+                    match split {
+                        Split::Train => self.ds_train.take(),
+                        Split::Valid => self.ds_valid.take(),
+                        Split::Test => self.ds_test.take(),
+                    }
+                    .unwrap(),
+                ) {
+                    Ok(ds) => ds,
+                    Err(_) => panic!("Could not regain ownership over dataset"),
+                };
+                ds.generate_keys()?;
+                self.set_ds(split, ds);
+            }
+        }
         // Output buffers for ordering analogue to self.idcs
         self.out_buf = BTreeMap::new();
         self.cur_out_idx = 0;
@@ -794,6 +812,8 @@ where
     }
     fn max_sample_len(&self) -> usize;
     fn set_seed(&mut self, seed: u64);
+    fn need_generate_keys(&self) -> bool;
+    fn generate_keys(&mut self) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -927,7 +947,10 @@ impl<'a> DatasetBuilder<'a> {
             ns_transforms,
             reverb,
             seed,
-        })
+        };
+        // Generate inital speech/noise/rir dataset keys. May be changed at the start of each epoch.
+        ds.generate_keys()?;
+        Ok(ds)
     }
     pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
         let has_ds = self.datasets.is_some();
@@ -1044,6 +1067,14 @@ impl Dataset<Complex32> for FftDataset {
 
     fn set_seed(&mut self, seed: u64) {
         self.ds.set_seed(seed)
+    }
+
+    fn need_generate_keys(&self) -> bool {
+        self.ds.need_generate_keys()
+    }
+
+    fn generate_keys(&mut self) -> Result<()> {
+        self.ds.generate_keys()
     }
 }
 
