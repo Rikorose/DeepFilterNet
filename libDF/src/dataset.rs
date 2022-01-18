@@ -361,7 +361,9 @@ where
         };
         let batch_size_eval = batch_size_eval.unwrap_or(batch_size_train);
         Ok(DataLoader {
-            datasets,
+            ds_train: Some(Arc::new(datasets.train)),
+            ds_valid: Some(Arc::new(datasets.valid)),
+            ds_test: Some(Arc::new(datasets.test)),
             batch_size_train,
             batch_size_eval,
             num_workers,
@@ -378,8 +380,24 @@ where
         })
     }
 
+    pub fn get_ds_arc<S: Into<Split>>(&self, split: S) -> Arc<FftDataset> {
+        match split.into() {
+            Split::Train => self.ds_train.as_ref().unwrap().clone(),
+            Split::Valid => self.ds_valid.as_ref().unwrap().clone(),
+            Split::Test => self.ds_test.as_ref().unwrap().clone(),
+        }
+    }
+
+    pub fn set_ds<S: Into<Split>>(&mut self, split: S, ds: FftDataset) {
+        match split.into() {
+            Split::Train => self.ds_train.replace(Arc::new(ds)),
+            Split::Valid => self.ds_valid.replace(Arc::new(ds)),
+            Split::Test => self.ds_test.replace(Arc::new(ds)),
+        };
+    }
+
     pub fn dataset_len<S: Into<Split>>(&self, split: S) -> usize {
-        self.datasets.get(split).len()
+        self.get_ds_arc(split).len()
     }
 
     pub fn len_of<S: Into<Split>>(&self, split: S) -> usize {
@@ -414,8 +432,7 @@ where
         }
         let (out_sender, out_receiver) = sync_channel(self.num_prefech);
         self.out_receiver = Some(out_receiver);
-        let ds = Arc::clone(self.datasets.get(split));
-        // let (in_sender, in_receiver) = bounded(self.dataset_len(split));
+        let ds = self.get_ds_arc(split);
         let (in_sender, in_receiver) = unbounded();
         for idx in self.idcs.lock().unwrap().drain(..) {
             in_sender.send(idx).expect("Could not send index");
@@ -536,7 +553,7 @@ where
         } else {
             let mut batch = C::collate(
                 samples.as_mut_slice(),
-                self.datasets.get(self.current_split).max_sample_len(),
+                self.get_ds_arc(self.current_split).max_sample_len(),
             )?;
             batch.ids.extend(ids);
             debug_assert!(batch.batch_size() <= self.batch_size(&self.current_split));
@@ -1814,11 +1831,20 @@ mod tests {
                 assert_eq!(c.sampling_factor(), dataset_size as f32);
             }
             'inner: for batch_size in [1, 2, 16] {
-                let ds = Datasets::new(
-                    Arc::new(builder.clone().dataset(cfg.train.clone()).build_fft_dataset()?),
-                    Arc::new(builder.clone().dataset(cfg.valid.clone()).build_fft_dataset()?),
-                    Arc::new(builder.clone().dataset(cfg.test.clone()).build_fft_dataset()?),
-                );
+                let ds = Datasets {
+                    train: builder
+                        .clone()
+                        .dataset(cfg.split_config(Split::Train))
+                        .build_fft_dataset()?,
+                    valid: builder
+                        .clone()
+                        .dataset(cfg.split_config(Split::Valid))
+                        .build_fft_dataset()?,
+                    test: builder
+                        .clone()
+                        .dataset(cfg.split_config(Split::Valid))
+                        .build_fft_dataset()?,
+                };
                 dbg!(dataset_size, batch_size);
                 let mut loader = match DataLoader::builder(ds)
                     .num_threads(1)
