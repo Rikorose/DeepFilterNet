@@ -115,7 +115,6 @@ def main():
         batch_size_eval=bs_eval,
         num_workers=config("NUM_WORKERS", 4, int, section="train"),
         max_len_s=config("MAX_SAMPLE_LEN_S", 5.0, float, section="train"),
-        fft_dataloader=True,
         fft_size=p.fft_size,
         hop_size=p.hop_size,
         nb_erb=p.nb_erb,

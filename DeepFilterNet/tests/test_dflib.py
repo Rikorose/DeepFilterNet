@@ -105,7 +105,6 @@ def test_fft_dataloader(ds_dir):
         ds_config="assets/dataset.cfg",
         sr=p.sr,
         batch_size=1,
-        fft_dataloader=True,
         fft_size=p.fft_size,
         hop_size=p.hop_size,
         num_workers=1,
