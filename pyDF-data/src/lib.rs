@@ -1,7 +1,6 @@
 use df::augmentations::seed_from_u64;
-use df::dataset::{
-    DataLoader, DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, Split::*,
-};
+use df::dataloader::{DataLoader, DfDataloaderError};
+use df::dataset::{DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, Split::*};
 use df::Complex32;
 use ndarray::{ArrayD, ShapeError};
 use numpy::{IntoPyArray, PyArray1, PyArray4};
@@ -245,6 +244,18 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDatasetError> {
             Ok(x) => Ok(x),
             Err(e) => Err(PyRuntimeError::new_err(format!(
                 "DF dataset error: {:?}",
+                e
+            ))),
+        }
+    }
+}
+
+impl<T> ResultExt<T> for std::result::Result<T, DfDataloaderError> {
+    fn to_py_err(self) -> PyResult<T> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(e) => Err(PyRuntimeError::new_err(format!(
+                "DF dataloader error: {:?}",
                 e
             ))),
         }
