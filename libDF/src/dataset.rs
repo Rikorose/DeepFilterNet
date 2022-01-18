@@ -161,6 +161,7 @@ impl DatasetSplitConfig {
     pub fn extend(&mut self, other: DatasetSplitConfig) {
         assert_eq!(self.split, other.split);
         self.hdf5s.extend(other.hdf5s);
+    }
     pub fn is_empty(&self) -> bool {
         self.hdf5s.is_empty()
     }
@@ -849,10 +850,9 @@ impl<'a> DatasetBuilder<'a> {
         };
         // TODO: Return all sample by default and not only 10 seconds
         let max_samples: usize = (self.max_len_s.unwrap_or(10.) * self.sr as f32).round() as usize;
+        // Get dataset handles and keys. Each key is a unique String.
         let mut hdf5_handles = Vec::new();
-        let mut sp_keys: Vec<(usize, String)> = Vec::new();
-        let mut ns_keys: Vec<(usize, String)> = Vec::new();
-        let mut rir_keys: Vec<(usize, String)> = Vec::new();
+        let mut ds_keys = Vec::new();
         let mut config: Vec<Hdf5Cfg> = Vec::new();
         let mut has_rirs = false;
         for (i, cfg) in datasets.hdf5s.drain(..).enumerate() {
@@ -863,16 +863,10 @@ impl<'a> DatasetBuilder<'a> {
                 continue;
             }
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
-            let n_samples = (cfg.sampling_factor() * ds.len() as f32).round() as usize;
-            let keys: Vec<(usize, String)> =
-                ds.keys()?.iter().cycle().take(n_samples).map(|k| (i, k.clone())).collect();
-            match ds.dstype {
-                DsType::Speech => sp_keys.extend(keys),
-                DsType::Noise => ns_keys.extend(keys),
-                DsType::RIR => rir_keys.extend(keys),
             if ds.dstype == DsType::RIR {
                 has_rirs = true
             }
+            ds_keys.push((ds.dstype, i, ds.keys()?));
             hdf5_handles.push(ds);
             config.push(cfg);
         }
@@ -892,19 +886,21 @@ impl<'a> DatasetBuilder<'a> {
         ]);
         let ns_transforms = sp_transforms.clone();
         let p_reverb = self.p_reverb.unwrap_or(0.);
-        if p_reverb > 0. && rir_keys.is_empty() {
+        if p_reverb > 0. && !has_rirs {
             eprintln!("Warning: Reverb augmentation enabled but no RIRs provided!");
         }
         let reverb = RandReverbSim::new(p_reverb, self.sr);
         let seed = self.seed.unwrap_or(0);
-        Ok(TdDataset {
+        let mut ds = TdDataset {
             config,
             hdf5_handles,
             max_samples,
             sr: self.sr,
-            sp_keys,
-            ns_keys,
-            rir_keys,
+            ds_keys,
+            ds_split: datasets.split,
+            sp_keys: Vec::new(),
+            ns_keys: Vec::new(),
+            rir_keys: Vec::new(),
             snrs,
             gains,
             attenuation_range,
@@ -1035,11 +1031,13 @@ impl Dataset<Complex32> for FftDataset {
 }
 
 pub struct TdDataset {
-    config: Vec<Hdf5Cfg>,
-    hdf5_handles: Vec<Hdf5Dataset>,
-    max_samples: usize,
-    sr: usize,
-    sp_keys: Vec<(usize, String)>,
+    config: Vec<Hdf5Cfg>,                       // config
+    hdf5_handles: Vec<Hdf5Dataset>,             // Handles to access opened Hdf5 datasets
+    max_samples: usize,                         // Number of samples in time domain
+    sr: usize,                                  // Sampling rate
+    ds_keys: Vec<(DsType, usize, Vec<String>)>, // Dataset keys as a vector of [DS Type, hdf5 index, Vec<str keys>].
+    ds_split: Split,                            // Train/Valid/Test
+    sp_keys: Vec<(usize, String)>, // Pair of hdf5 index and dataset keys. Will be generated at each epoch start
     ns_keys: Vec<(usize, String)>,
     rir_keys: Vec<(usize, String)>,
     snrs: Vec<i8>,               // in dB; SNR to sample from
