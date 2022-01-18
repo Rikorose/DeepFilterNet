@@ -10,7 +10,7 @@ from loguru import logger
 from torch._utils import ExceptionWrapper
 from torch.utils.data._utils.pin_memory import _pin_memory_loop
 
-from libdfdata import _FdDataLoader, _TdDataLoader
+from libdfdata import _FdDataLoader
 
 
 class Batch:
@@ -77,7 +77,6 @@ class PytorchDataLoader:
         num_workers=None,
         pin_memory=True,
         drop_last=False,  # Drop the last batch if it contains fewer samples then batch_size
-        fft_dataloader=False,  # Following parameters are only used if fft_dataloader == True
         fft_size: int = None,  # FFT size for stft calcualtion
         hop_size: int = None,  # Hop size for stft calcualtion
         nb_erb: int = None,  # Number of ERB bands
@@ -95,46 +94,28 @@ class PytorchDataLoader:
         self.batch_size_eval = batch_size_eval
         prefetch_loader = prefetch * batch_size * num_workers
         logger.info(f"Initializing dataloader with data directory {ds_dir}")
-        if fft_dataloader:
-            assert self.fft_size is not None, "No fft_size provided"
-            self.loader = _FdDataLoader(
-                ds_dir,
-                ds_config,
-                sr,
-                max_len_s=max_len_s,
-                batch_size=batch_size,
-                batch_size_eval=batch_size_eval,
-                num_threads=num_workers,
-                fft_size=self.fft_size,
-                hop_size=hop_size,
-                nb_erb=nb_erb,
-                nb_spec=nb_spec,
-                norm_alpha=norm_alpha,
-                p_atten_lim=p_atten_lim,
-                p_reverb=p_reverb,
-                prefetch=prefetch_loader,
-                drop_last=drop_last,
-                overfit=overfit,
-                seed=seed,
-                min_nb_erb_freqs=min_nb_erb_freqs,
-            )
-        else:
-            self.loader = _TdDataLoader(
-                ds_dir,
-                ds_config,
-                sr,
-                max_len_s=max_len_s,
-                batch_size=batch_size,
-                batch_size_eval=batch_size_eval,
-                num_threads=num_workers,
-                p_atten_lim=p_atten_lim,
-                p_reverb=p_reverb,
-                prefetch=prefetch_loader,
-                drop_last=drop_last,
-                overfit=overfit,
-                seed=seed,
-                min_nb_erb_freqs=min_nb_erb_freqs,
-            )
+        assert self.fft_size is not None, "No fft_size provided"
+        self.loader = _FdDataLoader(
+            ds_dir,
+            ds_config,
+            sr,
+            max_len_s=max_len_s,
+            batch_size=batch_size,
+            batch_size_eval=batch_size_eval,
+            num_threads=num_workers,
+            fft_size=self.fft_size,
+            hop_size=hop_size,
+            nb_erb=nb_erb,
+            nb_spec=nb_spec,
+            norm_alpha=norm_alpha,
+            p_atten_lim=p_atten_lim,
+            p_reverb=p_reverb,
+            prefetch=prefetch_loader,
+            drop_last=drop_last,
+            overfit=overfit,
+            seed=seed,
+            min_nb_erb_freqs=min_nb_erb_freqs,
+        )
         self.prefetch = prefetch
         self.pin_memory = pin_memory if torch.cuda.is_available() else False
         self.idx = 0
@@ -230,6 +211,8 @@ class PytorchDataLoader:
         self.setup_data_queue()
         try:
             if self.pin_memory:
+                if self.pin_memory_thread is None:
+                    raise ValueError("pin memory thread is none.")
                 while self.pin_memory_thread.is_alive():
                     batch = self._get_batch()
                     yield batch
