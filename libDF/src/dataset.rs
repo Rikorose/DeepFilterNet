@@ -121,24 +121,52 @@ impl Hdf5Cfg {
     }
 }
 #[derive(Deserialize, Debug)]
-pub struct DatasetConfig {
+pub struct DatasetConfigJson {
     pub train: Vec<Hdf5Cfg>,
     pub valid: Vec<Hdf5Cfg>,
     pub test: Vec<Hdf5Cfg>,
 }
-impl DatasetConfig {
+impl DatasetConfigJson {
     pub fn open(path: &str) -> Result<Self> {
         let file = fs::File::open(path)?;
         let reader = BufReader::new(file);
         let cfg = serde_json::from_reader(reader)?;
         Ok(cfg)
     }
+    pub fn split_config(&self, split: Split) -> DatasetSplitConfig {
+        match split {
+            Split::Train => DatasetSplitConfig {
+                hdf5s: self.train.clone(),
+                split: Split::Train,
+            },
+            Split::Valid => DatasetSplitConfig {
+                hdf5s: self.valid.clone(),
+                split: Split::Valid,
+            },
+            Split::Test => DatasetSplitConfig {
+                hdf5s: self.test.clone(),
+                split: Split::Test,
+            },
+        }
+    }
 }
 
-pub struct Datasets<T> {
-    train: Arc<dyn Dataset<T> + Sync + Send>,
-    valid: Arc<dyn Dataset<T> + Sync + Send>,
-    test: Arc<dyn Dataset<T> + Sync + Send>,
+#[derive(Debug, Clone)]
+pub struct DatasetSplitConfig {
+    pub hdf5s: Vec<Hdf5Cfg>,
+    split: Split,
+}
+
+impl DatasetSplitConfig {
+    pub fn extend(&mut self, other: DatasetSplitConfig) {
+        assert_eq!(self.split, other.split);
+        self.hdf5s.extend(other.hdf5s);
+    pub fn is_empty(&self) -> bool {
+        self.hdf5s.is_empty()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Hdf5Cfg> {
+        self.hdf5s.iter()
+    }
 }
 
 impl<T> Datasets<T> {
@@ -163,6 +191,12 @@ pub enum Split {
     Train = 0,
     Valid = 1,
     Test = 2,
+}
+
+impl Split {
+    pub fn iter() -> impl Iterator<Item = Split> {
+        [Split::Train, Split::Valid, Split::Test].iter().cloned()
+    }
 }
 
 impl fmt::Display for Split {
@@ -749,7 +783,7 @@ pub struct DatasetBuilder<'a> {
     ds_dir: &'a str,
     sr: usize,
     fft_size: Option<usize>,
-    datasets: Vec<Hdf5Cfg>,
+    datasets: Option<DatasetSplitConfig>,
     max_len_s: Option<f32>,
     hop_size: Option<usize>,
     nb_erb: Option<usize>,
@@ -766,7 +800,7 @@ impl<'a> DatasetBuilder<'a> {
         DatasetBuilder {
             ds_dir,
             sr,
-            datasets: Vec::new(),
+            datasets: None,
             max_len_s: None,
             fft_size: None,
             hop_size: None,
@@ -781,7 +815,7 @@ impl<'a> DatasetBuilder<'a> {
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
-        if self.datasets.is_empty() {
+        if self.datasets.is_none() {
             panic!("No datasets provided")
         }
         let ds = self.clone().build_td_dataset()?;
@@ -808,18 +842,20 @@ impl<'a> DatasetBuilder<'a> {
             min_nb_freqs: self.min_nb_freqs,
         })
     }
-    pub fn build_td_dataset(mut self) -> Result<TdDataset> {
-        if self.datasets.is_empty() {
-            panic!("No datasets provided")
-        }
+    pub fn build_td_dataset(self) -> Result<TdDataset> {
+        let mut datasets = match self.datasets {
+            None => panic!("No datasets provided"),
+            Some(ds) => ds,
+        };
+        // TODO: Return all sample by default and not only 10 seconds
         let max_samples: usize = (self.max_len_s.unwrap_or(10.) * self.sr as f32).round() as usize;
         let mut hdf5_handles = Vec::new();
         let mut sp_keys: Vec<(usize, String)> = Vec::new();
         let mut ns_keys: Vec<(usize, String)> = Vec::new();
         let mut rir_keys: Vec<(usize, String)> = Vec::new();
         let mut config: Vec<Hdf5Cfg> = Vec::new();
-        let mut i = 0;
-        for cfg in self.datasets.drain(..) {
+        let mut has_rirs = false;
+        for (i, cfg) in datasets.hdf5s.drain(..).enumerate() {
             let name = cfg.filename();
             let path = Path::new(self.ds_dir).join(name);
             if (!path.is_file()) && path.read_link().is_err() {
@@ -834,10 +870,11 @@ impl<'a> DatasetBuilder<'a> {
                 DsType::Speech => sp_keys.extend(keys),
                 DsType::Noise => ns_keys.extend(keys),
                 DsType::RIR => rir_keys.extend(keys),
+            if ds.dstype == DsType::RIR {
+                has_rirs = true
             }
             hdf5_handles.push(ds);
             config.push(cfg);
-            i += 1;
         }
         if hdf5_handles.is_empty() {
             return Err(DfDatasetError::NoDatasetFoundError);
@@ -879,8 +916,13 @@ impl<'a> DatasetBuilder<'a> {
             seed,
         })
     }
-    pub fn dataset(mut self, datasets: Vec<Hdf5Cfg>) -> Self {
-        self.datasets.extend(datasets);
+    pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
+        let has_ds = self.datasets.is_some();
+        if has_ds {
+            self.datasets.as_mut().unwrap().extend(datasets)
+        } else {
+            self.datasets = Some(datasets)
+        }
         self
     }
     pub fn max_len(mut self, max_len_s: f32) -> Self {
@@ -1219,9 +1261,53 @@ impl Dataset<f32> for TdDataset {
     fn set_seed(&mut self, seed: u64) {
         self.seed = seed
     }
+
+    fn need_generate_keys(&self) -> bool {
+        if self.sp_keys.is_empty() {
+            return true;
+        }
+        if self.ds_split == Split::Train {
+            for (_, hdf5_idx, _) in self.ds_keys.iter() {
+                let f = self.config[*hdf5_idx].sampling_factor();
+                dbg!(f);
+                // if not a natural number, then we need to regenerate.
+                if f != f.round() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn generate_keys(&mut self) -> Result<()> {
+        self.sp_keys.clear();
+        self.ns_keys.clear();
+        self.rir_keys.clear();
+
+        for (dstype, hdf5_idx, keys) in self.ds_keys.iter() {
+            let len = self.hdf5_handles[*hdf5_idx].len();
+            let n_samples =
+                (self.config[*hdf5_idx].sampling_factor() * len as f32).round() as usize;
+            let mut keys = keys.clone();
+            if self.ds_split == Split::Train {
+                keys.shuffle(&mut thread_rng()?)
+            }
+            let keys: Vec<(usize, String)> =
+                keys.iter().cycle().take(n_samples).map(|k| (*hdf5_idx, k.clone())).collect();
+            match dstype {
+                DsType::Speech => self.sp_keys.extend(keys),
+                DsType::Noise => self.ns_keys.extend(keys),
+                DsType::RIR => self.rir_keys.extend(keys),
+            }
+        }
+        dbg!(self.sp_keys.len());
+        dbg!(self.ns_keys.len());
+        dbg!(self.rir_keys.len());
+        Ok(())
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone, Copy)]
 pub enum DsType {
     Speech = 0,
     Noise = 1,
@@ -1719,7 +1805,7 @@ mod tests {
         let norm_alpha = None;
         let sr = 48000;
         let ds_dir = "../assets/";
-        let mut cfg = DatasetConfig::open("../assets/dataset.cfg")?;
+        let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
         let split = Split::Train;
         let builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
