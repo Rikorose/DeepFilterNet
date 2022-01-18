@@ -170,15 +170,14 @@ impl DatasetSplitConfig {
     }
 }
 
-impl<T> Datasets<T> {
-    pub fn new(
-        train: Arc<dyn Dataset<T> + Sync + Send>,
-        valid: Arc<dyn Dataset<T> + Sync + Send>,
-        test: Arc<dyn Dataset<T> + Sync + Send>,
-    ) -> Self {
-        Datasets { train, valid, test }
-    }
-    fn get<S: Into<Split>>(&self, split: S) -> &Arc<dyn Dataset<T> + Sync + Send> {
+pub struct Datasets {
+    train: FftDataset,
+    valid: FftDataset,
+    test: FftDataset,
+}
+
+impl Datasets {
+    fn get<S: Into<Split>>(&self, split: S) -> &FftDataset {
         match split.into() {
             Split::Train => &self.train,
             Split::Valid => &self.valid,
@@ -221,11 +220,10 @@ impl From<&str> for Split {
     }
 }
 
-pub struct DataLoader<T>
-where
-    T: Data,
-{
-    datasets: Datasets<T>,
+pub struct DataLoader {
+    ds_train: Option<Arc<FftDataset>>, // Option is needed to retake ownership via option.take()
+    ds_valid: Option<Arc<FftDataset>>,
+    ds_test: Option<Arc<FftDataset>>,
     batch_size_train: usize,
     batch_size_eval: usize,
     num_workers: usize,
@@ -233,8 +231,8 @@ where
     idcs: Arc<Mutex<VecDeque<(usize, isize)>>>,
     current_split: Split,
     fill_thread: Option<thread::JoinHandle<Result<()>>>,
-    out_receiver: Option<Receiver<(usize, Result<Sample<T>>)>>,
-    out_buf: BTreeMap<usize, Sample<T>>,
+    out_receiver: Option<Receiver<(usize, Result<Sample<Complex32>>)>>,
+    out_buf: BTreeMap<usize, Sample<Complex32>>,
     cur_out_idx: usize,
     drop_last: bool,
     drained: bool,
@@ -242,11 +240,8 @@ where
 }
 
 #[derive(Default)]
-pub struct DataLoaderBuilder<T>
-where
-    T: Data,
-{
-    _ds: Option<Datasets<T>>,
+pub struct DataLoaderBuilder {
+    _ds: Option<Datasets>,
     _batch_size: Option<usize>,
     _batch_size_eval: Option<usize>,
     _prefetch: Option<usize>,
@@ -255,12 +250,9 @@ where
     _overfit: Option<bool>,
 }
 
-impl<T> DataLoaderBuilder<T>
-where
-    T: Data,
-{
-    pub fn new(ds: Datasets<T>) -> Self {
-        DataLoaderBuilder::<T> {
+impl DataLoaderBuilder {
+    pub fn new(ds: Datasets) -> Self {
+        DataLoaderBuilder {
             _ds: Some(ds),
             _batch_size: None,
             _batch_size_eval: None,
@@ -311,7 +303,7 @@ where
         }
         Ok(())
     }
-    pub fn build(self) -> Result<DataLoader<T>> {
+    pub fn build(self) -> Result<DataLoader> {
         let bs_train = self._batch_size.unwrap_or(1);
         self.check_dataset_size(bs_train)?;
         let prefetch = self._prefetch.unwrap_or(bs_train * self._num_threads.unwrap_or(4) * 2);
@@ -328,15 +320,12 @@ where
     }
 }
 
-impl<T> DataLoader<T>
-where
-    T: Data,
-{
-    pub fn builder(ds: Datasets<T>) -> DataLoaderBuilder<T> {
+impl DataLoader {
+    pub fn builder(ds: Datasets) -> DataLoaderBuilder {
         DataLoaderBuilder::new(ds)
     }
     pub fn new(
-        datasets: Datasets<T>,
+        datasets: Datasets,
         batch_size_train: usize,
         batch_size_eval: Option<usize>,
         num_prefech: usize,
@@ -509,9 +498,9 @@ where
         Ok(())
     }
 
-    pub fn get_batch<C>(&mut self) -> Result<Option<DsBatch<T>>>
+    pub fn get_batch<C>(&mut self) -> Result<Option<DsBatch<Complex32>>>
     where
-        C: Collate<T>,
+        C: Collate<Complex32>,
     {
         let bs = self.batch_size(&self.current_split);
         let mut samples = Vec::with_capacity(bs);
@@ -676,10 +665,7 @@ impl Collate<Complex32> for Complex32 {
     }
 }
 
-impl<T> Drop for DataLoader<T>
-where
-    T: Data,
-{
+impl Drop for DataLoader {
     fn drop(&mut self) {
         self.join_fill_thread().unwrap(); // Stop out_receiver and join fill thread
     }
