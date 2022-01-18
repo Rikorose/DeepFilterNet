@@ -171,9 +171,9 @@ impl DatasetSplitConfig {
 }
 
 pub struct Datasets {
-    train: FftDataset,
-    valid: FftDataset,
-    test: FftDataset,
+    pub train: FftDataset,
+    pub valid: FftDataset,
+    pub test: FftDataset,
 }
 
 impl Datasets {
