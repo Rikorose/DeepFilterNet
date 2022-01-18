@@ -773,7 +773,6 @@ impl Dataset<f32> for TdDataset {
         if self.ds_split == Split::Train {
             for (_, hdf5_idx, _) in self.ds_keys.iter() {
                 let f = self.config[*hdf5_idx].sampling_factor();
-                dbg!(f);
                 // if not a natural number, then we need to regenerate.
                 if f != f.round() {
                     return true;
@@ -804,9 +803,6 @@ impl Dataset<f32> for TdDataset {
                 DsType::RIR => self.rir_keys.extend(keys),
             }
         }
-        dbg!(self.sp_keys.len());
-        dbg!(self.ns_keys.len());
-        dbg!(self.rir_keys.len());
         Ok(())
     }
 }
