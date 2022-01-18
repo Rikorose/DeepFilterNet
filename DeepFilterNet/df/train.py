@@ -106,6 +106,7 @@ def main():
     bs: int = config("BATCH_SIZE", 1, int, section="train")
     bs_eval: int = config("BATCH_SIZE_EVAL", 0, int, section="train")
     bs_eval = bs_eval if bs_eval > 0 else bs
+    overfit = config("OVERFIT", False, bool, section="train")
     dataloader = DataLoader(
         ds_dir=args.data_dir,
         ds_config=args.data_config_file,
@@ -123,7 +124,7 @@ def main():
         p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
         prefetch=10,
-        overfit=config("OVERFIT", False, bool, section="train"),
+        overfit=overfit,
         seed=seed,
         min_nb_erb_freqs=p.min_nb_freqs,
     )
@@ -158,6 +159,7 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
+            n_iter=1 if overfit else None,
         )
         metrics = {"loss": val_loss}
         metrics.update(
@@ -198,6 +200,7 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
+            n_iter=1 if overfit else None,
         )
         metrics = {"loss": val_loss}
         metrics.update(
@@ -233,6 +236,7 @@ def run_epoch(
     opt: Optimizer,
     losses: Loss,
     summary_dir: str,
+    n_iter: Optional[int] = None,
 ) -> float:
     global debug
 
@@ -338,6 +342,8 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
+        if n_iter is not None and i >= n_iter:
+            break
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     except UnboundLocalError as err:
