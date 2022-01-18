@@ -1,24 +1,15 @@
-use std::collections::BTreeMap;
-use std::collections::VecDeque;
 use std::fmt;
 use std::fs;
 use std::io::{BufReader, Cursor};
 use std::ops::Range;
 use std::path::Path;
-use std::sync::mpsc::{sync_channel, Receiver};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
-use crossbeam_channel::unbounded;
 use hdf5::{types::VarLenUnicode, File};
 use lewton::inside_ogg::OggStreamReader;
 use ndarray::{prelude::*, Slice};
 use ogg::reading::PacketReader as OggPacketReader;
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
-use rayon;
-use rayon::{current_num_threads, prelude::*};
 use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
@@ -29,26 +20,12 @@ type Result<T> = std::result::Result<T, DfDatasetError>;
 
 #[derive(Error, Debug)]
 pub enum DfDatasetError {
-    #[error("Dataloading Timeout")]
-    TimeoutError,
     #[error("No Hdf5 datasets found")]
     NoDatasetFoundError,
     #[error("No Hdf5 dataset type found")]
     Hdf5DsTypeNotFoundError,
     #[error("{codec:?} codec not supported for file {file:?}")]
     CodecNotSupportedError { codec: Codec, file: String },
-    #[error("Channels not initialized. Have you already called start_epoch()?")]
-    ChannelsNotInitializedError,
-    #[error(
-        "Dataset {split} size ({dataset_size}) smaller than batch size ({batch_size}). Try increasing the dataset sampling factor or decreasing the batch size."
-    )]
-    DatasetTooSmall {
-        split: Split,
-        dataset_size: usize,
-        batch_size: usize,
-    },
-    #[error("Dataset Drained")]
-    DatasetDrained,
     #[error("Unsupported during PCM decode: {0}")]
     PcmUnspportedDimension(usize),
     #[error("Wav Reader Error")]
@@ -60,8 +37,6 @@ pub enum DfDatasetError {
     },
     #[error("Data Processing Error: {0:?}")]
     DataProcessingError(String),
-    #[error("Multithreading Send Error: {0:?}")]
-    SendError(String),
     #[error("DF Transforms Error")]
     TransformError(#[from] crate::transforms::TransformError),
     #[error("DF Augmentation Error")]
@@ -78,20 +53,10 @@ pub enum DfDatasetError {
     IoError(#[from] std::io::Error),
     #[error("Json Decoding Error")]
     JsonDecode(#[from] serde_json::Error),
-    #[error("Threadpool Builder Error")]
-    ThreadPoolBuildError(#[from] rayon::ThreadPoolBuildError),
     #[error("Vorbis Decode Error")]
     VorbisError(#[from] lewton::VorbisError),
     #[error("Ogg Decode Error")]
     OggReadError(#[from] ogg::reading::OggReadError),
-    #[error("Thread Join Error: {0:?}")]
-    ThreadJoinError(String),
-}
-
-impl<T> From<std::sync::mpsc::SendError<T>> for DfDatasetError {
-    fn from(error: std::sync::mpsc::SendError<T>) -> Self {
-        DfDatasetError::SendError(error.to_string())
-    }
 }
 
 type Signal = Array2<f32>;
@@ -177,7 +142,7 @@ pub struct Datasets {
 }
 
 impl Datasets {
-    fn get<S: Into<Split>>(&self, split: S) -> &FftDataset {
+    pub fn get<S: Into<Split>>(&self, split: S) -> &FftDataset {
         match split.into() {
             Split::Train => &self.train,
             Split::Valid => &self.valid,
@@ -217,499 +182,6 @@ impl From<&str> for Split {
             "test" => Split::Test,
             s => panic!("Split '{}' does not exist.", s),
         }
-    }
-}
-
-pub struct DataLoader {
-    ds_train: Option<Arc<FftDataset>>, // Option is needed to retake ownership via option.take()
-    ds_valid: Option<Arc<FftDataset>>,
-    ds_test: Option<Arc<FftDataset>>,
-    batch_size_train: usize,
-    batch_size_eval: usize,
-    num_workers: usize,
-    num_prefech: usize,
-    idcs: Arc<Mutex<VecDeque<(usize, isize)>>>,
-    current_split: Split,
-    fill_thread: Option<thread::JoinHandle<Result<()>>>,
-    out_receiver: Option<Receiver<(usize, Result<Sample<Complex32>>)>>,
-    out_buf: BTreeMap<usize, Sample<Complex32>>,
-    cur_out_idx: usize,
-    drop_last: bool,
-    drained: bool,
-    overfit: bool,
-}
-
-#[derive(Default)]
-pub struct DataLoaderBuilder {
-    _ds: Option<Datasets>,
-    _batch_size: Option<usize>,
-    _batch_size_eval: Option<usize>,
-    _prefetch: Option<usize>,
-    _num_threads: Option<usize>,
-    _drop_last: Option<bool>,
-    _overfit: Option<bool>,
-}
-
-impl DataLoaderBuilder {
-    pub fn new(ds: Datasets) -> Self {
-        DataLoaderBuilder {
-            _ds: Some(ds),
-            _batch_size: None,
-            _batch_size_eval: None,
-            _prefetch: None,
-            _num_threads: None,
-            _drop_last: None,
-            _overfit: None,
-        }
-    }
-    pub fn batch_size(mut self, batch_size: usize) -> Self {
-        self._batch_size = Some(batch_size);
-        self
-    }
-    pub fn batch_size_eval(mut self, batch_size: usize) -> Self {
-        self._batch_size_eval = Some(batch_size);
-        self
-    }
-    pub fn prefetch(mut self, prefetch: usize) -> Self {
-        self._prefetch = Some(prefetch);
-        self
-    }
-    pub fn num_threads(mut self, num_threads: usize) -> Self {
-        self._num_threads = Some(num_threads);
-        self
-    }
-    pub fn overfit(mut self, overfit: bool) -> Self {
-        self._overfit = Some(overfit);
-        self
-    }
-    pub fn drop_last(mut self, drop_last: bool) -> Self {
-        self._drop_last = Some(drop_last);
-        self
-    }
-    fn check_dataset_size(&self, bs_train: usize) -> Result<()> {
-        for split in [Split::Train, Split::Valid, Split::Test] {
-            let batch_size = match split {
-                Split::Train => bs_train,
-                _ => self._batch_size_eval.unwrap_or(bs_train),
-            };
-            let dataset_size = self._ds.as_ref().unwrap().get(split).len();
-            if dataset_size < batch_size {
-                return Err(DfDatasetError::DatasetTooSmall {
-                    split,
-                    dataset_size,
-                    batch_size,
-                });
-            }
-        }
-        Ok(())
-    }
-    pub fn build(self) -> Result<DataLoader> {
-        let bs_train = self._batch_size.unwrap_or(1);
-        self.check_dataset_size(bs_train)?;
-        let prefetch = self._prefetch.unwrap_or(bs_train * self._num_threads.unwrap_or(4) * 2);
-        let mut loader = DataLoader::new(
-            self._ds.unwrap(),
-            bs_train,
-            self._batch_size_eval,
-            prefetch,
-            self._num_threads,
-            self._drop_last.unwrap_or(false),
-        )?;
-        loader.overfit = self._overfit.unwrap_or(false);
-        Ok(loader)
-    }
-}
-
-impl DataLoader {
-    pub fn builder(ds: Datasets) -> DataLoaderBuilder {
-        DataLoaderBuilder::new(ds)
-    }
-    pub fn new(
-        datasets: Datasets,
-        batch_size_train: usize,
-        batch_size_eval: Option<usize>,
-        num_prefech: usize,
-        num_threads: Option<usize>,
-        drop_last: bool,
-    ) -> Result<Self> {
-        // Register global rayon threadpool. It will only be used for data loader workers.
-        let mut poolbuilder = rayon::ThreadPoolBuilder::new();
-        let num_workers = num_threads.unwrap_or_else(current_num_threads);
-        poolbuilder = poolbuilder.num_threads(num_workers);
-        match poolbuilder
-            .thread_name(|idx| format!("DataLoader Worker {}", idx))
-            .build_global()
-        {
-            Ok(()) => (),
-            Err(e) => {
-                if e.to_string() != "The global thread pool has already been initialized." {
-                    return Err(e.into());
-                }
-                // else: already initialized, do not complain.
-            }
-        };
-        let batch_size_eval = batch_size_eval.unwrap_or(batch_size_train);
-        Ok(DataLoader {
-            ds_train: Some(Arc::new(datasets.train)),
-            ds_valid: Some(Arc::new(datasets.valid)),
-            ds_test: Some(Arc::new(datasets.test)),
-            batch_size_train,
-            batch_size_eval,
-            num_workers,
-            num_prefech,
-            idcs: Arc::new(Mutex::new(VecDeque::new())),
-            current_split: Split::Train,
-            fill_thread: None,
-            out_receiver: None,
-            out_buf: BTreeMap::new(),
-            cur_out_idx: 0,
-            drop_last,
-            drained: false,
-            overfit: false,
-        })
-    }
-
-    pub fn get_ds_arc<S: Into<Split>>(&self, split: S) -> Arc<FftDataset> {
-        match split.into() {
-            Split::Train => self.ds_train.as_ref().unwrap().clone(),
-            Split::Valid => self.ds_valid.as_ref().unwrap().clone(),
-            Split::Test => self.ds_test.as_ref().unwrap().clone(),
-        }
-    }
-
-    pub fn set_ds<S: Into<Split>>(&mut self, split: S, ds: FftDataset) {
-        match split.into() {
-            Split::Train => self.ds_train.replace(Arc::new(ds)),
-            Split::Valid => self.ds_valid.replace(Arc::new(ds)),
-            Split::Test => self.ds_test.replace(Arc::new(ds)),
-        };
-    }
-
-    pub fn dataset_len<S: Into<Split>>(&self, split: S) -> usize {
-        self.get_ds_arc(split).len()
-    }
-
-    pub fn len_of<S: Into<Split>>(&self, split: S) -> usize {
-        let split = split.into();
-        let bs = self.batch_size(&split);
-        if self.drop_last {
-            self.dataset_len(split) / bs
-        } else {
-            (self.dataset_len(split) as f32 / bs as f32).ceil() as usize
-        }
-    }
-
-    pub fn batch_size(&self, split: &Split) -> usize {
-        if split == &Split::Train {
-            self.batch_size_train
-        } else {
-            self.batch_size_eval
-        }
-    }
-
-    pub fn start_idx_worker(
-        &mut self,
-        split: Split,
-        epoch_seed: u64,
-    ) -> Result<thread::JoinHandle<Result<()>>> {
-        let bs = self.batch_size(&split);
-        if self.num_prefech < bs {
-            eprintln!(
-                "Warning: Prefetch size ({}) is smaller then batch size ({}).",
-                self.num_prefech, bs
-            )
-        }
-        let (out_sender, out_receiver) = sync_channel(self.num_prefech);
-        self.out_receiver = Some(out_receiver);
-        let ds = self.get_ds_arc(split);
-        let (in_sender, in_receiver) = unbounded();
-        for idx in self.idcs.lock().unwrap().drain(..) {
-            in_sender.send(idx).expect("Could not send index");
-        }
-        in_sender.send((0, -1)).expect("Could not send index");
-
-        let worker_recievers: Vec<_> = (0..self.num_workers).map(|_| in_receiver.clone()).collect();
-        let handle = thread::spawn(move || -> Result<()> {
-            worker_recievers.par_iter().try_for_each(|r| {
-                while let Ok((sample_idx, ordering_idx)) = r.recv() {
-                    if ordering_idx == -1 {
-                        out_sender.send((0, Err(DfDatasetError::DatasetDrained)))?;
-                        return Ok(());
-                    }
-                    assert!(ordering_idx >= 0);
-                    let sample = ds.get_sample(sample_idx, Some(epoch_seed));
-                    out_sender.send((ordering_idx as usize, sample))?;
-                }
-                Ok(())
-            })
-        });
-        Ok(handle)
-    }
-
-    pub fn start_epoch<S: Into<Split>>(&mut self, split: S, seed: usize) -> Result<()> {
-        let split: Split = split.into();
-        // Drop fill thread if exits
-        if self.fill_thread.is_some() {
-            self.join_fill_thread()?;
-        }
-        // Check whether we need to regenerate. Typically only required for a custom sampling factor.
-        for split in Split::iter() {
-            if self.get_ds_arc(split).need_generate_keys() {
-                let mut ds = match Arc::try_unwrap(
-                    match split {
-                        Split::Train => self.ds_train.take(),
-                        Split::Valid => self.ds_valid.take(),
-                        Split::Test => self.ds_test.take(),
-                    }
-                    .unwrap(),
-                ) {
-                    Ok(ds) => ds,
-                    Err(_) => panic!("Could not regain ownership over dataset"),
-                };
-                ds.generate_keys()?;
-                self.set_ds(split, ds);
-            }
-        }
-        // Output buffers for ordering analogue to self.idcs
-        self.out_buf = BTreeMap::new();
-        self.cur_out_idx = 0;
-        // Prepare for new epoch
-        self.current_split = split;
-        seed_from_u64(seed as u64);
-        {
-            // Recreate indices to index into the dataset and shuffle them
-            let sample_idcs: Vec<usize> = if self.overfit {
-                println!("Overfitting on one batch.");
-                let bs = self.batch_size(&split);
-                (0..bs).cycle().take(self.dataset_len(split)).collect()
-            } else {
-                let mut tmp = (0..self.dataset_len(split)).collect::<Vec<usize>>();
-                tmp.shuffle(&mut thread_rng()?);
-                tmp
-            };
-            // Concatenate an ordering index
-            let idcs: VecDeque<(usize, isize)> =
-                sample_idcs.into_iter().zip(0..self.dataset_len(split) as isize).collect();
-            self.idcs.lock().unwrap().clone_from(&idcs);
-        }
-        // Start thread to submit dataset jobs for the pool workers
-        self.fill_thread = Some(self.start_idx_worker(split, seed as u64)?);
-        self.drained = false;
-        Ok(())
-    }
-
-    pub fn get_batch<C>(&mut self) -> Result<Option<DsBatch<Complex32>>>
-    where
-        C: Collate<Complex32>,
-    {
-        let bs = self.batch_size(&self.current_split);
-        let mut samples = Vec::with_capacity(bs);
-        let target_idx = self.dataset_len(self.current_split).min(self.cur_out_idx + bs);
-        if self.cur_out_idx >= self.dataset_len(self.current_split) {
-            self.drained = true;
-        }
-        let mut tries = 0;
-        let mut ids = Vec::with_capacity(self.batch_size(&self.current_split));
-        let reciever = match self.out_receiver.as_ref() {
-            None => {
-                return Err(DfDatasetError::ChannelsNotInitializedError);
-            }
-            Some(r) => r,
-        };
-        'outer: while self.cur_out_idx < target_idx {
-            // Check if we have some buffered samples
-            if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
-                ids.push(self.cur_out_idx);
-                samples.push(s);
-                self.cur_out_idx += 1;
-            } else {
-                // Or check worker threads
-                match reciever.recv_timeout(Duration::from_millis(100)) {
-                    Err(_e) => {
-                        if tries > 1000 {
-                            return Err(DfDatasetError::TimeoutError);
-                        }
-                        tries += 1;
-                        continue 'outer;
-                    }
-                    Ok((_, Err(DfDatasetError::DatasetDrained))) => {
-                        self.drained = true;
-                    }
-                    Ok((_, Err(e))) => {
-                        return Err(e);
-                    }
-                    Ok((o_idx, Ok(s))) => {
-                        if o_idx == self.cur_out_idx {
-                            samples.push(s);
-                            ids.push(o_idx);
-                            self.cur_out_idx += 1;
-                        } else {
-                            assert!(self.out_buf.insert(o_idx, s).is_none());
-                        }
-                    }
-                }
-            }
-            tries = 0;
-        }
-
-        let out = if self.drained && (self.drop_last || samples.is_empty()) {
-            assert!(self.cur_out_idx >= target_idx);
-            assert!(self.out_buf.is_empty());
-            self.join_fill_thread()?;
-            None
-        } else {
-            let mut batch = C::collate(
-                samples.as_mut_slice(),
-                self.get_ds_arc(self.current_split).max_sample_len(),
-            )?;
-            batch.ids.extend(ids);
-            debug_assert!(batch.batch_size() <= self.batch_size(&self.current_split));
-            if !self.drained && self.cur_out_idx < target_idx {
-                debug_assert_eq!(batch.batch_size(), self.batch_size(&self.current_split));
-            }
-            Some(batch)
-        };
-        Ok(out)
-    }
-
-    pub fn join_fill_thread(&mut self) -> Result<()> {
-        // Drop out_receiver so that parallel iter in fill thread will return
-        drop(self.out_receiver.take());
-        if let Some(thread) = self.fill_thread.take() {
-            if let Err(e) =
-                thread.join().map_err(|e| DfDatasetError::ThreadJoinError(format!("{:?}", e)))?
-            {
-                match e {
-                    DfDatasetError::SendError(_) => (),
-                    // Not expected send error due to out_channel closing
-                    e => {
-                        eprint!("Error during worker shutdown: {:?}", e);
-                        return Err(e);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-pub trait Collate<T: Data> {
-    fn collate(samples: &mut [Sample<T>], len: usize) -> Result<DsBatch<T>>;
-}
-impl Collate<f32> for f32 {
-    fn collate(samples: &mut [Sample<f32>], len: usize) -> Result<DsBatch<f32>> {
-        let lengths = samples.iter().map(|s| s.speech.len_of(Axis(1))).collect();
-        let speech = unpack_pad(|s: &mut Sample<f32>| &mut s.speech, samples, len)?;
-        let noise = unpack_pad(|s: &mut Sample<f32>| &mut s.noise, samples, len)?;
-        let noisy = unpack_pad(|s: &mut Sample<f32>| &mut s.noisy, samples, len)?;
-        let max_freq = samples.iter().map(|s| s.max_freq).collect();
-        let snr = samples.iter().map(|s| s.snr).collect();
-        let gain = samples.iter().map(|s| s.gain).collect();
-        let atten = samples.iter().map(|s| s.attenuation.unwrap_or(0)).collect();
-        Ok(DsBatch {
-            speech,
-            noise,
-            noisy,
-            feat_erb: None,
-            feat_spec: None,
-            lengths,
-            max_freq,
-            snr,
-            gain,
-            atten,
-            ids: Vec::new(),
-        })
-    }
-}
-impl Collate<Complex32> for Complex32 {
-    fn collate(samples: &mut [Sample<Complex32>], len: usize) -> Result<DsBatch<Complex32>> {
-        let lengths = samples.iter().map(|s| s.speech.len_of(Axis(1))).collect();
-        let speech = unpack_pad(|s: &mut Sample<Complex32>| &mut s.speech, samples, len)?;
-        let noise = unpack_pad(|s: &mut Sample<Complex32>| &mut s.noise, samples, len)?;
-        let noisy = unpack_pad(|s: &mut Sample<Complex32>| &mut s.noisy, samples, len)?;
-        let feat_erb = if samples.first().unwrap().feat_erb.is_some() {
-            Some(unpack_pad(
-                |s: &mut Sample<Complex32>| s.feat_erb.as_mut().unwrap(),
-                samples,
-                len,
-            )?)
-        } else {
-            None
-        };
-        let feat_spec = if samples.first().unwrap().feat_spec.is_some() {
-            Some(unpack_pad(
-                |s: &mut Sample<Complex32>| s.feat_spec.as_mut().unwrap(),
-                samples,
-                len,
-            )?)
-        } else {
-            None
-        };
-        let max_freq = samples.iter().map(|s| s.max_freq).collect();
-        let snr = samples.iter().map(|s| s.snr).collect();
-        let gain = samples.iter().map(|s| s.gain).collect();
-        let atten = samples.iter().map(|s| s.attenuation.unwrap_or(0)).collect();
-        Ok(DsBatch {
-            speech,
-            noise,
-            noisy,
-            feat_erb,
-            feat_spec,
-            lengths,
-            max_freq,
-            snr,
-            gain,
-            atten,
-            ids: Vec::new(),
-        })
-    }
-}
-
-impl Drop for DataLoader {
-    fn drop(&mut self) {
-        self.join_fill_thread().unwrap(); // Stop out_receiver and join fill thread
-    }
-}
-
-pub struct DsBatch<T>
-where
-    T: Data,
-{
-    pub speech: ArrayD<T>,
-    pub noise: ArrayD<T>,
-    pub noisy: ArrayD<T>,
-    pub feat_erb: Option<ArrayD<f32>>,
-    pub feat_spec: Option<ArrayD<Complex32>>,
-    pub lengths: Array1<usize>,
-    pub max_freq: Array1<usize>,
-    pub snr: Vec<i8>,
-    pub gain: Vec<i8>,
-    pub atten: Vec<u8>, // attenuation limit in dB; 0 stands for no limit
-    pub ids: Vec<usize>,
-}
-impl<T> DsBatch<T>
-where
-    T: Data,
-{
-    pub fn batch_size(&self) -> usize {
-        self.speech.len_of(Axis(0))
-    }
-    pub fn sample_len(&self) -> usize {
-        self.speech.len_of(Axis(2))
-    }
-}
-impl<T> fmt::Debug for DsBatch<T>
-where
-    T: Data,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!(
-            "Dataset Batch with batch_size: '{}, len: '{}', snrs: '{:?}', gain: '{:?}')",
-            self.batch_size(),
-            self.sample_len(),
-            self.snr,
-            self.gain
-        ))
     }
 }
 
@@ -1693,48 +1165,6 @@ fn mix_audio_signal(
     Ok((clean_out, noise, mixture))
 }
 
-fn calc_snr_mixture<'a, I>(y: I, v: I) -> f32
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut e_clean = 0.;
-    let mut e_noise = 0.;
-    for (xy, xv) in y.into_iter().zip(v.into_iter()) {
-        e_clean += (xy - xv).powi(2);
-        e_noise += xv.powi(2);
-    }
-    10. * (e_clean / e_noise).log10()
-}
-
-fn unpack_pad<Ts, To, F>(mut f: F, samples: &mut [Sample<Ts>], len: usize) -> Result<ArrayD<To>>
-where
-    Ts: Data,
-    To: Data,
-    F: FnMut(&mut Sample<Ts>) -> &mut ArrayD<To>,
-{
-    let mut out: Vec<ArrayViewMutD<To>> = Vec::with_capacity(samples.len());
-    for sample in samples.iter_mut() {
-        let x: &mut ArrayD<To> = f(sample);
-
-        let missing = len.saturating_sub(x.len_of(Axis(1)));
-        if missing > 0 {
-            let mut shape: Vec<usize> = x.shape().into();
-            shape[1] = missing;
-            let tmp: ArrayD<To> = ArrayD::<To>::zeros(shape);
-            x.append(Axis(1), tmp.into_dimensionality()?.view())?;
-        }
-        out.push(x.view_mut());
-    }
-    let out: Vec<ArrayViewD<To>> = out.iter().map(|s| s.view()).collect();
-    if !out.windows(2).all(|w| w[0].shape() == w[1].shape()) {
-        eprintln!("Shapes do not match!");
-        for outs in out.iter() {
-            eprintln!("  shape: {:?}", outs.shape());
-        }
-    }
-    Ok(ndarray::stack(Axis(0), out.as_slice())?.into_dyn())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1820,87 +1250,6 @@ mod tests {
                         // Test the SNR difference between input and target
                         assert!((snr_inp_m + attn.unwrap_or(0.) - snr_target_c).abs() < atol);
                     }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    pub fn test_fft_dataset() -> Result<()> {
-        println!("******** Start test_data_loader() ********");
-        seed_from_u64(42);
-        let fft_size = 960;
-        let hop_size = Some(480);
-        let nb_erb = Some(32);
-        let nb_spec = None;
-        let norm_alpha = None;
-        let sr = 48000;
-        let ds_dir = "../assets/";
-        let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
-        let split = Split::Train;
-        let builder = DatasetBuilder::new(ds_dir, sr)
-            .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
-            .max_len(1.);
-        for dataset_size in [1, 2, 4, 17] {
-            for c in cfg.train.iter_mut() {
-                c.1 = dataset_size as f32; // Set sampling factor
-                assert_eq!(c.sampling_factor(), dataset_size as f32);
-            }
-            'inner: for batch_size in [1, 2, 16] {
-                let ds = Datasets {
-                    train: builder
-                        .clone()
-                        .dataset(cfg.split_config(Split::Train))
-                        .build_fft_dataset()?,
-                    valid: builder
-                        .clone()
-                        .dataset(cfg.split_config(Split::Valid))
-                        .build_fft_dataset()?,
-                    test: builder
-                        .clone()
-                        .dataset(cfg.split_config(Split::Valid))
-                        .build_fft_dataset()?,
-                };
-                dbg!(dataset_size, batch_size);
-                let mut loader = match DataLoader::builder(ds)
-                    .num_threads(1)
-                    .batch_size(batch_size)
-                    .batch_size_eval(1)
-                    .build()
-                {
-                    Ok(loader) => loader,
-                    Err(e) => match e {
-                        DfDatasetError::DatasetTooSmall {
-                            split: s_,
-                            dataset_size: ds_,
-                            batch_size: bs_,
-                        } => {
-                            if dataset_size < batch_size {
-                                continue 'inner; // This is expected
-                            }
-                            return Err(DfDatasetError::DatasetTooSmall {
-                                split: s_,
-                                dataset_size: ds_,
-                                batch_size: bs_,
-                            });
-                        }
-                        e => return Err(e),
-                    },
-                };
-                for epoch in 0..2 {
-                    loader.start_epoch(split, epoch)?;
-                    let mut n_samples = 0;
-                    loop {
-                        let batch = loader.get_batch::<Complex32>()?;
-                        if let Some(batch) = batch {
-                            n_samples += batch.batch_size();
-                            dbg!(n_samples);
-                        } else {
-                            break;
-                        }
-                    }
-                    assert_eq!(n_samples, dataset_size);
                 }
             }
         }

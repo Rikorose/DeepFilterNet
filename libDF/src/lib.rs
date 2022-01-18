@@ -18,6 +18,7 @@ pub mod transforms;
 mod reexport_dataset_modules {
     pub mod augmentations;
     pub mod dataset;
+    pub mod dataloader;
     pub mod util;
     pub mod wav_utils;
 }
