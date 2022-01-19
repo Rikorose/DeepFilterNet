@@ -182,7 +182,7 @@ class PytorchDataLoader:
                     batch = Batch(batch)
                 except RuntimeError as e:
                     self.loader.cleanup()
-                    if str(e) == "DF dataset error: TimeoutError":
+                    if str(e) == "DF dataloader error: TimeoutError":
                         logger.error("{}. Stopping epoch.".format(str(e)))
                         self.cleanup_pin_memory_thread()
                         exit(1)
