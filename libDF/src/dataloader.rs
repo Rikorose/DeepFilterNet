@@ -226,9 +226,8 @@ impl DataLoader {
         self.get_ds_arc(split).len()
     }
 
-    pub fn len_of<S: Into<Split>>(&self, split: S) -> usize {
-        let split = split.into();
-        let bs = self.batch_size(&split);
+    pub fn len_of<S: Into<Split> + Copy>(&self, split: S) -> usize {
+        let bs = self.batch_size(split);
         if self.drop_last {
             self.dataset_len(split) / bs
         } else {
@@ -236,8 +235,9 @@ impl DataLoader {
         }
     }
 
-    pub fn batch_size(&self, split: &Split) -> usize {
-        if split == &Split::Train {
+    pub fn batch_size<S: Into<Split>>(&self, split: S) -> usize {
+        let split = split.into();
+        if split == Split::Train {
             self.batch_size_train
         } else {
             self.batch_size_eval
@@ -249,7 +249,7 @@ impl DataLoader {
         split: Split,
         epoch_seed: u64,
     ) -> Result<thread::JoinHandle<Result<()>>> {
-        let bs = self.batch_size(&split);
+        let bs = self.batch_size(split);
         if self.num_prefech < bs {
             eprintln!(
                 "Warning: Prefetch size ({}) is smaller then batch size ({}).",
@@ -317,14 +317,15 @@ impl DataLoader {
             // Recreate indices to index into the dataset and shuffle them
             let sample_idcs: Vec<usize> = if self.overfit {
                 println!("Overfitting on one batch.");
-                let bs = self.batch_size(&split);
+                let bs = self.batch_size(split);
                 let n_samples = if split == Split::Train {
                     self.dataset_len(split)
                 } else {
                     // During valid/test only return one batch for each epoch.
                     // All batch will result in same metrics/loss anyways.
-                    self.batch_size(&split)
+                    bs
                 };
+                dbg!(n_samples);
                 (0..bs).cycle().take(n_samples).collect()
             } else {
                 let mut tmp = (0..self.dataset_len(split)).collect::<Vec<usize>>();
@@ -346,14 +347,14 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
-        let bs = self.batch_size(&self.current_split);
+        let bs = self.batch_size(self.current_split);
         let mut samples = Vec::with_capacity(bs);
         let target_idx = self.dataset_len(self.current_split).min(self.cur_out_idx + bs);
         if self.cur_out_idx >= self.dataset_len(self.current_split) {
             self.drained = true;
         }
         let mut tries = 0;
-        let mut ids = Vec::with_capacity(self.batch_size(&self.current_split));
+        let mut ids = Vec::with_capacity(self.batch_size(self.current_split));
         let reciever = match self.out_receiver.as_ref() {
             None => {
                 return Err(DfDataloaderError::ChannelsNotInitializedError);
@@ -407,9 +408,9 @@ impl DataLoader {
                 self.get_ds_arc(self.current_split).max_sample_len(),
             )?;
             batch.ids.extend(ids);
-            debug_assert!(batch.batch_size() <= self.batch_size(&self.current_split));
+            debug_assert!(batch.batch_size() <= self.batch_size(self.current_split));
             if !self.drained && self.cur_out_idx < target_idx {
-                debug_assert_eq!(batch.batch_size(), self.batch_size(&self.current_split));
+                debug_assert_eq!(batch.batch_size(), self.batch_size(self.current_split));
             }
             Some(batch)
         };
