@@ -158,7 +158,6 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
-            n_iter=1 if overfit else None,
         )
         metrics = {"loss": val_loss}
         metrics.update(
@@ -199,7 +198,6 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
-            n_iter=1 if overfit else None,
         )
         metrics = {"loss": val_loss}
         metrics.update(
@@ -235,7 +233,6 @@ def run_epoch(
     opt: Optimizer,
     losses: Loss,
     summary_dir: str,
-    n_iter: Optional[int] = None,
 ) -> float:
     global debug
 
@@ -341,8 +338,6 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
-        if n_iter is not None and i >= n_iter:
-            break
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     except UnboundLocalError as err:

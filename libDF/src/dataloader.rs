@@ -318,7 +318,14 @@ impl DataLoader {
             let sample_idcs: Vec<usize> = if self.overfit {
                 println!("Overfitting on one batch.");
                 let bs = self.batch_size(&split);
-                (0..bs).cycle().take(self.dataset_len(split)).collect()
+                let n_samples = if split == Split::Train {
+                    self.dataset_len(split)
+                } else {
+                    // During valid/test only return one batch for each epoch.
+                    // All batch will result in same metrics/loss anyways.
+                    self.batch_size(&split)
+                };
+                (0..bs).cycle().take(n_samples).collect()
             } else {
                 let mut tmp = (0..self.dataset_len(split)).collect::<Vec<usize>>();
                 tmp.shuffle(&mut thread_rng()?);
