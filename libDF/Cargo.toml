@@ -16,7 +16,9 @@ path = "src/lib.rs"
 default = []
 
 transforms = ["thiserror", "ndarray"]
-dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel", "serde_json", "serde", "lewton", "ogg", "hound", "rubato", "bincode"]
+dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel", "serde_json", "serde", "hound", "rubato", "bincode"]
+vorbis = ["lewton", "ogg"]
+flac = ["claxon"]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -35,6 +37,7 @@ serde_json = { version="1.0", optional=true }
 serde = { version = "1.0", features = ["derive"], optional=true }
 lewton = { version = "^0.10", optional=true }
 ogg = { version = "^0.8", optional=true }
+claxon = { version = "^0.4", optional=true }
 
 [dev-dependencies]
 rand = "0.8"

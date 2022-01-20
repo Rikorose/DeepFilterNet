@@ -1,18 +1,23 @@
 use std::fmt;
 use std::fs;
-use std::io::{BufReader, Cursor};
+use std::io::BufReader;
 use std::ops::Range;
 use std::path::Path;
 
 use hdf5::{types::VarLenUnicode, File};
-use lewton::inside_ogg::OggStreamReader;
 use ndarray::{prelude::*, Slice};
-use ogg::reading::PacketReader as OggPacketReader;
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
 use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
+
+#[cfg(feature = "flac")]
+use claxon;
+#[cfg(any(feature = "flac", feature = "vorbis"))]
+use std::io::Cursor;
+#[cfg(feature = "vorbis")]
+use {lewton::inside_ogg::OggStreamReader, ogg::reading::PacketReader as OggPacketReader};
 
 use crate::{augmentations::*, transforms::*, util::*, Complex32, DFState};
 
@@ -53,10 +58,15 @@ pub enum DfDatasetError {
     IoError(#[from] std::io::Error),
     #[error("Json Decoding Error")]
     JsonDecode(#[from] serde_json::Error),
+    #[cfg(feature = "vorbis")]
     #[error("Vorbis Decode Error")]
     VorbisError(#[from] lewton::VorbisError),
+    #[cfg(feature = "vorbis")]
     #[error("Ogg Decode Error")]
     OggReadError(#[from] ogg::reading::OggReadError),
+    #[cfg(feature = "flac")]
+    #[error("Flac Decode Error")]
+    FlacError(#[from] claxon::Error),
 }
 
 type Signal = Array2<f32>;
@@ -822,6 +832,7 @@ impl fmt::Display for DsType {
 pub enum Codec {
     PCM = 0,
     Vorbis = 1,
+    FLAC = 2,
 }
 impl Default for &Codec {
     fn default() -> Self {
@@ -885,6 +896,7 @@ impl Hdf5Dataset {
                     Ok(attr) => match attr.read_scalar::<VarLenUnicode>().unwrap().as_str() {
                         "pcm" => Some(Codec::PCM),
                         "vorbis" => Some(Codec::Vorbis),
+                        "flac" => Some(Codec::FLAC),
                         _ => None,
                     },
                 };
@@ -939,36 +951,49 @@ impl Hdf5Dataset {
             }
         }
     }
-    fn sample_len(&self, key: &str) -> Result<usize> {
-        let ds = self.group()?.dataset(key)?;
-        if *self.codec.as_ref().unwrap_or(&Codec::PCM) == Codec::Vorbis {
-            let s = *ds.shape().last().unwrap(); // length of raw buffer
-            let lastpages = ds
-                .read_slice_1d(s![s - 50 * 1024 / 8..])
-                .map_err(self.fmt_err("sample_len", key))?; // seek to last 50 kB
-            let mut rdr = OggPacketReader::new(Cursor::new(lastpages.as_slice().unwrap()));
-            // Ensure that rdr is at the start of a ogg page
-            rdr.seek_absgp(None, 0).unwrap();
-            let mut absgp = 0;
-            while let Some(pkg) = rdr.read_packet()? {
-                absgp = pkg.absgp_page();
-            }
-            Ok(absgp as usize)
-        } else {
-            Ok(*ds.shape().last().unwrap_or(&0))
-        }
+    #[cfg(not(feature = "flac"))]
+    fn sample_len_flac(&self, key: &str, _ds: hdf5::Dataset) -> Result<usize> {
+        Err(DfDatasetError::CodecNotSupportedError {
+            codec: Codec::FLAC,
+            file: key.to_string(),
+        })
     }
-    fn sample_shape(&self, key: &str) -> Result<Vec<usize>> {
+    #[cfg(feature = "flac")]
+    fn sample_len_flac(&self, key: &str, ds: hdf5::Dataset) -> Result<usize> {
+        let firstpages = ds
+            .read_slice_1d(s![0..512]) // empirically tested: 128 is too small
+            .map_err(self.fmt_err("sample_len_flac", key))?;
+        let reader = claxon::FlacReader::new(Cursor::new(firstpages.as_slice().unwrap()))?;
+        Ok(reader.streaminfo().samples.unwrap_or(0) as usize)
+    }
+    #[cfg(not(feature = "vorbis"))]
+    fn sample_len_vorbis(&self, key: &str, _ds: hdf5::Dataset) -> Result<usize> {
+        Err(DfDatasetError::CodecNotSupportedError {
+            codec: Codec::Vorbis,
+            file: key.to_string(),
+        })
+    }
+    #[cfg(feature = "vorbis")]
+    fn sample_len_vorbis(&self, key: &str, ds: hdf5::Dataset) -> Result<usize> {
+        let s = *ds.shape().last().unwrap(); // length of raw buffer
+        let lastpages = ds
+            .read_slice_1d(s![s - 50 * 1024 / 8..])
+            .map_err(self.fmt_err("sample_len_vorbis", key))?; // seek to last 50 kB
+        let mut rdr = OggPacketReader::new(Cursor::new(lastpages.as_slice().unwrap()));
+        // Ensure that rdr is at the start of a ogg page
+        rdr.seek_absgp(None, 0).unwrap();
+        let mut absgp = 0;
+        while let Some(pkg) = rdr.read_packet()? {
+            absgp = pkg.absgp_page();
+        }
+        Ok(absgp as usize)
+    }
+    pub fn sample_len(&self, key: &str) -> Result<usize> {
         let ds = self.group()?.dataset(key)?;
-        match *self.codec.as_ref().unwrap_or(&Codec::PCM) {
-            Codec::PCM => Ok(ds.shape()),
-            Codec::Vorbis => {
-                let firstpages =
-                    ds.read_slice_1d(s![..512]).map_err(self.fmt_err("sample_shape", key))?;
-                let ident_hdr =
-                    lewton::header::read_header_ident(firstpages.as_slice().unwrap()).unwrap();
-                Ok(vec![ident_hdr.audio_channels.into(), self.sample_len(key)?])
-            }
+        match self.codec.as_ref().unwrap_or(&Codec::PCM) {
+            Codec::PCM => Ok(*ds.shape().last().unwrap_or(&0)),
+            Codec::Vorbis => Ok(self.sample_len_vorbis(key, ds)?),
+            Codec::FLAC => self.sample_len_flac(key, ds),
         }
     }
     pub fn read_pcm(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
@@ -1011,7 +1036,60 @@ impl Hdf5Dataset {
         }
         Ok(arr)
     }
-    pub fn read_vorbis(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
+    #[cfg(not(feature = "flac"))]
+    fn read_flac(&self, key: &str, _r: Option<Range<usize>>) -> Result<Array2<f32>> {
+        Err(DfDatasetError::CodecNotSupportedError {
+            codec: Codec::FLAC,
+            file: key.to_string(),
+        })
+    }
+    #[cfg(feature = "flac")]
+    fn read_flac(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
+        let ds = self.group()?.dataset(key)?;
+        let encoded = ds.read_1d().map_err(self.fmt_err("read_flac", key))?;
+        let mut reader = claxon::FlacReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
+        let info = reader.streaminfo();
+        assert_eq!(
+            info.bits_per_sample, 16,
+            "Flac decoding is only supported for 16 bit samples"
+        );
+        let ch = info.channels as usize;
+        let samples = info.samples.unwrap_or_default() as usize;
+        let mut frame_reader = reader.blocks();
+        let mut out: Array2<f32> = Array2::zeros((ch, samples));
+        let mut block = claxon::Block::empty();
+        let mut idx = 0;
+        while let Some(next) = frame_reader.read_next_or_eof(block.into_buffer())? {
+            let numel = (next.len() / next.channels()) as usize;
+            debug_assert_eq!(ch, next.channels() as usize);
+            for i in 0..ch {
+                debug_assert!(out.len_of(Axis(1)) >= idx + numel);
+                let mut out_ch = out.slice_mut(s![i, idx..idx + numel]);
+                debug_assert_eq!(out_ch.len(), next.channel(i as u32).len());
+                for (i_s, o_s) in next.channel(i as u32).iter().zip(out_ch.iter_mut()) {
+                    *o_s = *i_s as f32 / std::i16::MAX as f32
+                }
+            }
+            idx += numel;
+            block = next
+        }
+
+        if let Some(r) = r {
+            out.slice_axis_inplace(Axis(1), Slice::from(r));
+        }
+        // Transpose to channels first
+        let out_len = out.len_of(Axis(1));
+        Ok(out.into_shape((ch, out_len))?)
+    }
+    #[cfg(not(feature = "vorbis"))]
+    fn read_vorbis(&self, key: &str, _r: Option<Range<usize>>) -> Result<Array2<f32>> {
+        Err(DfDatasetError::CodecNotSupportedError {
+            codec: Codec::Vorbis,
+            file: key.to_string(),
+        })
+    }
+    #[cfg(feature = "vorbis")]
+    fn read_vorbis(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
         let encoded = Cursor::new(ds.read_raw::<u8>().map_err(self.fmt_err("read_vorbis", key))?);
         let mut srr = OggStreamReader::new(encoded)?;
@@ -1039,12 +1117,14 @@ impl Hdf5Dataset {
         match *self.codec.as_ref().unwrap_or_default() {
             Codec::PCM => self.read_pcm(key, None),
             Codec::Vorbis => self.read_vorbis(key, None),
+            Codec::FLAC => self.read_flac(key, None),
         }
     }
     pub fn read_slc(&self, key: &str, r: Range<usize>) -> Result<Array2<f32>> {
         match *self.codec.as_ref().unwrap_or_default() {
             Codec::PCM => self.read_pcm(key, Some(r)),
             Codec::Vorbis => self.read_vorbis(key, Some(r)),
+            Codec::FLAC => self.read_flac(key, Some(r)),
         }
     }
 }
@@ -1161,34 +1241,153 @@ fn mix_audio_signal(
     Ok((clean_out, noise, mixture))
 }
 
+// #[cfg(feature = "flac")]
+// impl claxon::FlacReader<T: Read + Seek> {
+//     pub fn open()
+// }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::util::seed_from_u64;
+    use crate::wav_utils;
 
     fn calc_rms(x: &[f32]) -> f32 {
         let n = x.len() as f32;
         (x.iter().map(|x| x.powi(2)).sum::<f32>() * (1. / n)).sqrt()
     }
-    fn calc_snr<'a, I>(x: I, v: I) -> f32
+    /// Calculates the SNR for a given clean signal and a noisy mixture.
+    ///
+    /// Arguments
+    ///
+    /// * `y` - A clean signal iterator.
+    /// * `v` - A noise signal iterator.
+    ///
+    /// `x = s + v`, where x is the resulting mixture.
+    fn calc_snr<'a, I>(s: I, v: I) -> f32
     where
         I: IntoIterator<Item = &'a f32>,
     {
-        let e_clean = x.into_iter().fold(0f32, |acc, x| acc + x.powi(2));
+        let e_clean = s.into_iter().fold(0f32, |acc, x| acc + x.powi(2));
         let e_noise = v.into_iter().fold(0f32, |acc, x| acc + x.powi(2));
         10. * (e_clean / e_noise).log10()
     }
-    fn calc_snr_mixture<'a, I>(y: I, v: I) -> f32
+    /// Calculates the SNR for a given mixture signal and the noise signal.
+    ///
+    /// Arguments
+    ///
+    /// * `x` - A noisy mixture signal iterator.
+    /// * `v` - A noise signal iterator.
+    ///
+    /// `x = s + v`, where `y` is the clean signal component.
+    fn calc_snr_xv<'a, I>(x: I, v: I) -> f32
     where
         I: IntoIterator<Item = &'a f32>,
     {
         let mut e_clean = 0.;
         let mut e_noise = 0.;
-        for (xy, xv) in y.into_iter().zip(v.into_iter()) {
-            e_clean += (xy - xv).powi(2);
+        for (xx, xv) in x.into_iter().zip(v.into_iter()) {
+            e_clean += (xx - xv).powi(2);
             e_noise += xv.powi(2);
         }
         10. * (e_clean / e_noise).log10()
+    }
+    /// Calculates the SNR for a given clean signal and a noise/clean mixture.
+    ///
+    /// Arguments
+    ///
+    /// * `s` - A clean signal iterator.
+    /// * `x` - A noisy signal iterator.
+    ///
+    /// `x = s + v`, where v is the noise component.
+    fn calc_snr_sx<'a, I>(s: I, x: I) -> f32
+    where
+        I: IntoIterator<Item = &'a f32>,
+    {
+        let mut e_clean = 0.;
+        let mut e_noise = 0.;
+        for (xs, xx) in s.into_iter().zip(x.into_iter()) {
+            e_clean += xs.powi(2);
+            e_noise += (xx - xs).powi(2);
+        }
+        10. * (e_clean / e_noise).log10()
+    }
+    #[inline]
+    fn is_close(a: &[f32], b: &[f32], rtol: f32, atol: f32) -> Vec<bool> {
+        // like numpy
+        assert_eq!(a.len(), b.len());
+        let mut out = vec![true; b.len()];
+        for ((a_s, b_s), o) in a.iter().zip(b.iter()).zip(out.iter_mut()) {
+            *o = (a_s - b_s).abs() <= atol + rtol * b_s.abs()
+        }
+        out
+    }
+
+    #[test]
+    pub fn test_hdf5_read_pcm() -> Result<()> {
+        seed_from_u64(0);
+        let hdf5 = Hdf5Dataset::new("../assets/noise.hdf5")?;
+        for key in hdf5.keys()?.iter() {
+            dbg!(key);
+            let mut samples_raw =
+                wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
+                    .samples_arr2()?;
+            dbg!(samples_raw.shape());
+            assert_eq!(hdf5.sample_len(key)?, samples_raw.len_of(Axis(1)));
+            samples_raw.slice_axis_inplace(Axis(0), Slice::from(0..1));
+            let sample_hdf5 = hdf5.read(key)?;
+            dbg!(sample_hdf5.shape());
+            assert_eq!(sample_hdf5.shape(), samples_raw.shape());
+            assert_eq!(sample_hdf5, samples_raw);
+        }
+        Ok(())
+    }
+    #[test]
+    pub fn test_hdf5_read_vorbis() -> Result<()> {
+        seed_from_u64(0);
+        let hdf5 = Hdf5Dataset::new("../assets/noise_vorbis.hdf5")?;
+        for key in hdf5.keys()?.iter() {
+            dbg!(key);
+            let mut samples_raw =
+                wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
+                    .samples_arr2()?;
+            dbg!(samples_raw.shape());
+            assert_eq!(dbg!(hdf5.sample_len(key)?), samples_raw.len_of(Axis(1)));
+            samples_raw.slice_axis_inplace(Axis(0), Slice::from(0..1));
+            let sample_hdf5 = hdf5.read(key)?;
+            dbg!(sample_hdf5.shape());
+            assert_eq!(sample_hdf5.shape(), samples_raw.shape());
+            let snr = calc_snr_sx(samples_raw.iter(), sample_hdf5.iter());
+            dbg!(snr);
+            assert!(snr > 25.); // TODO is this valuable? Output sounds ok.
+            let filename = &str::replace(key, "assets_", "../out/").replace(".wav", "_vorbis.wav");
+            wav_utils::write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
+        }
+        Ok(())
+    }
+    #[test]
+    pub fn test_hdf5_read_flac() -> Result<()> {
+        seed_from_u64(0);
+        let hdf5 = Hdf5Dataset::new("../assets/noise_flac.hdf5")?;
+        for key in hdf5.keys()?.iter() {
+            dbg!(key);
+            let mut samples_raw =
+                wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
+                    .samples_arr2()?;
+            dbg!(samples_raw.shape());
+            assert_eq!(hdf5.sample_len(key)?, samples_raw.len_of(Axis(1)));
+            samples_raw.slice_axis_inplace(Axis(0), Slice::from(0..1));
+            let sample_hdf5 = hdf5.read(key)?;
+            dbg!(sample_hdf5.shape());
+            assert_eq!(sample_hdf5.shape(), samples_raw.shape());
+            assert_eq!(sample_hdf5, samples_raw);
+            let snr = calc_snr_sx(samples_raw.iter(), sample_hdf5.iter());
+            dbg!(snr);
+            assert!(snr > 25.); // TODO is this valuable? Output sounds ok.
+            let filename = &str::replace(key, "assets_", "../out/").replace(".wav", "_flac.wav");
+            wav_utils::write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
+        }
+        Ok(())
     }
 
     #[test]
@@ -1220,7 +1419,7 @@ mod tests {
                         }
                         dbg!(clean_rev.is_some(), gain, snr, attn);
                         // Input SNR of mixture
-                        let snr_inp_m = calc_snr_mixture(m.iter(), n.iter());
+                        let snr_inp_m = calc_snr_xv(m.iter(), n.iter());
                         assert!(
                             (snr_inp_m - snr).abs() < atol,
                             "Input SNR does not match: {}, {}",
@@ -1235,7 +1434,7 @@ mod tests {
                         } else {
                             // With enabled attenuation limiting, the target signal `c` contains
                             // some noise so that its SNR is `attn` higher then the input mixture.
-                            calc_snr_mixture(c.iter(), n.iter())
+                            calc_snr_xv(c.iter(), n.iter())
                         };
                         assert!(
                             (snr_target_c - (snr + attn.unwrap_or(0.))).abs() < atol,
