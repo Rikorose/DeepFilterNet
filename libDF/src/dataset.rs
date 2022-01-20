@@ -1318,6 +1318,8 @@ fn mix_audio_signal(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use rstest::rstest;
 
     use super::*;
@@ -1394,20 +1396,20 @@ mod tests {
         }
         out
     }
-    fn hdf5_noise_keys() -> Vec<String> {
-        vec![
-            "assets_noise_freesound_573577.wav".to_string(),
-            "assets_noise_freesound_2530.wav".to_string(),
-        ]
+    fn hdf5_noise_keys<'a>() -> BTreeSet<&'a str> {
+        BTreeSet::from([
+            "assets_noise_freesound_573577.wav",
+            "assets_noise_freesound_2530.wav",
+        ])
     }
 
     #[test]
     pub fn test_hdf5_read_pcm() -> Result<()> {
         seed_from_u64(0);
         let hdf5 = Hdf5Dataset::new("../assets/noise.hdf5")?;
-        assert_eq!(hdf5.keys()?, hdf5_noise_keys());
         for key in hdf5.keys()?.iter() {
             dbg!(key);
+            assert!(hdf5_noise_keys().contains(key.as_str()));
             let mut samples_raw =
                 wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
                     .samples_arr2()?;
@@ -1426,9 +1428,9 @@ mod tests {
     pub fn test_hdf5_read_vorbis() -> Result<()> {
         seed_from_u64(0);
         let hdf5 = Hdf5Dataset::new("../assets/noise_vorbis.hdf5")?;
-        assert_eq!(hdf5.keys()?, hdf5_noise_keys());
         for key in hdf5.keys()?.iter() {
             dbg!(key);
+            assert!(hdf5_noise_keys().contains(key.as_str()));
             let mut samples_raw =
                 wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
                     .samples_arr2()?;
@@ -1448,9 +1450,9 @@ mod tests {
     pub fn test_hdf5_read_flac() -> Result<()> {
         seed_from_u64(0);
         let hdf5 = Hdf5Dataset::new("../assets/noise_flac.hdf5")?;
-        assert_eq!(hdf5.keys()?, hdf5_noise_keys());
         for key in hdf5.keys()?.iter() {
             dbg!(key);
+            assert!(hdf5_noise_keys().contains(key.as_str()));
             let mut samples_raw =
                 wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
                     .samples_arr2()?;
