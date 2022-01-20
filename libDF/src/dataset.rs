@@ -1,9 +1,13 @@
 use std::fmt;
 use std::fs;
 use std::io::BufReader;
+#[cfg(any(feature = "flac", feature = "vorbis"))]
+use std::io::Cursor;
 use std::ops::Range;
 use std::path::Path;
 
+#[cfg(feature = "flac")]
+use claxon;
 use hdf5::{types::VarLenUnicode, File};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
@@ -11,11 +15,6 @@ use rand::Rng;
 use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
-
-#[cfg(feature = "flac")]
-use claxon;
-#[cfg(any(feature = "flac", feature = "vorbis"))]
-use std::io::Cursor;
 #[cfg(feature = "vorbis")]
 use {lewton::inside_ogg::OggStreamReader, ogg::reading::PacketReader as OggPacketReader};
 
@@ -974,6 +973,13 @@ impl Hdf5Dataset {
         })
     }
     #[cfg(feature = "vorbis")]
+    /// Read a vorbis encoded sample from an hdf5 dataset.
+    ///
+    /// Arguments:
+    ///
+    /// * `key`: String idendifier to load the dataset.
+    /// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
+    /// * `r`: Optional range in samples (time axis). `None` will return all samples.
     fn sample_len_vorbis(&self, key: &str, ds: hdf5::Dataset) -> Result<usize> {
         let s = *ds.shape().last().unwrap(); // length of raw buffer
         let lastpages = ds
@@ -996,35 +1002,76 @@ impl Hdf5Dataset {
             Codec::FLAC => self.sample_len_flac(key, ds),
         }
     }
-    pub fn read_pcm(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
+    fn match_ch<T, D: ndarray::Dimension>(
+        &self,
+        mut x: Array<T, D>,
+        ch_dim: usize,
+        ch_idx: Option<isize>,
+    ) -> Result<Array2<T>> {
+        Ok(match x.ndim() {
+            1 => {
+                // Return in channels first
+                let len = x.len_of(Axis(0));
+                x.into_shape((1, len))?
+            }
+            2 => match ch_idx {
+                Some(-1) => {
+                    let idx = thread_rng()?.gen_range(0..x.len_of(Axis(ch_dim)));
+                    x.slice_axis_inplace(Axis(ch_dim), Slice::from(idx..idx + 1));
+                    x
+                }
+                Some(idx) => {
+                    x.slice_axis_inplace(Axis(ch_dim), Slice::from(idx..idx + 1));
+                    x
+                }
+                None => x,
+            }
+            .into_dimensionality()?,
+            n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
+        })
+    }
+    /// Read a PCM encoded sample from an hdf5 dataset.
+    ///
+    /// Arguments:
+    ///
+    /// * `key`: String idendifier to load the dataset.
+    /// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
+    /// * `r`: Optional range in samples (time axis). `None` will return all samples.
+    pub fn read_pcm(
+        &self,
+        key: &str,
+        channel: Option<isize>,
+        r: Option<Range<usize>>,
+    ) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
-        let mut arr: ArrayD<f32> = if let Some(r) = r {
-            if r.end > *ds.shape().last().unwrap_or(&0) {
-                return Err(DfDatasetError::PcmRangeToLarge {
-                    range: r,
-                    size: ds.shape(),
-                });
-            }
-            match ds.ndim() {
-                1 => ds.read_slice(s![r]).map_err(self.fmt_err("read_pcm", key))?,
-                2 => ds.read_slice(s![0, r]).map_err(self.fmt_err("read_pcm", key))?, // Just take the first channel for now
-                n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
-            }
-        } else {
-            ds.read_dyn::<f32>().map_err(self.fmt_err("read_pcm", key))?
-        };
-        #[allow(clippy::branches_sharing_code)]
-        let mut arr = if arr.ndim() == 1 {
-            let len = arr.len_of(Axis(0));
-            arr.into_shape((1, len))?
-        } else {
-            let ch = arr.len_of(Axis(0));
-            if ch > 1 {
-                let idx = thread_rng()?.gen_range(0..ch);
-                arr.slice_axis_inplace(Axis(0), Slice::from(idx..idx + 1));
-            }
-            arr.into_dimensionality()?
-        };
+        let mut arr = self.match_ch(
+            if let Some(r) = r {
+                // Directly to a sliced dataset read
+                if r.end > *ds.shape().last().unwrap_or(&0) {
+                    return Err(DfDatasetError::PcmRangeToLarge {
+                        range: r,
+                        size: ds.shape(),
+                    });
+                }
+                match ds.ndim() {
+                    1 => ds.read_slice(s![r]).map_err(self.fmt_err("read_pcm", key))?,
+                    2 => match channel {
+                        Some(-1) => {
+                            let nch = ds.shape()[1];
+                            ds.read_slice(s![thread_rng()?.gen_range(0..nch), r])
+                        } // rand ch
+                        Some(channel) => ds.read_slice(s![channel, r]), // specified channel
+                        None => ds.read_slice(s![.., r]),               // all channels
+                    }
+                    .map_err(self.fmt_err("read_pcm", key))?,
+                    n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
+                }
+            } else {
+                ds.read_dyn::<f32>().map_err(self.fmt_err("read_pcm", key))?
+            },
+            0,
+            channel,
+        )?;
         match self.dtype {
             Some(DType::I16) => arr /= std::i16::MAX as f32,
             Some(DType::F32) => (),
@@ -1037,14 +1084,31 @@ impl Hdf5Dataset {
         Ok(arr)
     }
     #[cfg(not(feature = "flac"))]
-    fn read_flac(&self, key: &str, _r: Option<Range<usize>>) -> Result<Array2<f32>> {
+    fn read_flac(
+        &self,
+        key: &str,
+        _channel: Option<isize>,
+        _r: Option<Range<usize>>,
+    ) -> Result<Array2<f32>> {
         Err(DfDatasetError::CodecNotSupportedError {
             codec: Codec::FLAC,
             file: key.to_string(),
         })
     }
+    /// Read a PCM encoded sample from an hdf5 dataset.
+    ///
+    /// Arguments:
+    ///
+    /// * `key`: String idendifier to load the dataset.
+    /// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
+    /// * `r`: Optional range in samples (time axis). `None` will return all samples.
     #[cfg(feature = "flac")]
-    fn read_flac(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
+    fn read_flac(
+        &self,
+        key: &str,
+        channel: Option<isize>,
+        r: Option<Range<usize>>,
+    ) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
         let encoded = ds.read_1d().map_err(self.fmt_err("read_flac", key))?;
         let mut reader = claxon::FlacReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
@@ -1074,22 +1138,31 @@ impl Hdf5Dataset {
             block = next
         }
 
+        let mut out = self.match_ch(out, 0, channel)?;
         if let Some(r) = r {
             out.slice_axis_inplace(Axis(1), Slice::from(r));
         }
-        // Transpose to channels first
-        let out_len = out.len_of(Axis(1));
-        Ok(out.into_shape((ch, out_len))?)
+        Ok(out)
     }
     #[cfg(not(feature = "vorbis"))]
-    fn read_vorbis(&self, key: &str, _r: Option<Range<usize>>) -> Result<Array2<f32>> {
+    fn read_vorbis(
+        &self,
+        key: &str,
+        _channel: option<isize>,
+        _r: Option<Range<usize>>,
+    ) -> Result<Array2<f32>> {
         Err(DfDatasetError::CodecNotSupportedError {
             codec: Codec::Vorbis,
             file: key.to_string(),
         })
     }
     #[cfg(feature = "vorbis")]
-    fn read_vorbis(&self, key: &str, r: Option<Range<usize>>) -> Result<Array2<f32>> {
+    fn read_vorbis(
+        &self,
+        key: &str,
+        channel: Option<isize>,
+        r: Option<Range<usize>>,
+    ) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
         let encoded = Cursor::new(ds.read_raw::<u8>().map_err(self.fmt_err("read_vorbis", key))?);
         let mut srr = OggStreamReader::new(encoded)?;
@@ -1098,33 +1171,30 @@ impl Hdf5Dataset {
         while let Some(mut pck) = srr.read_dec_packet_itl()? {
             out.append(&mut pck);
         }
-        let mut out: Array2<i16> = Array2::from_shape_vec((out.len() / ch, ch), out)?;
-        if ch > 1 {
-            let idx = thread_rng()?.gen_range(0..ch);
-            out.slice_axis_inplace(Axis(1), Slice::from(idx..idx + 1));
-        }
-        debug_assert_eq!(1, out.len_of(Axis(1)));
+        // Channels last for now
+        let mut out = Array2::from_shape_vec((out.len() / ch, ch), out)?;
         if let Some(r) = r {
             out.slice_axis_inplace(Axis(0), Slice::from(r));
         }
-        let out = out.mapv(|x| x as f32 / std::i16::MAX as f32);
-        // Transpose to channels first
-        let out_len = out.len_of(Axis(0));
-        Ok(out.into_shape((1, out_len))?)
+        // Select channel
+        let out = self.match_ch(out, 1, channel)?;
+        // Transpose to channels first and convert to float
+        let out = out.t().mapv(|x| x as f32 / std::i16::MAX as f32);
+        Ok(out)
     }
 
     pub fn read(&self, key: &str) -> Result<Array2<f32>> {
         match *self.codec.as_ref().unwrap_or_default() {
-            Codec::PCM => self.read_pcm(key, None),
-            Codec::Vorbis => self.read_vorbis(key, None),
-            Codec::FLAC => self.read_flac(key, None),
+            Codec::PCM => self.read_pcm(key, Some(0), None),
+            Codec::Vorbis => self.read_vorbis(key, Some(0), None),
+            Codec::FLAC => self.read_flac(key, Some(0), None),
         }
     }
     pub fn read_slc(&self, key: &str, r: Range<usize>) -> Result<Array2<f32>> {
         match *self.codec.as_ref().unwrap_or_default() {
-            Codec::PCM => self.read_pcm(key, Some(r)),
-            Codec::Vorbis => self.read_vorbis(key, Some(r)),
-            Codec::FLAC => self.read_flac(key, Some(r)),
+            Codec::PCM => self.read_pcm(key, Some(0), Some(r)),
+            Codec::Vorbis => self.read_vorbis(key, Some(0), Some(r)),
+            Codec::FLAC => self.read_flac(key, Some(0), Some(r)),
         }
     }
 }
