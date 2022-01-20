@@ -41,11 +41,9 @@ def write_to_h5(
     if max_freq <= 0:
         max_freq = sr // 2
     compression_factor = None
-    if codec is not None and codec == "vorbis":
+    if codec is not None:
         compression_factor = 8
-    elif codec is not None and codec == "flac":
-        compression_factor = 3
-    with h5.File(file_name, "w", libver="latest") as f, torch.no_grad():
+    with h5.File(file_name, "a", libver="latest") as f, torch.no_grad():
         # Document attributes first
         f.attrs["db_id"] = int(time.time())
         f.attrs["db_name"] = os.path.basename(file_name)
@@ -55,7 +53,11 @@ def write_to_h5(
         f.attrs["codec"] = codec
         # Write encoded/decoded samples
         for key, data_dict in data.items():
-            grp = f.create_group(key)
+            try:
+                grp = f.create_group(key)
+            except ValueError:
+                logger.info(f"Found existing group {key}")
+                grp = f[key]
             dataset = PreProcessingDataset(
                 sr,
                 file_names=data_dict["files"],
@@ -71,13 +73,19 @@ def write_to_h5(
                 # Sample is a dict containing a list
                 fn = os.path.relpath(sample["file_name"][0], data_dict["working_dir"])
                 audio: np.ndarray = sample["data"][0].numpy()
+                if codec in ("flac", "vorbis"):
+                    audio = audio.squeeze()
                 if audio.shape[0] < sr / 100:  # Should be at least 100 ms
                     logger.warning(f"Audio {fn} too short: {audio.shape}. Skipping.")
                 progress = i / n_samples * 100
                 logger.info(f"{progress:2.0f}% | Writing file {fn} to the {key} dataset.")
                 if sample["n_samples"] == 0:
                     continue
-                ds = grp.create_dataset(fn.replace("/", "_"), data=audio, compression=compression)
+                ds_key = fn.replace("/", "_")
+                if ds_key in grp:
+                    logger.info(f"Found dataset {ds_key}. Replacing.")
+                    del grp[ds_key]
+                ds = grp.create_dataset(ds_key, data=audio, compression=compression)
                 ds.attrs["n_samples"] = sample["n_samples"]
                 del audio, sample
             logger.info("Added {} samples to the group {}.".format(n_samples, key))
@@ -118,7 +126,7 @@ class PreProcessingDataset(Dataset):
             else:
                 x, sr = torchaudio.load(file, normalize=False)
             if self.mono and x.shape[0] > 1:
-                x = x.mean(1, keepdim=True)
+                x = x.mean(0, keepdim=True)
             if x.dim() == 1:
                 x = x.reshape(1, -1)
         return x
