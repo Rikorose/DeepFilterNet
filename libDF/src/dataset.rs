@@ -1318,6 +1318,8 @@ fn mix_audio_signal(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
     use crate::util::seed_from_u64;
     use crate::wav_utils;
@@ -1392,11 +1394,18 @@ mod tests {
         }
         out
     }
+    fn hdf5_noise_keys() -> Vec<String> {
+        vec![
+            "assets_noise_freesound_573577.wav".to_string(),
+            "assets_noise_freesound_2530.wav".to_string(),
+        ]
+    }
 
     #[test]
     pub fn test_hdf5_read_pcm() -> Result<()> {
         seed_from_u64(0);
         let hdf5 = Hdf5Dataset::new("../assets/noise.hdf5")?;
+        assert_eq!(hdf5.keys()?, hdf5_noise_keys());
         for key in hdf5.keys()?.iter() {
             dbg!(key);
             let mut samples_raw =
@@ -1409,6 +1418,7 @@ mod tests {
             dbg!(sample_hdf5.shape());
             assert_eq!(sample_hdf5.shape(), samples_raw.shape());
             assert_eq!(sample_hdf5, samples_raw);
+            assert!(dbg!(calc_snr_sx(samples_raw.iter(), sample_hdf5.iter())) > 100.);
         }
         Ok(())
     }
@@ -1416,6 +1426,7 @@ mod tests {
     pub fn test_hdf5_read_vorbis() -> Result<()> {
         seed_from_u64(0);
         let hdf5 = Hdf5Dataset::new("../assets/noise_vorbis.hdf5")?;
+        assert_eq!(hdf5.keys()?, hdf5_noise_keys());
         for key in hdf5.keys()?.iter() {
             dbg!(key);
             let mut samples_raw =
@@ -1427,9 +1438,7 @@ mod tests {
             let sample_hdf5 = hdf5.read(key)?;
             dbg!(sample_hdf5.shape());
             assert_eq!(sample_hdf5.shape(), samples_raw.shape());
-            let snr = calc_snr_sx(samples_raw.iter(), sample_hdf5.iter());
-            dbg!(snr);
-            assert!(snr > 25.); // TODO is this valuable? Output sounds ok.
+            assert!(dbg!(calc_snr_sx(samples_raw.iter(), sample_hdf5.iter())) > 25.);
             let filename = &str::replace(key, "assets_", "../out/").replace(".wav", "_vorbis.wav");
             wav_utils::write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
         }
@@ -1439,6 +1448,7 @@ mod tests {
     pub fn test_hdf5_read_flac() -> Result<()> {
         seed_from_u64(0);
         let hdf5 = Hdf5Dataset::new("../assets/noise_flac.hdf5")?;
+        assert_eq!(hdf5.keys()?, hdf5_noise_keys());
         for key in hdf5.keys()?.iter() {
             dbg!(key);
             let mut samples_raw =
@@ -1451,15 +1461,41 @@ mod tests {
             dbg!(sample_hdf5.shape());
             assert_eq!(sample_hdf5.shape(), samples_raw.shape());
             assert_eq!(sample_hdf5, samples_raw);
-            let snr = calc_snr_sx(samples_raw.iter(), sample_hdf5.iter());
-            dbg!(snr);
-            assert!(snr > 25.); // TODO is this valuable? Output sounds ok.
+            assert!(dbg!(calc_snr_sx(samples_raw.iter(), sample_hdf5.iter())) > 100.);
             let filename = &str::replace(key, "assets_", "../out/").replace(".wav", "_flac.wav");
             wav_utils::write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
         }
         Ok(())
     }
-
+    #[rstest]
+    #[case("../assets/noise.hdf5", 3..4, 100.)]
+    #[case("../assets/noise_flac.hdf5", 3..4, 100.)]
+    #[case("../assets/noise_vorbis.hdf5", 3..4, 20.)]
+    #[should_panic(expected = "snr")]
+    #[case("../assets/noise_vorbis.hdf5", 3..4, 40.)]
+    #[should_panic(expected = "Slice end")]
+    #[case("../assets/noise.hdf5", 4..5, 0.)]
+    #[should_panic(expected = "Slice end")]
+    #[case("../assets/noise_flac.hdf5", 4..5, 0.)]
+    #[should_panic(expected = "Slice end")]
+    #[case("../assets/noise_vorbis.hdf5", 4..5, 0.)]
+    pub fn test_hdf5_slice(#[case] ds: &str, #[case] r: Range<usize>, #[case] snr: f32) {
+        seed_from_u64(0);
+        let hdf5 = Hdf5Dataset::new(ds).unwrap();
+        let key = "assets_noise_freesound_573577.wav"; // This sample has a length of approx 4.8s
+        let sr = hdf5.sr.unwrap();
+        let r = r.start * sr..r.end * sr;
+        dbg!(&r);
+        let samples_raw = wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))
+            .unwrap()
+            .samples_arr2()
+            .unwrap()
+            .slice_move(s![0..1, r.clone()]);
+        dbg!(hdf5.sample_len(key).unwrap());
+        let sample_hdf5 = hdf5.read_slc(key, r).unwrap();
+        assert_eq!(sample_hdf5.shape(), samples_raw.shape());
+        assert!(dbg!(calc_snr_sx(samples_raw.iter(), sample_hdf5.iter())) > snr);
+    }
     #[test]
     pub fn test_mix_audio_signal() -> Result<()> {
         seed_from_u64(0);
