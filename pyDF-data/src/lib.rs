@@ -205,8 +205,8 @@ impl _FdDataLoader {
         Ok(())
     }
 
-    fn len_of(&self, split: &str) -> usize {
-        self.loader.len_of(split)
+    fn dataloader_len(&self, split: &str) -> usize {
+        self.loader.dataloader_len(split)
     }
 
     fn dataset_len(&self, split: &str) -> usize {

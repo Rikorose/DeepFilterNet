@@ -161,7 +161,7 @@ class PytorchDataLoader:
             self.data_queue = self.worker_out_queue
 
     def len(self, split: str) -> int:
-        return self.loader.len_of(split)
+        return self.loader.dataloader_len(split)
 
     def __len__(self) -> int:
         """Return training length."""
