@@ -16,7 +16,7 @@ from df.utils import as_complex, resample
 HAS_OCTAVE = True
 try:
     import semetrics
-except OSError:
+except OSError or ImportError:
     HAS_OCTAVE = False
 
 try:

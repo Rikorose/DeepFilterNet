@@ -42,10 +42,18 @@ def write_to_h5(
         max_freq = sr // 2
     compression_factor = None
     if codec is not None and codec == "vorbis":
-        compression_factor = 5
+        compression_factor = 8
     elif codec is not None and codec == "flac":
         compression_factor = 3
     with h5.File(file_name, "w", libver="latest") as f, torch.no_grad():
+        # Document attributes first
+        f.attrs["db_id"] = int(time.time())
+        f.attrs["db_name"] = os.path.basename(file_name)
+        f.attrs["max_freq"] = max_freq
+        f.attrs["dtype"] = dtype
+        f.attrs["sr"] = sr
+        f.attrs["codec"] = codec
+        # Write encoded/decoded samples
         for key, data_dict in data.items():
             grp = f.create_group(key)
             dataset = PreProcessingDataset(
@@ -73,13 +81,6 @@ def write_to_h5(
                 ds.attrs["n_samples"] = sample["n_samples"]
                 del audio, sample
             logger.info("Added {} samples to the group {}.".format(n_samples, key))
-
-        f.attrs["db_id"] = int(time.time())
-        f.attrs["db_name"] = os.path.basename(file_name)
-        f.attrs["max_freq"] = max_freq
-        f.attrs["dtype"] = dtype
-        f.attrs["sr"] = sr
-        f.attrs["codec"] = codec
 
 
 class PreProcessingDataset(Dataset):
@@ -131,11 +132,18 @@ class PreProcessingDataset(Dataset):
         if self.codec == "vorbis":
             with NamedTemporaryFile(suffix=".ogg") as tf:
                 torchaudio.save(tf.name, x, self.sr, format="vorbis", compression=self.compression)
-                x = np.array(list(tf.read()), dtype=np.uint8) # Return binary buffer as numpy array
+                x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
         elif self.codec == "flac":
             with NamedTemporaryFile(suffix=".flac") as tf:
-                torchaudio.save(tf.name, x, self.sr, format="flac", compression=ic(self.compression))
-                x = np.array(list(tf.read()), dtype=np.uint8) # Return binary buffer as numpy array
+                torchaudio.save(
+                    tf.name,
+                    x,
+                    self.sr,
+                    format="flac",
+                    compression=self.compression,
+                    bits_per_sample=16,
+                )
+                x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
         else:
             x = x.numpy()
         return {"file_name": fn, "data": x, "n_samples": n_samples}
