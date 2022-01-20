@@ -223,10 +223,17 @@ impl DataLoader {
     }
 
     pub fn dataset_len<S: Into<Split>>(&self, split: S) -> usize {
-        self.get_ds_arc(split).len()
+        let split = split.into();
+        let len = self.get_ds_arc(split).len();
+        if self.overfit && split != Split::Train {
+            // During valid/test only return one batch for each epoch.
+            // All batches will be the same and result in same metrics/loss anyways.
+            return len.min(self.batch_size_eval);
+        }
+        len
     }
 
-    pub fn len_of<S: Into<Split> + Copy>(&self, split: S) -> usize {
+    pub fn dataloader_len<S: Into<Split> + Copy>(&self, split: S) -> usize {
         let bs = self.batch_size(split);
         if self.drop_last {
             self.dataset_len(split) / bs
@@ -283,7 +290,7 @@ impl DataLoader {
         Ok(handle)
     }
 
-    pub fn start_epoch<S: Into<Split>>(&mut self, split: S, seed: usize) -> Result<()> {
+    pub fn start_epoch<S: Into<Split>>(&mut self, split: S, mut epoch_seed: usize) -> Result<()> {
         let split: Split = split.into();
         // Drop fill thread if exits
         if self.fill_thread.is_some() {
@@ -312,23 +319,18 @@ impl DataLoader {
         self.cur_out_idx = 0;
         // Prepare for new epoch
         self.current_split = split;
-        seed_from_u64(seed as u64);
+        if self.overfit {
+            epoch_seed = 0;
+        }
+        seed_from_u64(epoch_seed as u64);
         {
             // Recreate indices to index into the dataset and shuffle them
+            let n_samples = self.dataset_len(split);
             let sample_idcs: Vec<usize> = if self.overfit {
                 println!("Overfitting on one batch.");
-                let bs = self.batch_size(split);
-                let n_samples = if split == Split::Train {
-                    self.dataset_len(split)
-                } else {
-                    // During valid/test only return one batch for each epoch.
-                    // All batch will result in same metrics/loss anyways.
-                    bs
-                };
-                dbg!(n_samples);
-                (0..bs).cycle().take(n_samples).collect()
+                (0..n_samples).cycle().take(n_samples).collect()
             } else {
-                let mut tmp = (0..self.dataset_len(split)).collect::<Vec<usize>>();
+                let mut tmp = (0..n_samples).collect::<Vec<usize>>();
                 tmp.shuffle(&mut thread_rng()?);
                 tmp
             };
@@ -338,7 +340,7 @@ impl DataLoader {
             self.idcs.lock().unwrap().clone_from(&idcs);
         }
         // Start thread to submit dataset jobs for the pool workers
-        self.fill_thread = Some(self.start_idx_worker(split, seed as u64)?);
+        self.fill_thread = Some(self.start_idx_worker(split, epoch_seed as u64)?);
         self.drained = false;
         Ok(())
     }

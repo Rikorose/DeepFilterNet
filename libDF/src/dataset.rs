@@ -1148,7 +1148,7 @@ impl Hdf5Dataset {
     fn read_vorbis(
         &self,
         key: &str,
-        _channel: option<isize>,
+        _channel: Option<isize>,
         _r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
         Err(DfDatasetError::CodecNotSupportedError {
