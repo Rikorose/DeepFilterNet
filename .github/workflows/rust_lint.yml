@@ -23,6 +23,7 @@ jobs:
       matrix:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check'}
+          - {command: build, rust: stable, args: '--no-default-features'}
           - {command: build, rust: stable, args: '--all-features'}
           - {command: build, rust: nightly, args: '--all-features'}
           - {command: clippy, rust: stable, args: '--all-features -- -D warnings'}
