@@ -75,8 +75,8 @@ def write_to_h5(
                 audio: np.ndarray = sample["data"][0].numpy()
                 if codec in ("flac", "vorbis"):
                     audio = audio.squeeze()
-                if audio.shape[0] < sr / 100:  # Should be at least 100 ms
-                    logger.warning(f"Audio {fn} too short: {audio.shape}. Skipping.")
+                if sample["n_samples"] < sr / 100:  # Should be at least 100 ms
+                    logger.warning(f"Short audio {fn}: {audio.shape}.")
                 progress = i / n_samples * 100
                 logger.info(f"{progress:2.0f}% | Writing file {fn} to the {key} dataset.")
                 if sample["n_samples"] == 0:
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     if not args.hdf5_db.endswith(".hdf5"):
         args.hdf5_db += ".hdf5"
 
-    init_logger()
+    init_logger("/tmp/prepare_data.log")
     valid_types = ("speech", "noise", "noisy", "rir")
     if args.type not in valid_types:
         raise ValueError(f"Dataset type must be one of {valid_types}, but got {args.type}")
