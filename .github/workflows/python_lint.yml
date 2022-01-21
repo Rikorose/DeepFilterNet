@@ -20,6 +20,7 @@ jobs:
         include:
           - {command: flake8, args: ""}
           - {command: black, args: "--check ."}
+          - {command: isort, args: ". --check --diff"}
     steps:
      - uses: actions/checkout@v2
      - uses: actions/setup-python@v2
