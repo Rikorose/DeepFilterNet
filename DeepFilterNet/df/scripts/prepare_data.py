@@ -43,7 +43,7 @@ def write_to_h5(
     compression_factor = None
     if codec is not None:
         compression_factor = 8
-    with h5.File(file_name, "a", libver="latest") as f, torch.no_grad():
+    with h5.File(file_name, "a", libver="latest", swmr=True) as f, torch.no_grad():
         # Document attributes first
         f.attrs["db_id"] = int(time.time())
         f.attrs["db_name"] = os.path.basename(file_name)

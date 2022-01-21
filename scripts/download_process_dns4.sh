@@ -66,5 +66,4 @@ for BLOB in "${BLOB_NAMES[@]}"; do
     rm -rf "$WORKING_DIR"/datasets_fullband/*
     echo "Deleting $WORKING_DIR/$BLOB"
     rm "$WORKING_DIR/$BLOB"
-    break
 done
