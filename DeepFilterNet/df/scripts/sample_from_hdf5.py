@@ -1,5 +1,6 @@
 import argparse
 import io
+import random
 
 import h5py
 import numpy as np
@@ -20,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("hdf5_file")
     parser.add_argument("--sr", type=int, default=None)
+    parser.add_argument("--random", "-r", action="store_true")
     parser.add_argument("--out-dir", "-o", type=str, default="out")
     parser.add_argument("--n-samples", "-n", type=int, default=1)
     args = parser.parse_args()
@@ -33,12 +35,16 @@ def main():
         i = 0
         codec = h5f.attrs.get("codec", "pcm")
         for group in h5f.keys():
-            for name, sample in h5f[group].items():
+            keys = list(h5f[group].keys())
+            if args.random:
+                keys = random.sample(keys, n_samples)
+            for key in keys:
+                sample: np.ndarray = h5f[key][...]
                 if codec == "vorbis":
                     sample = load_vorbis(sample)
                 elif codec == "flac":
                     sample = load_flac(sample)
-                outname = f"{args.out_dir}/{name}"
+                outname = f"{args.out_dir}/{key}"
                 if not outname.endswith(".wav"):
                     outname += ".wav"
                 print(outname)
