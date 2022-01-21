@@ -1,6 +1,7 @@
 import argparse
 import io
 import random
+import sys
 
 import h5py
 import numpy as np
@@ -29,17 +30,17 @@ def main():
     with h5py.File(args.hdf5_file, "r", libver="latest", swmr=True) as h5f:
         sr = h5f.attrs.get("sr", args.sr)
         if sr is None:
-            print("sr not found.")
+            print("sr not found.", file=sys.stderr)
             exit(1)
         n_samples = args.n_samples
         i = 0
         codec = h5f.attrs.get("codec", "pcm")
-        for group in h5f.keys():
-            keys = list(h5f[group].keys())
+        for group in h5f.values():
+            keys = list(group.keys())
             if args.random:
                 keys = random.sample(keys, n_samples)
             for key in keys:
-                sample: np.ndarray = h5f[key][...]
+                sample: np.ndarray = group[key][...]
                 if codec == "vorbis":
                     sample = load_vorbis(sample)
                 elif codec == "flac":
