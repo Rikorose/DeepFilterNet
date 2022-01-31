@@ -174,8 +174,8 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
     e_true = a * reference
     e_res = estimate - e_true
 
-    Sss = (e_true ** 2).sum()
-    Snn = (e_res ** 2).sum()
+    Sss = (e_true**2).sum()
+    Snn = (e_res**2).sum()
 
     sisdr = 10 * np.log10((eps + Sss) / (eps + Snn))
     return sisdr

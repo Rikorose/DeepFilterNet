@@ -47,14 +47,14 @@ def cosine_lr_scheduler(
 
         if t_mult != 1:
             i = math.floor(math.log(1 - cur_updates / period * (1 - t_mult), t_mult))
-            t_i = t_mult ** i * period
-            t_cur = cur_updates - (1 - t_mult ** i) / (1 - t_mult) * period
+            t_i = t_mult**i * period
+            t_cur = cur_updates - (1 - t_mult**i) / (1 - t_mult) * period
         else:
             i = math.floor(cur_updates / period)
             t_i = period
             t_cur = cur_updates - (period * i)
 
-        lr_shrink = lr_shrink_base ** i
+        lr_shrink = lr_shrink_base**i
         min_lr = min_lr_base * lr_shrink
         max_lr = max_lr_base * lr_shrink
 
