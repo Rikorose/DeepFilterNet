@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - {command: flake8, args: ""}
-          - {command: black, args: "--check ."}
+          - {command: black, args: "--check --diff ."}
           - {command: isort, args: ". --check --diff"}
     steps:
      - uses: actions/checkout@v2
