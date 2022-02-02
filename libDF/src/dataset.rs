@@ -26,8 +26,8 @@ pub enum DfDatasetError {
     NoDatasetFoundError,
     #[error("No Hdf5 dataset type found")]
     Hdf5DsTypeNotFoundError,
-    #[error("{codec:?} codec not supported for file {file:?}")]
-    CodecNotSupportedError { codec: Codec, file: String },
+    #[error("{codec:?} codec not supported in dataset {ds:?}")]
+    CodecNotSupportedError { codec: Codec, ds: String },
     #[error("Unsupported during PCM decode: {0}")]
     PcmUnspportedDimension(usize),
     #[error("Wav Reader Error")]
@@ -938,7 +938,7 @@ impl Hdf5Dataset {
     fn sample_len_flac(&self, _ds: hdf5::Dataset) -> Result<usize> {
         Err(DfDatasetError::CodecNotSupportedError {
             codec: Codec::FLAC,
-            file: key.to_string(),
+            ds: format!("{:?}", self.file),
         })
     }
     #[cfg(feature = "flac")]
@@ -955,7 +955,7 @@ impl Hdf5Dataset {
     fn sample_len_vorbis(&self, _ds: hdf5::Dataset) -> Result<usize> {
         Err(DfDatasetError::CodecNotSupportedError {
             codec: Codec::Vorbis,
-            file: key.to_string(),
+            ds: format!("{:?}", self.file),
         })
     }
     #[cfg(feature = "vorbis")]
@@ -1024,33 +1024,30 @@ impl Hdf5Dataset {
         r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
-        let mut arr = self.match_ch(
-            if let Some(r) = r {
-                // Directly to a sliced dataset read
-                if r.end > *ds.shape().last().unwrap_or(&0) {
-                    return Err(DfDatasetError::PcmRangeToLarge {
-                        range: r,
-                        size: ds.shape(),
-                    });
-                }
-                match ds.ndim() {
-                    1 => ds.read_slice(s![r])?,
-                    2 => match channel {
-                        Some(-1) => {
-                            let nch = ds.shape()[1];
-                            ds.read_slice(s![thread_rng()?.gen_range(0..nch), r])
-                        } // rand ch
-                        Some(channel) => ds.read_slice(s![channel, r]), // specified channel
-                        None => ds.read_slice(s![.., r]),               // all channels
-                    }?,
-                    n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
-                }
-            } else {
-                ds.read_dyn::<f32>()?
-            },
-            0,
-            channel,
-        )?;
+        let arr = if let Some(r) = r {
+            // Directly to a sliced dataset read
+            if r.end > *ds.shape().last().unwrap_or(&0) {
+                return Err(DfDatasetError::PcmRangeToLarge {
+                    range: r,
+                    size: ds.shape(),
+                });
+            }
+            match ds.ndim() {
+                1 => ds.read_slice(s![r])?,
+                2 => match channel {
+                    Some(-1) => {
+                        let nch = ds.shape()[1];
+                        ds.read_slice(s![thread_rng()?.gen_range(0..nch), r])
+                    } // rand ch
+                    Some(channel) => ds.read_slice(s![channel, r]), // specified channel
+                    None => ds.read_slice(s![.., r]),               // all channels
+                }?,
+                n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
+            }
+        } else {
+            ds.read_dyn::<f32>()?
+        };
+        let mut arr = self.match_ch(arr, 0, channel)?;
         match self.dtype {
             Some(DType::I16) => arr /= std::i16::MAX as f32,
             Some(DType::F32) => (),
@@ -1065,13 +1062,13 @@ impl Hdf5Dataset {
     #[cfg(not(feature = "flac"))]
     fn read_flac(
         &self,
-        key: &str,
+        _key: &str,
         _channel: Option<isize>,
         _r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
         Err(DfDatasetError::CodecNotSupportedError {
             codec: Codec::FLAC,
-            file: key.to_string(),
+            ds: format!("{:?}", self.file),
         })
     }
     /// Read a Flac encoded sample from an `hdf5::Dataset`.
@@ -1125,13 +1122,13 @@ impl Hdf5Dataset {
     #[cfg(not(feature = "vorbis"))]
     fn read_vorbis(
         &self,
-        key: &str,
+        _key: &str,
         _channel: Option<isize>,
         _r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
         Err(DfDatasetError::CodecNotSupportedError {
             codec: Codec::Vorbis,
-            file: key.to_string(),
+            ds: format!("{:?}", self.file),
         })
     }
     #[cfg(feature = "vorbis")]
@@ -1152,7 +1149,7 @@ impl Hdf5Dataset {
         let mut srr = OggStreamReader::new(ds.as_byte_reader()?)?;
         let ch = srr.ident_hdr.audio_channels as usize;
         let len = if let Some(r) = r.as_ref() {
-            // srr.seek_absgp_pg(r.start as u64)?;
+            srr.seek_absgp_pg(r.start as u64)?;
             r.end - r.start
         } else {
             24000 // start with 0.5s if sr=48000
