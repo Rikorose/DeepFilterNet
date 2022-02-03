@@ -263,10 +263,8 @@ class MSNet(nn.Module):
         # re/im into channel axis
         spec_f = spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2)  # [B, 2, T, F_df]
         h_conv: Optional[Tensor] = None
-        ic(spec_f.min(), spec_f.mean(), spec_f.max())
         for stage, _lim in zip(self.refinement_stages, self.refinement_snr_max):
-            spec_f, h_conv, _ = stage(spec_f, h_conv)
-            ic(spec_f.min(), spec_f.mean(), spec_f.max())
+            spec_f, h_conv, _ = stage(spec_f.clone(), h_conv)
             # if lim >= 100:
             #     spec_f, _ = stage(spec_f)
             # else:
