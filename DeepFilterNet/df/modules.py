@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -77,6 +77,26 @@ def convkxf(
         modules.append(("norm", nn.BatchNorm2d(out_ch)))
     modules.append(("act", act))
     return nn.Sequential(OrderedDict(modules))
+
+
+class PreNormShortcut(nn.Module):
+    def __init__(
+        self,
+        dim: Union[int, Tuple[int, ...]],
+        module: nn.Module,
+        shortcut: Optional[nn.Module] = None,
+    ):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)  # type: ignore
+        self.module = module
+        self.shortcut = shortcut if shortcut is not None else nn.Identity()
+
+    def forward(self, x: Tensor, *args) -> Tensor:
+        out = self.module(self.norm(x), *args)
+        if isinstance(out, tuple):
+            return self.shortcut(x) + out[0], out[1]
+        else:
+            return self.shortcut(x) + out
 
 
 class FreqUpsample(nn.Module):
