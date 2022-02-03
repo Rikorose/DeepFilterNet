@@ -40,7 +40,7 @@ def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
             "beta": 14.769656459379492,
         },
     }
-    assert method in params.keys()
+    assert method in params.keys(), f"method must be one of {list(params.keys())}"
     return ta_resample(audio, orig_sr, new_sr, **params[method])
 
 
