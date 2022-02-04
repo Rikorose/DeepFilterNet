@@ -238,7 +238,9 @@ impl<T> ResultExt<T> for std::result::Result<T, ShapeError> {
             Ok(x) => Ok(x),
             Err(e) => {
                 #[cfg(feature = "backtrace")]
-                eprintln!("{:?}", e.backtrace());
+                if let Some(bt) = e.backtrace() {
+                    eprintln!("{:?}", bt);
+                }
 
                 Err(PyRuntimeError::new_err(format!("DF shape error: {:?}", e)))
             }
@@ -252,7 +254,9 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDatasetError> {
             Ok(x) => Ok(x),
             Err(e) => {
                 #[cfg(feature = "backtrace")]
-                eprintln!("{:?}", e.backtrace());
+                if let Some(bt) = e.backtrace() {
+                    eprintln!("{:?}", bt);
+                }
 
                 Err(PyRuntimeError::new_err(format!(
                     "DF dataset error: {:?}",
@@ -269,7 +273,9 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDataloaderError> {
             Ok(x) => Ok(x),
             Err(e) => {
                 #[cfg(feature = "backtrace")]
-                eprintln!("{:?}", e.backtrace());
+                if let Some(bt) = e.backtrace() {
+                    eprintln!("{:?}", bt);
+                }
 
                 Err(PyRuntimeError::new_err(format!(
                     "DF dataloader error: {:?}",
