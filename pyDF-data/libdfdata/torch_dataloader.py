@@ -1,6 +1,7 @@
 import atexit
 import queue
 import threading
+import time
 import warnings
 from typing import Iterator, Optional, Tuple
 
@@ -88,6 +89,7 @@ class PytorchDataLoader:
         overfit=False,  # Overfit on one epoch
         seed=0,
         min_nb_erb_freqs: int = None,  # Minimum number of frequency bins per ERB band
+        log_timings: bool = False,
     ):
         self.fft_size = fft_size
         self.batch_size = batch_size
@@ -123,6 +125,7 @@ class PytorchDataLoader:
         self.pin_memory_thread_done_event: Optional[threading.Event] = None
         self.pin_memory_thread: Optional[threading.Thread] = None
         self.data_queue = None
+        self.timings = [] if log_timings else None
         atexit.register(self.loader.cleanup)
 
     def cleanup_pin_memory_thread(self):
@@ -197,9 +200,13 @@ class PytorchDataLoader:
         return q
 
     def _get_batch(self) -> Batch:
+        if self.timings is not None:
+            t0 = time.time()
         _, batch = self.data_queue.get()
         if isinstance(batch, ExceptionWrapper):
             batch.reraise()
+        if self.timings is not None:
+            self.timings.append(time.time() - t0)
         return batch
 
     def iter_epoch(self, split: str, seed: int) -> Iterator[Batch]:
@@ -207,6 +214,8 @@ class PytorchDataLoader:
         # Initializes workers. This needs to be done before pin_memory thread is
         # started via setup_data_queue().
         self.loader.start_epoch(split, seed)
+        if self.timings is not None:
+            self.timings = []
         # Initialize data out queue (maybe incl. pin memory thread)
         self.setup_data_queue()
         try:
@@ -225,4 +234,6 @@ class PytorchDataLoader:
         except StopIteration:
             if self.pin_memory_thread_done_event is not None:
                 self.pin_memory_thread_done_event.set()
+            if self.timings is not None:
+                logger.info("Avg batch loading time: {}", np.mean(self.timings))
             return

@@ -125,6 +125,7 @@ def main():
         overfit=overfit,
         seed=seed,
         min_nb_erb_freqs=p.min_nb_freqs,
+        log_timings=True,
     )
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
