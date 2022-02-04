@@ -46,6 +46,7 @@ echo "Started sbatch script at $(date) in $(pwd)"
 
 echo "Found cuda devices: $CUDA_VISIBLE_DEVICES"
 nvidia-smi -L || echo "nvidia-smi not found"
+echo "Running on host: $(hostname)"
 
 # Check base dir file
 if [[ -z $1 ]]; then
@@ -116,6 +117,7 @@ setup_env "$CLUSTER" "$PROJECT_HOME" "$MODEL_NAME"
 if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
   test -d "/scratch/$USER" || mkdir "/scratch/$USER"
   NEW_DATA_DIR=/scratch/"$USER"/"$PROJECT_NAME"
+  echo "Seting up data dir in $NEW_DATA_DIR"
   mkdir -p "$NEW_DATA_DIR"
   # Check if another process is currently copying
   while true; do
@@ -128,7 +130,7 @@ if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
     fi
   done
   echo "$MODEL_NAME-lock" >> "$NEW_DATA_DIR"/data_lock  # lock scratch dir
-  "$PROJECT_HOME"/scripts/prepare_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
+  MAX_GB=150 "$PROJECT_HOME"/scripts/copy_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
   # release copy lock; remaining $MODEL_NAME indicates we are using it
   sed -i "s/$MODEL_NAME-lock/$MODEL_NAME/g"  "$NEW_DATA_DIR"/data_lock
   DATA_DIR="$NEW_DATA_DIR"
@@ -153,16 +155,14 @@ function _at_exit {
     exit 0
   fi
   echo "Checking if need to cleanup scratch: $NEW_DATA_DIR"
-  if [[ -d $NEW_DATA_DIR ]]; then
-    if [[ $COPY_DATA -eq 1 ]]; then
-      cat "$NEW_DATA_DIR"/data_lock
-      # Remove own lock
-      sed -i /"$MODEL_NAME"/d "$NEW_DATA_DIR"/data_lock
-      if ! wc -l "$NEW_DATA_DIR"/data_lock; then
-        # No other locks found. Cleanup space.
-        echo "cleaning up data dir $NEW_DATA_DIR"
-        rm -r "$NEW_DATA_DIR"
-      fi
+  if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
+    cat "$NEW_DATA_DIR"/data_lock
+    # Remove own lock
+    sed -i /"$MODEL_NAME"/d "$NEW_DATA_DIR"/data_lock
+    if ! wc -l "$NEW_DATA_DIR"/data_lock; then
+      # No other locks found. Cleanup space.
+      echo "cleaning up data dir $NEW_DATA_DIR"
+      rm -r "$NEW_DATA_DIR"
     fi
   fi
 }

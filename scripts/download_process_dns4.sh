@@ -48,7 +48,14 @@ for BLOB in "${BLOB_NAMES[@]}"; do
     else
       SPLIT="TRAIN"
     fi
-    for d in "$WORKING_DIR"/datasets_fullband/*/*; do
+    if [ -d "$WORKING_DIR"/datasets_fullband/noise_fullband/ ]; then
+      CURDIRS=$(fd -t d -d 1 . "$WORKING_DIR"/datasets_fullband/)
+    else
+      CURDIRS=$(fd -t d -d 1 . "$WORKING_DIR"/datasets_fullband/*)
+    fi
+    echo "Found dirs: $CURDIRS"
+    for d in "$CURDIRS"; do
+      echo "dir: $d"
       fd -I . -e wav "$d" > "$WORKING_DIR"/files.txt
       HDF5_NAME="$(basename $d)_$SPLIT.hdf5"
       echo "Processing hdf5 dataset $OUT_DIR/$HDF5_NAME"
