@@ -1,3 +1,6 @@
+#![cfg_attr(feature = "backtrace", feature(backtrace))]
+use std::error::Error;
+
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
 use df::dataset::{DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, Split::*};
@@ -233,7 +236,12 @@ impl<T> ResultExt<T> for std::result::Result<T, ShapeError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => Err(PyRuntimeError::new_err(format!("DF shape error: {:?}", e))),
+            Err(e) => {
+                #[cfg(feature = "backtrace")]
+                eprintln!("{:?}", e.backtrace());
+
+                Err(PyRuntimeError::new_err(format!("DF shape error: {:?}", e)))
+            }
         }
     }
 }
@@ -242,10 +250,15 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDatasetError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "DF dataset error: {:?}",
-                e
-            ))),
+            Err(e) => {
+                #[cfg(feature = "backtrace")]
+                eprintln!("{:?}", e.backtrace());
+
+                Err(PyRuntimeError::new_err(format!(
+                    "DF dataset error: {:?}",
+                    e
+                )))
+            }
         }
     }
 }
@@ -254,10 +267,15 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDataloaderError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "DF dataloader error: {:?}",
-                e
-            ))),
+            Err(e) => {
+                #[cfg(feature = "backtrace")]
+                eprintln!("{:?}", e.backtrace());
+
+                Err(PyRuntimeError::new_err(format!(
+                    "DF dataloader error: {:?}",
+                    e
+                )))
+            }
         }
     }
 }

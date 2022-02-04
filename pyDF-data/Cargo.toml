@@ -9,8 +9,14 @@ name = "libdfdata"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
+[features]
+default = []
+
+backtrace = ["anyhow"]
+
 [dependencies]
 deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
 pyo3 = { version = "^0.16", default_features = true, features = ["extension-module"]}
 numpy = "^0.16"
 ndarray = "^0.15"
+anyhow = { version = "^1.0", features = ["backtrace"], optional = true }
