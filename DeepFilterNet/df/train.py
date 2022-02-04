@@ -7,12 +7,11 @@ import numpy as np
 import torch
 import torchaudio
 from loguru import logger
-from torch import Tensor, nn
-from torch.optim import Adam, AdamW, Optimizer, RMSprop, lr_scheduler
+from torch import Tensor, nn, optim
 from torch.types import Number
 
 from df.checkpoint import load_model, read_cp, write_cp
-from df.config import config
+from df.config import Csv, config
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
 from df.lr import cosine_lr_scheduler
@@ -133,7 +132,7 @@ def main():
     n_warmup = 3
     last_epoch = max(0, epoch) - 1
     lr = config.get("lr", "train", float)
-    lrs = lr_scheduler.LambdaLR(
+    lrs = optim.lr_scheduler.LambdaLR(
         opt,
         cosine_lr_scheduler(
             lr,
@@ -179,7 +178,7 @@ def main():
         )
         metrics = {"loss": train_loss}
         try:
-            metrics["loss"] = lrs.get_last_lr()[0]
+            metrics["lr"] = lrs.get_last_lr()[0]
         except AttributeError:
             pass
         if debug:
@@ -230,7 +229,7 @@ def run_epoch(
     epoch: int,
     loader: DataLoader,
     split: str,
-    opt: Optimizer,
+    opt: optim.Optimizer,
     losses: Loss,
     summary_dir: str,
 ) -> float:
@@ -361,10 +360,12 @@ def setup_losses() -> Loss:
 
 def load_opt(
     cp_dir: Optional[str], model: nn.Module, mask_only: bool = False, df_only: bool = False
-) -> torch.optim.Optimizer:
+) -> optim.Optimizer:
     lr = config("LR", 1e-4, float, section="train")
     decay = config("WEIGHT_DECAY", 1e-3, float, section="train")
     optimizer = config("OPTIMIZER", "adam", str, section="train").lower()
+    momentum = config("MOMENTUM", 0, float, section="train", save=False)  # For sgd, rmsprop
+    betas = config("BETAS", [0.9, 0.98], Csv(float), section="train", save=False)  # For adam(w)
     if mask_only:
         params = []
         for n, p in model.named_parameters():
@@ -374,14 +375,18 @@ def load_opt(
         params = (p for n, p in model.named_parameters() if "df" in n.lower())
     else:
         params = model.parameters()
-    if optimizer == "adamw":
-        opt = AdamW(params, lr=lr, weight_decay=decay, betas=(0.9, 0.98))
-    elif optimizer == "adam":
-        opt = Adam(params, lr=lr, weight_decay=decay, betas=(0.9, 0.98))
-    elif optimizer == "rmsprop":
-        opt = RMSprop(params, lr=lr, weight_decay=decay)
-    else:
-        raise ValueError(f"Unsupported optimizer: {optimizer}")
+    supported = {
+        "adam": lambda p: optim.AdamW(p, lr=lr, weight_decay=decay, betas=betas),
+        "adamw": lambda p: optim.AdamW(p, lr=lr, weight_decay=decay, betas=betas),
+        "sgd": lambda p: optim.SGD(p, lr=lr, momentum=momentum, nesterov=True, weight_decay=decay),
+        "rmsprop": lambda p: optim.RMSprop(params, lr=lr, momentum=momentum, weight_decay=decay),
+    }
+    if optimizer not in supported:
+        raise ValueError(
+            f"Unsupported optimizer: {optimizer}. Must be one of {list(supported.keys())}"
+        )
+    opt = supported[optimizer](params)
+    logger.debug(f"Training with optimizer {opt}")
     if cp_dir is not None:
         try:
             read_cp(opt, "opt", cp_dir)
