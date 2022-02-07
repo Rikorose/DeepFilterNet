@@ -31,7 +31,7 @@ pub enum DfDatasetError {
     #[error("Unsupported during PCM decode: {0}")]
     PcmUnspportedDimension(usize),
     #[error("Wav Reader Error")]
-    WarReadError(#[from] crate::wav_utils::WavUtilsError),
+    WavReadError(#[from] crate::wav_utils::WavUtilsError),
     #[error("Input Range ({range:?}) larger than dataset size ({size:?})")]
     PcmRangeToLarge {
         range: Range<usize>,
@@ -983,7 +983,7 @@ impl Hdf5Dataset {
         rdr.seek_bytes(std::io::SeekFrom::End(-4096))?;
         let mut pkg = rdr.read_packet();
         if pkg.is_err() {
-            // Maybe seek a little further or start entirely from the begining.
+            // Maybe seek a little further or start entirely from the beginning.
             rdr.seek_bytes(std::io::SeekFrom::End(-8192))?;
             pkg = rdr.read_packet();
             if pkg.is_err() {
@@ -1208,7 +1208,7 @@ impl Hdf5Dataset {
         }
         let out = if let Some(r) = r {
             // We already have a coarse range. The start may contain more samples from its
-            // corresponging ogg page. The end is already exact. Thus, truncate the beginning.
+            // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
             let start_pos = out.len() - (r.end - r.start) * ch;
             ArrayView2::from_shape((len, ch), &out[start_pos..])?.to_owned()
         } else {
