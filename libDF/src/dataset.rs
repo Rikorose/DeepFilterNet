@@ -613,8 +613,11 @@ impl TdDataset {
         let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
             Err(e) => {
                 eprintln!(
-                    "Error during speech reading get_data() for key '{}'from dataset {}: {:?}",
-                    key, self.ds_name(idx), e
+                    "Error during {} reading get_data() for key '{}' from dataset {}: {:?}",
+                    self.ds_type(idx),
+                    key,
+                    self.ds_name(idx),
+                    e
                 );
                 if e.to_string().contains("inflate") {
                     // Get a different speech then
@@ -648,6 +651,10 @@ impl TdDataset {
 
     fn ds_name(&self, idx: usize) -> String {
         self.hdf5_handles[idx].name()
+    }
+
+    fn ds_type(&self, idx: usize) -> String {
+        self.hdf5_handles[idx].ds_type()
     }
 }
 
@@ -922,8 +929,11 @@ impl Hdf5Dataset {
     fn name(&self) -> String {
         self.file.filename()
     }
+    pub fn ds_type(&self) -> String {
+        self.dstype.to_string().to_lowercase()
+    }
     fn group(&self) -> Result<hdf5::Group> {
-        Ok(self.file.group(&self.dstype.to_string().to_lowercase())?)
+        Ok(self.file.group(&self.ds_type())?)
     }
     pub fn len(&self) -> usize {
         self.group().unwrap().len() as usize
