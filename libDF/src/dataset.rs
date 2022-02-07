@@ -612,7 +612,10 @@ impl TdDataset {
     fn read_max_len(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
         let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
             Err(e) => {
-                eprintln!("Error during speech reading get_data(): {:?}", e);
+                eprintln!(
+                    "Error during speech reading get_data() for key '{}'from dataset {}: {:?}",
+                    key, self.ds_name(idx), e
+                );
                 if e.to_string().contains("inflate") {
                     // Get a different speech then
                     let idx = thread_rng()?.gen_range(0..self.len());
