@@ -979,11 +979,23 @@ impl Hdf5Dataset {
     /// * `ds`: `hdf5::Dataset` containing a vorbis (ogg) encoded audio sample.
     fn sample_len_vorbis(&self, ds: hdf5::Dataset) -> Result<usize> {
         let mut rdr = OggPacketReader::new(ds.as_byte_reader()?);
-        // Seek to almost end to get the last ogg package
+        // Seek almost to end to get the last ogg package
         rdr.seek_bytes(std::io::SeekFrom::End(-4096))?;
+        let mut pkg = rdr.read_packet();
+        if pkg.is_err() {
+            // Maybe seek a little further or start entirely from the begining.
+            rdr.seek_bytes(std::io::SeekFrom::End(-8192))?;
+            pkg = rdr.read_packet();
+            if pkg.is_err() {
+                rdr.seek_absgp(None, 0)?;
+                pkg = rdr.read_packet();
+            };
+        }
+        // Also check if there are some packges left
         let mut absgp = 0;
-        while let Some(pkg) = rdr.read_packet()? {
-            absgp = pkg.absgp_page();
+        while let Some(p) = pkg? {
+            absgp = p.absgp_page();
+            pkg = rdr.read_packet();
         }
         Ok(absgp as usize)
     }
