@@ -880,7 +880,7 @@ fn get_dstype(file: &File) -> Option<DsType> {
 }
 
 impl Hdf5Dataset {
-    fn new(path: &str) -> Result<Self> {
+    pub fn new(path: &str) -> Result<Self> {
         let file = File::open(path).map_err(move |e: hdf5::Error| -> DfDatasetError {
             DfDatasetError::Hdf5ErrorDetail {
                 source: e,
