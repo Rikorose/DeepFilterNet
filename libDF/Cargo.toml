@@ -13,8 +13,13 @@ name = "df"
 path = "src/lib.rs"
 
 [[bin]]
-name = "dataset-sample"
-path = "src/bin/ds-sample.rs"
+name = "sample-hdf5"
+path = "src/bin/sample-hdf5.rs"
+required-features = ["dataset", "anyhow"]
+
+[[bin]]
+name = "sample-dataset"
+path = "src/bin/sample-dataset.rs"
 required-features = ["dataset", "anyhow"]
 
 [features]
@@ -32,7 +37,7 @@ rand = { version="0.8", optional=true }
 rubato = { version="0.11", optional=true }
 rand_xoshiro = { version="0.6", optional=true }
 thiserror = { version="1.0", optional=true }
-anyhow = { version="1.0", optional=true }
+anyhow = { version="1.0", optional=true, features=["backtrace"] }
 hound = { version="3.4", optional=true }
 hdf5 = { version="^0.8", optional=true, git="https://github.com/aldanor/hdf5-rust/", rev="refs/pull/198/head" }
 bincode = { version="^1.3", optional=true }
