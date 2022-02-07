@@ -1179,16 +1179,32 @@ impl Hdf5Dataset {
         } else {
             24000 // start with 0.5s if sr=48000
         };
+        let mut pck = match srr.read_dec_packet_itl() {
+            Ok(pck) => pck,
+            Err(e) => {
+                if r.is_some() {
+                    // Undo the seek and just start from the beginning
+                    srr = OggStreamReader::new(ds.as_byte_reader()?).unwrap();
+                    srr.read_dec_packet_itl().unwrap()
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
         let mut out: Vec<i16> = Vec::with_capacity(len);
-        while let Some(mut pck) = srr.read_dec_packet_itl()? {
+        while let Some(mut p) = pck {
+            out.append(&mut p);
             if let (Some(r), Some(pos)) = (r.as_ref(), srr.get_last_absgp().map(|p| p as usize)) {
                 if pos >= r.end {
-                    pck.truncate(pck.len() - (pos - r.end) * ch);
-                    out.append(&mut pck);
+                    // In some rare curcumstances the decoding start is behind r.start.
+                    // Nor sure if this is an error on my end or on lewton's. Anyways we just
+                    // return a slightly delayed slice, therefore the max operation.
+                    out.truncate((out.len() - (pos - r.end) * ch).max((r.end - r.start) * ch));
+                    debug_assert!(out.len() >= r.end - r.start);
                     break;
                 }
             }
-            out.append(&mut pck);
+            pck = srr.read_dec_packet_itl()?;
         }
         let out = if let Some(r) = r {
             // We already have a coarse range. The start may contain more samples from its
