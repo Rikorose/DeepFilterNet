@@ -1209,8 +1209,13 @@ impl Hdf5Dataset {
         let out = if let Some(r) = r {
             // We already have a coarse range. The start may contain more samples from its
             // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
-            let start_pos = out.len() - (r.end - r.start) * ch;
-            ArrayView2::from_shape((len, ch), &out[start_pos..])?.to_owned()
+            // let start_pos = out.len() - (r.end - r.start) * ch;
+            let start_pos = out.len().saturating_sub((r.end - r.start) * ch);
+            // Due to some rare bug, the slice will end up shorter than `len`. I guess similar to
+            // above, the first decoded sample starts after `r.begin`. Threrfore we needed
+            // `saturating_sub` and recalulate the length via `slice.len()`.
+            let slice = &out[start_pos..];
+            ArrayView2::from_shape((slice.len() / ch, ch), slice)?.to_owned()
         } else {
             Array2::from_shape_vec((out.len() / ch, ch), out)?
         };
