@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os
-import random
+import shutil
 import sys
 
 import h5py
@@ -19,18 +19,22 @@ def main(hdf5: str, force: bool = False):
         # Correct wrong sampling rate
         f_train.attrs["sr"] = 16000
         f_train.attrs["max_freq"] = 8000
+    hdf5_train_new = hdf5.replace("TRAIN", "TRAIN_NEW")
     hdf5_valid = hdf5.replace("TRAIN", "VALID")
     hdf5_test = hdf5.replace("TRAIN", "TEST")
     if (os.path.exists(hdf5_test) or os.path.exists(hdf5_valid)) and not force:
         raise FileExistsError(f"Dataset {hdf5_test} already exists.")
     f_valid = h5py.File(hdf5_valid, "w")
     f_test = h5py.File(hdf5_test, "w")
+    f_train_new = h5py.File(hdf5_train_new, "w")
     for attr, v in f_train.attrs.items():
         ic(attr, v)
+        f_train_new.attrs[attr] = v
         f_valid.attrs[attr] = v
         f_test.attrs[attr] = v
     for key in f_train:
         grp_train = f_train[key]
+        grp_train_new = f_train_new.create_group(key)
         grp_valid = f_valid.create_group(key)
         grp_test = f_test.create_group(key)
         keys = list(grp_train.keys())
@@ -40,12 +44,16 @@ def main(hdf5: str, force: bool = False):
         sections.append(sections[0] + int(splits[1] * n))
         keys_train, keys_valid, keys_test = np.split(np.random.permutation(keys), sections)
         ic(len(keys_train), len(keys_valid), len(keys_test))
+        for k in keys_train:
+            print("train", k)
+            grp_train_new.copy(grp_train[k], dest=k)
         for k in keys_valid:
-            ic(k)
-            grp_valid.copy(grp_train.pop(k), dest=k)
+            print("valid", k)
+            grp_valid.copy(grp_train[k], dest=k)
         for k in keys_test:
-            ic(k)
-            grp_test.copy(grp_train.pop(k), dest=k)
+            print("test", k)
+            grp_test.copy(grp_train[k], dest=k)
+    ic(shutil.move(hdf5_train_new, hdf5))
 
 
 if __name__ == "__main__":
