@@ -22,7 +22,7 @@ flac = ["claxon"]
 
 [dependencies]
 rustfft = "^6.0.1"
-realfft = "^2.0.1"
+realfft = "^3.0.0"
 rand = { version="0.8", optional=true }
 rubato = { version="0.10", optional=true }
 rand_xoshiro = { version="0.6", optional=true }
