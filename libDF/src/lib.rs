@@ -294,7 +294,7 @@ fn frame_analysis(input: &[f32], output: &mut [Complex32], state: &mut DFState) 
     state
         .fft_forward
         .process_with_scratch(&mut buf, output, &mut state.analysis_scratch)
-        .unwrap();
+        .expect("FFT forward failed");
     // Apply normalization in analysis only
     let norm = state.wnorm;
     for x in output.iter_mut() {
@@ -304,10 +304,14 @@ fn frame_analysis(input: &[f32], output: &mut [Complex32], state: &mut DFState) 
 
 fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFState) {
     let mut x = state.fft_inverse.make_output_vec();
-    state
+    match state
         .fft_inverse
         .process_with_scratch(input, &mut x[..], &mut state.synthesis_scratch)
-        .unwrap();
+    {
+        Err(realfft::FftError::InputValues(_, _)) => (),
+        Err(e) => Err(e).unwrap(),
+        Ok(_) => (),
+    }
     apply_window_in_place(&mut x, &state.window);
     let (x_first, x_second) = x.split_at(state.frame_size);
     for ((&xi, &mem), out) in x_first.iter().zip(state.synthesis_mem.iter()).zip(output.iter_mut())
