@@ -1,6 +1,6 @@
 # DeepFilterNet
-A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) based on Deep Filtering.
-Audio samples from the voice bank/DEMAND test set can be found at https://rikorose.github.io/DeepFilterNet-Samples/
+A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) based on Deep Filtering ([Paper](https://arxiv.org/abs/2110.05588)).
+Audio samples from the voice bank/DEMAND test set can be found [here](https://rikorose.github.io/DeepFilterNet-Samples/).
 
 * `libDF` contains Rust code used for data loading and augmentation.
 * `DeepFilterNet` contains DeepFilterNet code training, evaluation and visualization as well as pretrained model weights.
