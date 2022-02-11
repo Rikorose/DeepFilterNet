@@ -50,9 +50,6 @@ setup_env() {
       python=$PYTHON_V \
       "$pytorch_v_arg" \
       torchaudio \
-      maturin \
-      patchelf \
-      poetry \
       cudatoolkit=$cuda_version -c "pytorch$nightly" -c conda-forge
     source activate "$env"
 
@@ -73,6 +70,7 @@ setup_env() {
     rustup default stable
     rustup update stable
     cargo build --release
+    pip install -U maturin
     maturin develop --release -m "$PROJECT_HOME"/pyDF/Cargo.toml
     maturin develop --release -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
   fi
