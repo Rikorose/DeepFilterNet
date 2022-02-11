@@ -21,7 +21,7 @@ class ModelParams(DfParams):
 
     def __init__(self):
         super().__init__()
-        self.n_stages: List[int] = config(
+        self.stages: List[int] = config(
             "STAGES", cast=Csv(int), default=(3, 3, 9, 3), section=self.section  # type: ignore
         )
         self.conv_lookahead: int = config(
@@ -426,11 +426,11 @@ class MSNet(nn.Module):
         super().__init__()
         p = ModelParams()
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
-        self.n_stages = p.n_stages
+        self.stages = p.stages
         self.freq_bins = p.fft_size // 2 + 1
         self.erb_bins = p.nb_erb
         self.df_bins = p.nb_df
-        self.erb_stage = FreqStage(1, 1, nn.Sigmoid, p.conv_ch, p.nb_erb, p.erb_hidden_dim)
+        self.erb_stage = FreqStage(1, 1, nn.Sigmoid, p.conv_ch, p.nb_erb, p.erb_hidden_dim, depth=3)
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
         self.refinement_stages = nn.ModuleList(
@@ -442,10 +442,11 @@ class MSNet(nn.Module):
                     width=p.conv_ch,
                     num_freqs=p.nb_df,
                     hidden_dim=p.refinement_hidden_dim,
+                    depth=depth,
                     patch_size=2 ** (i + 1),
                     downsample_hprev=i >= 1,
                 )
-                for i in range(self.n_stages)
+                for i, depth in enumerate(self.stages)
             ]
         )
         self.lsnr_net = LSNRNet(p.conv_ch * 2, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
@@ -453,7 +454,7 @@ class MSNet(nn.Module):
         self.refinement_snr_min = -10
         self.refinement_snr_max = (100, 10, 5, 0, -5, -5, -5, -5)
         # Add a bunch of '-5' SNRs to support currently a maximum of 8 refinement layers.
-        assert self.n_stages <= 8
+        assert len(self.stages) <= 8
 
     def forward(
         self, spec: Tensor, feat_erb: Tensor, feat_spec: Tensor, atten_lim: Optional[Tensor] = None
