@@ -135,7 +135,7 @@ class PreProcessingDataset(Dataset):
         fn = self.file_names[index]
         logger.debug(f"Reading audio file {fn}")
         x = self.read(fn)
-        assert x.dim() == 2 and x.shape[0] <= 16, x.shape
+        assert x.dim() == 2 and x.shape[0] <= 16, f"Got sample {fn} with unexpected shape {x.shape}"
         n_samples = x.shape[1]
         if self.codec == "vorbis":
             with NamedTemporaryFile(suffix=".ogg") as tf:
