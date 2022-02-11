@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from icecream import ic
 from timm.models.fx_features import register_notrace_module
 from timm.models.helpers import named_apply
 from timm.models.layers import trunc_normal_
@@ -11,7 +10,7 @@ from timm.models.layers.drop import DropPath
 from timm.models.layers.mlp import ConvMlp, Mlp
 from torch import Tensor, nn
 
-from df.config import DfParams, config
+from df.config import Csv, DfParams, config
 from df.modules import Mask, erb_fb
 from df.utils import get_device
 from libdf import DF
@@ -22,7 +21,9 @@ class ModelParams(DfParams):
 
     def __init__(self):
         super().__init__()
-        self.n_stages: int = config("N_STAGES", cast=int, default=4, section=self.section)
+        self.n_stages: List[int] = config(
+            "STAGES", cast=Csv(int), default=(3, 3, 9, 3), section=self.section  # type: ignore
+        )
         self.conv_lookahead: int = config(
             "CONV_LOOKAHEAD", cast=int, default=0, section=self.section
         )
@@ -318,12 +319,13 @@ class LSNRNet(nn.Module):
 class FreqStage(nn.Module):
     def __init__(
         self,
-        in_ch,
-        out_ch,
+        in_ch: int,
+        out_ch: int,
         out_act,
-        conv_ch,
-        num_freqs,
-        hidden_dim,
+        width: int,
+        num_freqs: int,
+        hidden_dim: int,
+        depth: int = 3,
         lookahead: int = 0,
         patch_size: int = 2,
         conv_mlp: bool = False,
@@ -331,7 +333,7 @@ class FreqStage(nn.Module):
         layer_scale=1e-6,
     ):
         super().__init__()
-        self.ch = conv_ch  # Layer width
+        self.lw = width  # Layer width
         self.fe = num_freqs  # Number of frequency bins in embedding
         self.hd = hidden_dim
         if self.fe % (patch_size // 2) != 0:
@@ -342,20 +344,22 @@ class FreqStage(nn.Module):
         self.conv_in = nn.Sequential(
             Conv2d(
                 in_ch,
-                self.ch,
+                self.lw,
                 kernel_size=(1, patch_size),
                 lookahead=lookahead,
                 fstride=patch_size,
                 fpad=False,
             ),
-            norm_layer(self.ch),
+            norm_layer(self.lw),
         )
         # Just one stage for ERB
+        depth_up = depth // 2
+        depth_down = depth - depth_up
         self.down_block = ConvNeXtStage(
-            self.ch,
-            self.ch * 2,
+            self.lw,
+            self.lw * 2,
             stride=2,
-            depth=2,
+            depth=depth_down,
             dp_rates=None,
             ls_init_value=layer_scale,
             conv_mlp=conv_mlp,
@@ -365,15 +369,15 @@ class FreqStage(nn.Module):
         self.conv_hprev_down = None
         if downsample_hprev:
             self.conv_hprev_down = Conv2d(
-                self.ch * 2, self.ch * 2, (1, 3), fstride=2, groups=self.ch * 2
+                self.lw * 2, self.lw * 2, (1, 3), fstride=2, groups=self.lw * 2
             )
-        in_hd = self.fe // patch_size // 2 * self.ch * 2
+        in_hd = self.fe // patch_size // 2 * self.lw * 2
         self.gru = GruMlp(in_hd, self.hd, in_hd)
         self.up_block = ConvNeXtStage(
-            self.ch * 2,
-            self.ch,
+            self.lw * 2,
+            self.lw,
             stride=2,
-            depth=2,
+            depth=depth_up,
             dp_rates=None,
             ls_init_value=layer_scale,
             conv_mlp=conv_mlp,
@@ -381,7 +385,7 @@ class FreqStage(nn.Module):
             cl_norm_layer=cl_norm_layer,
             transpose=True,
         )
-        self.conv_out = ConvOut(patch_size, self.ch, out_ch, out_act)
+        self.conv_out = ConvOut(patch_size, self.lw, out_ch, out_act)
         named_apply(partial(_init_weights, head_init_scale=layer_scale), self)
 
     def forward(
@@ -433,7 +437,7 @@ class MSNet(nn.Module):
                     in_ch=2,
                     out_ch=2,
                     out_act=refinement_act,
-                    conv_ch=p.conv_ch,
+                    width=p.conv_ch,
                     num_freqs=p.nb_df,
                     hidden_dim=p.refinement_hidden_dim,
                     patch_size=2 ** (i + 1),
