@@ -1,12 +1,14 @@
 import argparse
 import os
 import signal
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
 import torchaudio
 from loguru import logger
+from timm.scheduler import CosineLRScheduler
+from timm.scheduler.scheduler import Scheduler
 from torch import Tensor, nn, optim
 from torch.types import Number
 
@@ -130,22 +132,8 @@ def main():
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
-    n_warmup = 3
-    last_epoch = max(0, epoch) - 1
-    lr = config.get("lr", "train", float)
-    lrs = optim.lr_scheduler.LambdaLR(
-        opt,
-        cosine_lr_scheduler(
-            lr,
-            n_warmup=n_warmup,
-            warmup_init_lr=0.1 * lr,
-            min_lr=1e-6,
-            t_mult=1.5,
-            lr_period_updates=10,
-            lr_shrink=0.5,
-        ),
-        last_epoch=last_epoch,
-    )
+    last_epoch = epoch if epoch > 0 else None
+    lrs = load_lrs(opt, len(dataloader), last_epoch)
 
     losses = setup_losses()
 
@@ -176,6 +164,7 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
+            lr_scheduler=lrs,
         )
         metrics = {"loss": train_loss}
         try:
@@ -208,7 +197,7 @@ def main():
             logger.info("Stopping training")
             exit(0)
         losses.reset_summaries()
-        lrs.step()
+        lrs.step(epoch + 1, metric=val_loss)
         ic([group["lr"] for group in opt.param_groups])
     test_loss = run_epoch(
         model=model,
@@ -233,6 +222,7 @@ def run_epoch(
     opt: optim.Optimizer,
     losses: Loss,
     summary_dir: str,
+    lr_scheduler: Optional[Scheduler] = None,
 ) -> float:
     global debug
 
@@ -256,6 +246,7 @@ def run_epoch(
     seed = epoch if is_train else 42
     n_nans = 0
     logger.info("Dataloader len: {}".format(loader.len(split)))
+    num_updates = epoch * loader.len(split)
 
     for i, batch in enumerate(loader.iter_epoch(split, seed)):
         opt.zero_grad()
@@ -344,6 +335,9 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
+        if lr_scheduler is not None:
+            num_updates += 1
+            lr_scheduler.step_update(num_updates=num_updates)
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     except UnboundLocalError as err:
@@ -368,11 +362,13 @@ def setup_losses() -> Loss:
 def load_opt(
     cp_dir: Optional[str], model: nn.Module, mask_only: bool = False, df_only: bool = False
 ) -> optim.Optimizer:
-    lr = config("LR", 1e-4, float, section="train")
-    decay = config("WEIGHT_DECAY", 1e-3, float, section="train")
-    optimizer = config("OPTIMIZER", "adam", str, section="train").lower()
-    momentum = config("MOMENTUM", 0, float, section="train", save=False)  # For sgd, rmsprop
-    betas = config("BETAS", [0.9, 0.98], Csv(float), section="train", save=False)  # For adam(w)
+    lr = config("LR", 5e-4, float, section="optim")
+    momentum = config("momentum", 0, float, section="optim")  # For sgd, rmsprop
+    decay = config("weight_decay", 0.05, float, section="optim")
+    optimizer = config("optimizer", "adamw", str, section="optim").lower()
+    betas: Tuple[int, int] = config(
+        "opt_betas", [0.9, 0.98], Csv(float), section="optim", save=False  # type: ignore
+    )
     if mask_only:
         params = []
         for n, p in model.named_parameters():
@@ -383,10 +379,10 @@ def load_opt(
     else:
         params = model.parameters()
     supported = {
-        "adam": lambda p: optim.AdamW(p, lr=lr, weight_decay=decay, betas=betas),
+        "adam": lambda p: optim.Adam(p, lr=lr, weight_decay=decay, betas=betas),
         "adamw": lambda p: optim.AdamW(p, lr=lr, weight_decay=decay, betas=betas),
         "sgd": lambda p: optim.SGD(p, lr=lr, momentum=momentum, nesterov=True, weight_decay=decay),
-        "rmsprop": lambda p: optim.RMSprop(params, lr=lr, momentum=momentum, weight_decay=decay),
+        "rmsprop": lambda p: optim.RMSprop(p, lr=lr, momentum=momentum, weight_decay=decay),
     }
     if optimizer not in supported:
         raise ValueError(
@@ -402,6 +398,39 @@ def load_opt(
     for group in opt.param_groups:
         group.setdefault("initial_lr", lr)
     return opt
+
+
+def load_lrs(
+    opt: optim.Optimizer, steps_per_epoch: Optional[int] = None, last_epoch: Optional[int] = None
+) -> Scheduler:
+    lr = config.get("lr", "optim", float)
+    num_epochs = config.get("max_epochs", "train", int)
+    lr_min = config("lr_min", 1e-6, float, section="optim")
+    lr_warmup = config("lr_warmup", 1e-4, float, section="optim")
+    assert lr_warmup < lr
+    n = steps_per_epoch or 1  # num updates per epoch
+    warmup_t = config("warmup_epochs", 3, int, section="optim") * n
+    lr_cycle_mul = config("lr_cycle_mul", 1.0, float, section="optim")
+    lr_cycle_decay = config("lr_cycle_decay", 0.5, float, section="optim")
+    lr_cycle_limit = config("lr_cycle_limit", 1, int, section="optim") * n
+    # Update after each epoch or update after each optim step
+    lr_update_per_epoch = config("lr_update_per_epoch", True, bool, section="optim")
+    if not lr_update_per_epoch:
+        assert steps_per_epoch is not None
+    lrs = CosineLRScheduler(
+        opt,
+        t_initial=num_epochs,
+        lr_min=lr_min,
+        warmup_lr_init=lr_warmup,
+        warmup_t=warmup_t,
+        cycle_mul=lr_cycle_mul,
+        cycle_decay=lr_cycle_decay,
+        cycle_limit=lr_cycle_limit,
+        t_in_epochs=lr_update_per_epoch,
+    )
+    if last_epoch is not None:
+        lrs.step(last_epoch)
+    return lrs
 
 
 @torch.no_grad()
