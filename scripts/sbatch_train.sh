@@ -130,7 +130,7 @@ if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
     fi
   done
   echo "$MODEL_NAME-lock" >> "$NEW_DATA_DIR"/data_lock  # lock scratch dir
-  MAX_GB=150 "$PROJECT_HOME"/scripts/copy_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
+  MAX_GB=50 "$PROJECT_HOME"/scripts/copy_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
   # release copy lock; remaining $MODEL_NAME indicates we are using it
   sed -i "s/$MODEL_NAME-lock/$MODEL_NAME/g"  "$NEW_DATA_DIR"/data_lock
   DATA_DIR="$NEW_DATA_DIR"
