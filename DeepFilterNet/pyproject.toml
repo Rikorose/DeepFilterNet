@@ -33,7 +33,7 @@ pystoi = { version = "^0.3", optional = true }
 semetrics = {git = "https://github.com/usimarit/semetrics.git", optional = true}
 
 [tool.poetry.extras]
-train = ["deepfilterdataloader", "icecream"]
+train = ["deepfilterdataloader", "icecream", "timm>=0.5.4"]
 eval = ["pystoi", "semetrics"]
 soundfile = ["soundfile"]
 
