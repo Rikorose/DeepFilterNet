@@ -12,8 +12,6 @@ path = "src/lib.rs"
 [features]
 default = []
 
-backtrace = []
-
 [dependencies]
 deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
 pyo3 = { version = "^0.16", default_features = true, features = ["extension-module"]}
