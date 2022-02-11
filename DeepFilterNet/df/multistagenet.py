@@ -34,8 +34,10 @@ class ModelParams(DfParams):
         self.refinement_hidden_dim: int = config(
             "REFINEMENT_HIDDEN_DIM", cast=int, default=96, section=self.section
         )
-        self.refinement_act: str = config(
-            "REFINEMENT_OUTPUT_ACT", default="identity", section=self.section
+        self.refinement_act: str = (
+            config("REFINEMENT_OUTPUT_ACT", default="identity", section=self.section)
+            .lower()
+            .replace("none", "identity")
         )
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
