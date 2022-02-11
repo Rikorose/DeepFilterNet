@@ -40,19 +40,24 @@ def main(hdf5: str, force: bool = False):
         keys = list(grp_train.keys())
         n = len(keys)
         # sections is a list of sorted integers; I.e. the cumulated sum
-        sections = [int(splits[0] * n)]
-        sections.append(sections[0] + int(splits[1] * n))
+        len_train, len_valid = (int(s * n) for s in splits[:2])
+        sections = [len_train, len_train + len_valid]
+        # We don't need a section for test, it will be the rest anyways
+        len_test = n - sections[1]
         keys_train, keys_valid, keys_test = np.split(np.random.permutation(keys), sections)
         ic(len(keys_train), len(keys_valid), len(keys_test))
         for k in keys_train:
             print("train", k)
             grp_train_new.copy(grp_train[k], dest=k)
+        assert len(grp_train_new) == len_train
         for k in keys_valid:
             print("valid", k)
             grp_valid.copy(grp_train[k], dest=k)
+        assert len(grp_valid) == len_valid
         for k in keys_test:
             print("test", k)
             grp_test.copy(grp_train[k], dest=k)
+        assert len(grp_test) == len_test
     ic(shutil.move(hdf5_train_new, hdf5))
 
 
