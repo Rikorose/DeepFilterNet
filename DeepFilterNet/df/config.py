@@ -12,14 +12,14 @@ T = TypeVar("T")
 class DfParams:
     def __init__(self):
         self.sr: int = config("SR", cast=int, default=48_000, section="DF")
-        self.fft_size: int = config("FFT_SIZE", cast=int, default=384, section="DF")
-        self.hop_size: int = config("HOP_SIZE", cast=int, default=192, section="DF")
-        self.nb_erb: int = config("NB_ERB", cast=int, default=16, section="DF")
-        self.nb_df: int = config("NB_DF", cast=int, default=24, section="DF")
+        self.fft_size: int = config("FFT_SIZE", cast=int, default=960, section="DF")
+        self.hop_size: int = config("HOP_SIZE", cast=int, default=480, section="DF")
+        self.nb_erb: int = config("NB_ERB", cast=int, default=32, section="DF")
+        self.nb_df: int = config("NB_DF", cast=int, default=96, section="DF")
         self.norm_tau: float = config("NORM_TAU", 1, float, section="DF")
         self.lsnr_max: int = config("LSNR_MAX", 35, int, section="DF")
         self.lsnr_min: int = config("LSNR_MIN", -15, int, section="DF")
-        self.min_nb_freqs = config("MIN_NB_ERB_FREQS", 1, int, section="DF")
+        self.min_nb_freqs = config("MIN_NB_ERB_FREQS", 2, int, section="DF")
 
 
 class Config:
