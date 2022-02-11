@@ -2,7 +2,7 @@ import os
 import string
 from configparser import ConfigParser
 from shlex import shlex
-from typing import Any, List, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 from loguru import logger
 
