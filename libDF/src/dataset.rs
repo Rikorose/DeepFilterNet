@@ -1552,7 +1552,7 @@ mod tests {
             wav_utils::write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32)
                 .unwrap();
             let dsn =
-                &str::replace(ds, "../assets/noise", "").replace("_", "").replace(".hdf5", "");
+                &str::replace(ds, "../assets/noise", "").replace('_', "").replace(".hdf5", "");
             let filename = &str::replace(
                 basen,
                 ".wav",
