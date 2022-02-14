@@ -333,12 +333,12 @@ class FreqStage(nn.Module):
         conv_mlp: bool = False,
         downsample_hprev: bool = False,
         layer_scale=1e-6,
+        out_init_scale=1,
     ):
         super().__init__()
         self.lw = width  # Layer width
         self.fe = num_freqs  # Number of frequency bins in embedding
         self.hd = hidden_dim
-        ic(self.fe, patch_size)
         if self.fe % (patch_size * 2) != 0:
             raise ValueError(
                 f"num_freqs ({num_freqs}) must be dividable by overall stride. "
@@ -393,14 +393,14 @@ class FreqStage(nn.Module):
             transpose=True,
         )
         self.conv_out = ConvOut(patch_size, self.lw, out_ch, out_act)
-        named_apply(partial(_init_weights, head_init_scale=layer_scale), self)
+        named_apply(partial(_init_weights, out_init_scale=out_init_scale), self)
 
     def forward(
         self, input: Tensor, h_prev: Optional[Tensor] = None, h: Optional[Tensor] = None
     ) -> Tuple[Tensor, Tensor, Tensor]:
         # input shape: [B, 1, T, F]
-        x0 = self.conv_in(input)  # [B, C, T, F]
-        x1 = self.down_block(x0)  # [B, C, T, F/2]
+        x0 = self.conv_in(input)
+        x1 = self.down_block(x0)
         if h_prev is not None:
             assert self.conv_hprev_down is not None
             h_prev = self.conv_hprev_down(h_prev)
@@ -413,17 +413,18 @@ class FreqStage(nn.Module):
         return m, x_rnn, h
 
 
-def _init_weights(module, name=None, head_init_scale=1.0):
-    if isinstance(module, nn.Conv2d):
+def _init_weights(module, name=None, out_init_scale=1.0):
+    if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.LayerNorm)):
         trunc_normal_(module.weight, std=0.02)
         if hasattr(module, "bias"):
             nn.init.constant_(module.bias, 0)
+        if name and "conv_out." in name and isinstance(module, nn.Conv2d):
+            module.weight.data.mul_(out_init_scale)
+            if hasattr(module, "bias"):
+                module.bias.data.mul_(out_init_scale)
     elif isinstance(module, nn.Linear):
         trunc_normal_(module.weight, std=0.02)
         nn.init.constant_(module.bias, 0)
-        if name and "head." in name:
-            module.weight.data.mul_(head_init_scale)
-            module.bias.data.mul_(head_init_scale)
 
 
 class MSNet(nn.Module):
@@ -450,6 +451,7 @@ class MSNet(nn.Module):
                     depth=depth,
                     patch_size=2 ** (i + 1),
                     downsample_hprev=i >= 1,
+                    out_init_scale=ic(10 ** -(i + 2)),
                 )
                 for i, depth in enumerate(self.stages)
             ]
@@ -473,7 +475,8 @@ class MSNet(nn.Module):
         spec_f = spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2)  # [B, 2, T, F_df]
         h_conv: Optional[Tensor] = None
         for stage, _lim in zip(self.refinement_stages, self.refinement_snr_max):
-            spec_f, h_conv, _ = stage(spec_f.clone(), h_conv)
+            refinement, h_conv, _ = stage(spec_f, h_conv)
+            spec_f = spec_f + refinement
             # if lim >= 100:
             #     spec_f, _ = stage(spec_f)
             # else:
