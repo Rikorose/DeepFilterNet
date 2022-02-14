@@ -167,7 +167,7 @@ def main():
         )
         metrics = {"loss": train_loss}
         try:
-            metrics["lr"] = lrs.get_last_lr()[0]
+            metrics["lr"] = opt.param_groups[0]["lr"]
         except AttributeError:
             pass
         if debug:
@@ -197,7 +197,6 @@ def main():
             exit(0)
         losses.reset_summaries()
         lrs.step(epoch + 1, metric=val_loss)
-        ic([group["lr"] for group in opt.param_groups])
     test_loss = run_epoch(
         model=model,
         epoch=epoch,
@@ -310,11 +309,16 @@ def run_epoch(
                 opt.step()
             detach_hidden(model)
         l_mem.append(err.detach())
+        if lr_scheduler is not None:
+            num_updates += 1
+            lr_scheduler.step_update(num_updates=num_updates)
         if i % log_freq == 0:
             l_mean = torch.stack(l_mem[-100:]).mean().cpu()
             if torch.isnan(l_mean):
                 check_finite_module(model)
             l_dict = {"loss": l_mean.item()}
+            if lr_scheduler is not None:
+                l_dict["lr"] = opt.param_groups[0]["lr"]
             if debug:
                 l_dict.update(
                     {
@@ -334,9 +338,6 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
-        if lr_scheduler is not None:
-            num_updates += 1
-            lr_scheduler.step_update(num_updates=num_updates)
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     except UnboundLocalError as err:
