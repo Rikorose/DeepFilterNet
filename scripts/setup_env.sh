@@ -78,6 +78,7 @@ setup_env() {
     echo "Installing requirements"
     echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
     pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
+    pip install h5py
   fi
 }
 

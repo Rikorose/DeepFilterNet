@@ -33,7 +33,7 @@ DATA_CFG=${DATA_CFG:-$DATA_DIR/datasets.cfg} # Default dataset configuration
 DATA_CFG=$(readlink -f "$DATA_CFG")
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
 COPY_DATA=${COPY_DATA:-1}                    # Copy data
-COPY_MAX_GB=${COPY_DATA:-50}                 # Max amount to copy hdf5 datasets, rest will be linked
+COPY_MAX_GB=${COPY_MAX_GB:-50}               # Max amount to copy hdf5 datasets, rest will be linked
 DEBUG=${DEBUG:-0}                            # Debug mode passed to the python train script
 EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 
