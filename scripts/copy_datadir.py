@@ -1,7 +1,7 @@
 import argparse
 import json
-import shutil
 import os
+import shutil
 import subprocess
 import warnings
 from dataclasses import dataclass
@@ -37,7 +37,7 @@ def copy_datasets(
     have_read_locks = False
     if lock is not None:
         # We can have a write lock allowing exclusive access as well as multiple parallel read locks
-        while any(l.strip().endswith(".write") for l in open(lock_f)):
+        while any(line.strip().endswith(".write") for line in open(lock_f)):
             # Waite until the current write lock is released
             warnings.warn(f"<copy_datadir.py>: Could not lock target_dir {target_dir}")
             sleep(1)
