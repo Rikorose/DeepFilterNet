@@ -33,6 +33,7 @@ DATA_CFG=${DATA_CFG:-$DATA_DIR/datasets.cfg} # Default dataset configuration
 DATA_CFG=$(readlink -f "$DATA_CFG")
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
 COPY_DATA=${COPY_DATA:-1}                    # Copy data
+COPY_MAX_GB=${COPY_DATA:-50}                 # Max amount to copy hdf5 datasets, rest will be linked
 DEBUG=${DEBUG:-0}                            # Debug mode passed to the python train script
 EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 
@@ -119,20 +120,8 @@ if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
   NEW_DATA_DIR=/scratch/"$USER"/"$PROJECT_NAME"
   echo "Seting up data dir in $NEW_DATA_DIR"
   mkdir -p "$NEW_DATA_DIR"
-  # Check if another process is currently copying
-  while true; do
-    LOCK=$(rg lock "$NEW_DATA_DIR"/data_lock | sed "s/-lock//g")
-    if [[ -n $LOCK ]]; then
-      echo "Scratch dir is currently locked by: $LOCK"
-      sleep 30s
-    else
-      break
-    fi
-  done
-  echo "$MODEL_NAME-lock" >> "$NEW_DATA_DIR"/data_lock  # lock scratch dir
-  MAX_GB=50 "$PROJECT_HOME"/scripts/copy_datadir.sh "$DATA_DIR" "$DATA_CFG" "$NEW_DATA_DIR"
-  # release copy lock; remaining $MODEL_NAME indicates we are using it
-  sed -i "s/$MODEL_NAME-lock/$MODEL_NAME/g"  "$NEW_DATA_DIR"/data_lock
+  python3 "$PROJECT_HOME"/scripts/copy_datadir.py cp "$DATA_DIR" "$NEW_DATA_DIR" "$DATA_CFG" \
+    --lock $MODEL_NAME --max-gb $COPY_MAX_GB
   DATA_DIR="$NEW_DATA_DIR"
 fi
 
@@ -141,6 +130,12 @@ fi
 # Therefore, we send a SIGUSR1 to the python training script which needs to
 # write a continue file if it wants to get restarted. After training scripts
 # returns, check if there is a continue file and resubmit.
+function _cleanup_scratch {
+  echo "Checking if need to cleanup scratch: $NEW_DATA_DIR"
+  if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
+    python3 "$PROJECT_HOME"/scripts/copy_datadir.py cleanup "$NEW_DATA_DIR" --lock "$MODEL_NAME"
+  fi
+}
 function _at_exit {
   conda deactivate
   # Check for return code if training was completed
@@ -154,19 +149,10 @@ function _at_exit {
       $PROJECT_HOME/scripts/sbatch_train.sh $BASE_DIR $PROJECT_HOME $PROJECT_BRANCH"
     exit 0
   fi
-  echo "Checking if need to cleanup scratch: $NEW_DATA_DIR"
-  if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
-    cat "$NEW_DATA_DIR"/data_lock
-    # Remove own lock
-    sed -i /"$MODEL_NAME"/d "$NEW_DATA_DIR"/data_lock
-    if ! wc -l "$NEW_DATA_DIR"/data_lock; then
-      # No other locks found. Cleanup space.
-      echo "cleaning up data dir $NEW_DATA_DIR"
-      rm -r "$NEW_DATA_DIR"
-    fi
-  fi
+  _cleanup_scratch
 }
 trap _at_exit EXIT
+trap _cleanup_scratch ERR
 
 function _usr1 {
   echo "Caught SIGUSR1 signal!"
