@@ -6,3 +6,4 @@ icecream>=2
 loguru>=0.5
 numpy>=1.20
 timm>=0.5.4
+ptflops
