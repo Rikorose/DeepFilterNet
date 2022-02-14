@@ -114,8 +114,8 @@ class ConvTranspose2d(nn.Module):
             in_ch,
             out_ch,
             kernel_size=kernel_size,
-            padding=(kernel_size[0] - 1, fpad + dilation - 1),
-            output_padding=(0, fpad),
+            padding=(kernel_size[0] - 1, fpad_ + dilation - 1),
+            output_padding=(0, fpad_),
             stride=(1, fstride),  # Stride over time is always 1
             dilation=(1, dilation),
             groups=groups,
