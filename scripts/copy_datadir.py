@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -27,7 +28,7 @@ def du(path):
 
 def cp(src, tgt):
     """Copy a file via rsync"""
-    return subprocess.call(["rsync", "-aL", "--info=name,progress2", src, tgt])
+    return subprocess.call(["rsync", "-aL", "--info=name,stats", src, tgt])
 
 
 def copy_datasets(
@@ -54,6 +55,9 @@ def copy_datasets(
         open(lock_f, "a+").write(f"\n{lock}.write")
     cfg = json.load(open(cfg_path))
     os.makedirs(target_dir, exist_ok=True)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    futures = {}
+    cur_gb = du(target_dir)
     # Start with train since it will be accessed most of the time
     for split in ("train", "valid", "test"):
         # Get all Datasets and sort by dataset type and sampling factor
@@ -71,7 +75,8 @@ def copy_datasets(
             for fn, _ in datasets[dstype]:
                 fn_src = os.path.join(src_dir, fn)
                 fn_tgt = os.path.join(target_dir, fn)
-                if du(target_dir) + du(fn_src) > max_gb:  # If too large, link instead
+                new_gb = du(fn_src)
+                if cur_gb + new_gb > max_gb:  # If too large, link instead
                     if not os.path.exists(fn_tgt):
                         print("linking", fn_src)
                         subprocess.call(["ln", "-s", fn_src, fn_tgt])
@@ -81,7 +86,11 @@ def copy_datasets(
                     elif have_read_locks and os.path.isfile(fn_tgt):
                         continue
                     print("copying", fn_src)
-                    cp(fn_src, fn_tgt)
+                    cur_gb += new_gb
+                    futures[executor.submit(cp, fn_src, fn_tgt)] = fn_tgt
+    for future in concurrent.futures.as_completed(futures):
+        print("Completed: ", futures[future])
+
     if lock is not None:
         remove_lock(target_dir, lock + ".write", lock + ".read")
 
