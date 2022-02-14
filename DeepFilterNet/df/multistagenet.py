@@ -338,8 +338,13 @@ class FreqStage(nn.Module):
         self.lw = width  # Layer width
         self.fe = num_freqs  # Number of frequency bins in embedding
         self.hd = hidden_dim
-        if self.fe % (patch_size // 2) != 0:
-            raise ValueError("`num_freqs` must be dividable by overall stride")
+        ic(self.fe, patch_size)
+        if self.fe % (patch_size * 2) != 0:
+            raise ValueError(
+                f"num_freqs ({num_freqs}) must be dividable by overall stride. "
+                f"Match the number of frequencies to be a multiple of {patch_size*2} "
+                "or reduce the number of stages."
+            )
 
         norm_layer = partial(LayerNorm2d, eps=1e-6)
         cl_norm_layer = norm_layer if conv_mlp else partial(nn.LayerNorm, eps=1e-6)
