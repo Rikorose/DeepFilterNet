@@ -451,7 +451,7 @@ class MSNet(nn.Module):
                     depth=depth,
                     patch_size=2 ** (i + 1),
                     downsample_hprev=i >= 1,
-                    out_init_scale=ic(10 ** -(i + 2)),
+                    out_init_scale=2 ** -(i + 1),
                 )
                 for i, depth in enumerate(self.stages)
             ]
