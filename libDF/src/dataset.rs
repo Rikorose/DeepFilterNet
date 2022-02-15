@@ -660,7 +660,7 @@ impl TdDataset {
 
 impl Dataset<f32> for TdDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
-        seed_from_u64(idx as u64 + self.seed + seed.unwrap_or(0));
+        seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
         let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
