@@ -273,6 +273,7 @@ impl DataLoader {
         in_sender.send((0, -1)).expect("Could not send index");
 
         let worker_recievers: Vec<_> = (0..self.num_workers).map(|_| in_receiver.clone()).collect();
+        let overfit = self.overfit;
         let handle = thread::spawn(move || -> Result<()> {
             worker_recievers.par_iter().try_for_each(|r| {
                 while let Ok((sample_idx, ordering_idx)) = r.recv() {
@@ -281,7 +282,12 @@ impl DataLoader {
                         return Ok(());
                     }
                     assert!(ordering_idx >= 0);
-                    let sample = ds.get_sample(sample_idx, Some(epoch_seed));
+                    let seed = Some(if overfit {
+                        epoch_seed
+                    } else {
+                        epoch_seed + sample_idx as u64
+                    });
+                    let sample = ds.get_sample(sample_idx, seed);
                     out_sender.send((ordering_idx as usize, sample.map_err(|e| e.into())))?;
                 }
                 Ok(())
