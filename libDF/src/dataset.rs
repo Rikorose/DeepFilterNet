@@ -3,6 +3,7 @@ use std::fs;
 use std::io::BufReader;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::mpsc::sync_channel;
 
 #[cfg(feature = "flac")]
 use claxon;
@@ -10,6 +11,7 @@ use hdf5::{types::VarLenUnicode, File};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
+use rayon::prelude::*;
 use realfft::num_traits::Zero;
 use serde::Deserialize;
 use thiserror::Error;
@@ -346,31 +348,39 @@ impl<'a> DatasetBuilder<'a> {
         })
     }
     pub fn build_td_dataset(self) -> Result<TdDataset> {
-        let mut datasets = match self.datasets {
+        let datasets = match self.datasets {
             None => panic!("No datasets provided"),
             Some(ds) => ds,
         };
         // TODO: Return all sample by default and not only 10 seconds
         let max_samples: usize = (self.max_len_s.unwrap_or(10.) * self.sr as f32).round() as usize;
         // Get dataset handles and keys. Each key is a unique String.
-        let mut hdf5_handles = Vec::new();
-        let mut ds_keys = Vec::new();
-        let mut config: Vec<Hdf5Cfg> = Vec::new();
-        let mut has_rirs = false;
-        for (i, cfg) in datasets.hdf5s.drain(..).enumerate() {
-            let name = cfg.filename();
-            let path = Path::new(self.ds_dir).join(name);
+        let ds_path = Path::new(self.ds_dir);
+        let (sender, receiver) = sync_channel(datasets.hdf5s.len());
+        datasets.hdf5s.par_iter().try_for_each(|cfg| -> Result<()> {
+            let path = ds_path.join(cfg.filename());
             if (!path.is_file()) && path.read_link().is_err() {
                 eprintln!("Dataset {:?} not found. Skipping.", path);
-                continue;
+                return Ok(());
             }
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
-            if ds.dstype == DsType::RIR {
-                has_rirs = true
-            }
-            ds_keys.push((ds.dstype, i, ds.keys()?));
+            let key_data = (ds.dstype, ds.keys()?);
+            let is_rir = ds.dstype == DsType::RIR;
+            sender.send(Some((cfg, ds, key_data, is_rir))).unwrap();
+            Ok(())
+        })?;
+        sender.send(None).unwrap();
+        let mut config = Vec::new();
+        let mut hdf5_handles = Vec::new();
+        let mut ds_keys = Vec::new();
+        let mut has_rirs = false;
+        let mut i = 0;
+        while let Some((cfg, ds, keys, r)) = receiver.try_recv().unwrap() {
+            config.push(cfg.clone());
             hdf5_handles.push(ds);
-            config.push(cfg);
+            ds_keys.push((keys.0, i, keys.1));
+            has_rirs = has_rirs || r;
+            i += 1;
         }
         if hdf5_handles.is_empty() {
             return Err(DfDatasetError::NoDatasetFoundError);
@@ -613,7 +623,7 @@ impl TdDataset {
         let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
             Err(e) => {
                 eprintln!(
-                    "Error during {} reading get_data() for key '{}' from dataset {}: {:?}",
+                    "Error during {} read_max_len() for key '{}' from dataset {}: {:?}",
                     self.ds_type(idx),
                     key,
                     self.ds_name(idx),
@@ -707,7 +717,7 @@ impl Dataset<f32> for TdDataset {
         for (ns_idx, ns_key) in &ns_ids {
             let mut ns = match self.read_max_len(*ns_idx, ns_key) {
                 Err(e) => {
-                    eprintln!("Error during noise reading get_data(): {}", e);
+                    eprintln!("Error during noise reading get_sample(): {}", e);
                     continue;
                 }
                 Ok(n) => n,
