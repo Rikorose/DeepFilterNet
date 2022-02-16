@@ -454,24 +454,34 @@ class Loss(nn.Module):
             ).long()
         enhanced_td = None
         clean_td = None
+        multi_stage = None
+        multi_stage_td = None
+        if multi_stage_specs:
+            # Stack spectrograms in a channel dimension
+            multi_stage = as_complex(torch.stack(multi_stage_specs, dim=1))
         lsnr_gt = self.lsnr(clean, noise=noisy - clean)
         if self.istft is not None:
             if self.store_losses or self.mrsl is not None:
                 enhanced_td = self.istft(enhanced)
                 clean_td = self.istft(clean)
+                if multi_stage is not None:
+                    # leave out erb enhanced
+                    multi_stage_td = self.istft(multi_stage[:, 1:])
 
         ml, sl, mrsl, cal = [torch.zeros((), device=clean.device)] * 4
         if self.ml_f != 0 and self.ml is not None:
             ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
             sl = torch.zeros((), device=clean.device)
-            for mss in multi_stage_specs:
-                mss = as_complex(mss.squeeze(1)).unsqueeze(1)
-                sl += self.sl(input=mss, target=clean[..., : mss.shape[-1]])
+            if multi_stage is not None:
+                sl += self.sl(input=multi_stage, target=clean.expand_as(multi_stage))
             else:
                 sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
-            mrsl = self.mrsl(enhanced_td, clean_td)
+            if multi_stage_td is not None:
+                mrsl = self.mrsl(multi_stage_td, clean_td.expand_as(multi_stage_td))
+            else:
+                mrsl = self.mrsl(enhanced_td, clean_td)
         lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
         if self.cal_f != 0 and self.cal is not None and df_alpha is not None:
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
