@@ -67,6 +67,7 @@ impl _FdDataLoader {
     #[allow(clippy::too_many_arguments)]
     #[new]
     fn new(
+        py: Python,
         ds_dir: &str,
         config_path: &str,
         sr: usize,
@@ -97,6 +98,7 @@ impl _FdDataLoader {
             }
             Ok(cfg) => cfg,
         };
+        py.check_signals()?;
         let mut ds_builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha);
         if let Some(max_len_s) = max_len_s {
@@ -119,17 +121,20 @@ impl _FdDataLoader {
             .dataset(cfg.split_config(Valid))
             .build_fft_dataset()
             .to_py_err()?;
+        py.check_signals()?;
         let test_ds = ds_builder
             .clone()
             .dataset(cfg.split_config(Test))
             .build_fft_dataset()
             .to_py_err()?;
+        py.check_signals()?;
         ds_builder = ds_builder.p_sample_full_speech(1.0);
         let train_ds = ds_builder
             .clone()
             .dataset(cfg.split_config(Train))
             .build_fft_dataset()
             .to_py_err()?;
+        py.check_signals()?;
         let ds = Datasets {
             train: train_ds,
             valid: valid_ds,
@@ -151,6 +156,7 @@ impl _FdDataLoader {
         if let Some(overfit) = overfit {
             dl_builder = dl_builder.overfit(overfit);
         }
+        py.check_signals()?;
         let loader = dl_builder.build().to_py_err()?;
         Ok(_FdDataLoader {
             loader,
