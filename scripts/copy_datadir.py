@@ -11,7 +11,6 @@ from time import sleep
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 import h5py
-from icecream import ic
 
 TIMESTAMP_FORMAT = "%Y%m%d%H%M"
 timestamp = datetime.now().strftime("%Y%m%d%H%M")
