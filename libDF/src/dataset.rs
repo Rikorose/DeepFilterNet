@@ -356,7 +356,7 @@ impl<'a> DatasetBuilder<'a> {
         let max_samples: usize = (self.max_len_s.unwrap_or(10.) * self.sr as f32).round() as usize;
         // Get dataset handles and keys. Each key is a unique String.
         let ds_path = Path::new(self.ds_dir);
-        let (sender, receiver) = sync_channel(datasets.hdf5s.len());
+        let (sender, receiver) = sync_channel(datasets.hdf5s.len() + 1);
         datasets.hdf5s.par_iter().try_for_each(|cfg| -> Result<()> {
             let path = ds_path.join(cfg.filename());
             if (!path.is_file()) && path.read_link().is_err() {
@@ -815,6 +815,7 @@ impl Dataset<f32> for TdDataset {
         self.rir_keys.clear();
 
         for (dstype, hdf5_idx, keys) in self.ds_keys.iter() {
+            debug_assert_eq!(&self.hdf5_handles[*hdf5_idx].keys().unwrap(), keys);
             let len = self.hdf5_handles[*hdf5_idx].len();
             let n_samples =
                 (self.config[*hdf5_idx].sampling_factor() * len as f32).round() as usize;
