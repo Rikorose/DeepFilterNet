@@ -470,13 +470,14 @@ class MSNet(nn.Module):
         m, x_rnn, h_erb = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
         lsnr, _ = self.lsnr_net(x_rnn)
-        out_specs = [spec]
+        out_specs = [spec.squeeze(1)] * (len(self.refinement_stages) + 1)
         # re/im into channel axis
         spec_f = spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2)  # [B, 2, T, F_df]
         h_conv: Optional[Tensor] = None
-        for stage, _lim in zip(self.refinement_stages, self.refinement_snr_max):
+        for i, (stage, _lim) in enumerate(zip(self.refinement_stages, self.refinement_snr_max)):
             refinement, h_conv, _ = stage(spec_f, h_conv)
             spec_f = spec_f + refinement
+            out_specs[i + 1][..., : self.df_bins, :] = spec_f.permute(0, 2, 3, 1)
             # if lim >= 100:
             #     spec_f, _ = stage(spec_f)
             # else:
