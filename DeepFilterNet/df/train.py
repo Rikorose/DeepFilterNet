@@ -187,6 +187,7 @@ def main():
             losses=losses,
             summary_dir=summary_dir,
         )
+        write_cp(model, "model", checkpoint_dir, epoch + 1, metric=val_loss)
         metrics = {"loss": val_loss}
         metrics.update(
             {n: torch.mean(torch.stack(vals)).item() for n, vals in losses.get_summaries()}
