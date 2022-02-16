@@ -638,6 +638,7 @@ mod tests {
                         .dataset(cfg.split_config(Split::Valid))
                         .build_fft_dataset()?,
                 };
+                dbg!(dataset_size, batch_size);
                 let mut loader = match DataLoader::builder(ds)
                     .num_threads(1)
                     .batch_size(batch_size)
@@ -664,10 +665,6 @@ mod tests {
                     },
                 };
                 for epoch in 0..2 {
-                    println!(
-                        "***** Test: Loader with dataset_size {}, batch_size {}, epoch {} ******",
-                        dataset_size, batch_size, epoch
-                    );
                     loader.start_epoch(split, epoch)?;
                     let mut n_samples = 0;
                     loop {
@@ -679,7 +676,6 @@ mod tests {
                             break;
                         }
                     }
-                    dbg!(n_samples, dataset_size);
                     assert_eq!(n_samples, dataset_size);
                 }
             }
