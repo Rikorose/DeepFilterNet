@@ -63,16 +63,19 @@ class Stft(nn.Module):
         self.register_buffer("w", window)
 
     def forward(self, input: Tensor):
-        # Time-domain input shape: [B, T]
+        # Time-domain input shape: [B, *, T]
         t = input.shape[-1]
-        return torch.stft(
-            input.view(-1, t),
+        sh = input.shape[:-1]
+        out = torch.stft(
+            input.reshape(-1, t),
             n_fft=self.n_fft,
             hop_length=self.hop,
             window=self.w,
             normalized=True,
             return_complex=True,
         )
+        out = out.view(*sh, *out.shape[-2:])
+        return out
 
 
 class Istft(nn.Module):
@@ -86,18 +89,21 @@ class Istft(nn.Module):
         self.register_buffer("w_inv", window_inv)
 
     def forward(self, input: Tensor):
-        # Input shape: [B (C) T, F, (2)]
+        # Input shape: [B, * T, F, (2)]
         input = as_complex(input)
         t, f = input.shape[-2:]
+        sh = input.shape[:-2]
         # Even though this is not the DF implementation, it numerical sufficiently close.
         # Pad one extra step at the end to get original signal length
-        return torch.istft(
+        out = torch.istft(
             F.pad(input.reshape(-1, t, f).transpose(1, 2), (0, 1)),
             n_fft=self.n_fft_inv,
             hop_length=self.hop_inv,
             window=self.w_inv,
             normalized=True,
         )
+        out = out.view(*sh, out.shape[-1])
+        return out
 
 
 class MultiResSpecLoss(nn.Module):
