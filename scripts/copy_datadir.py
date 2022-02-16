@@ -11,6 +11,7 @@ from time import sleep
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 import h5py
+from icecream import ic
 
 TIMESTAMP_FORMAT = "%Y%m%d%H%M"
 timestamp = datetime.now().strftime("%Y%m%d%H%M")
@@ -58,13 +59,16 @@ def copy_datasets(
             have_read_locks = False
             cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
             for line in open(lock_f):
+                print("Found existing lock", line.strip())
                 try:
                     lock_timestamp = line.strip().split(".")[1]
                     lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
-                except:
+                except Exception as e:
+                    print(e)
                     continue
                 if cur_timestamp - lock_timestamp < timedelta(days=1):
                     have_read_locks = True
+                    break
         # Lock the target dir for writing
         open(lock_f, "a+").write(f"\n{lock}.{timestamp}.write")
     cfg = json.load(open(cfg_path))
