@@ -3,6 +3,7 @@ import os
 import re
 from typing import List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 from loguru import logger
 from torch import nn
@@ -87,8 +88,18 @@ def write_cp(
     dirname: str,
     epoch: int,
     extension="ckpt",
+    metric: Optional[float] = None,
 ):
     check_finite_module(obj)
+    if metric is not None:
+        # Each line contains a previous best with entries: (epoch, metric)
+        prev_best_f = open(os.path.join(dirname, ".best"), "a+")
+        # Load last line [-1] and check metric [1]
+        if metric > np.loadtxt(prev_best_f)[-1][1]:
+            np.savetxt(prev_best_f, np.array([[float(epoch), metric]]))
+            cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}.best")
+            cleanup(name, dirname, extension + ".best", nkeep=1)
+        prev_best_f.close()
     cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}")
     logger.info(f"Writing checkpoint {cp_name} with epoch {epoch}")
     torch.save(obj.state_dict(), cp_name)
