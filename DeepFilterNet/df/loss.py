@@ -92,7 +92,7 @@ class Istft(nn.Module):
         # Even though this is not the DF implementation, it numerical sufficiently close.
         # Pad one extra step at the end to get original signal length
         return torch.istft(
-            F.pad(input.view(-1, t, f).transpose(1, 2), (0, 1)),
+            F.pad(input.reshape(-1, t, f).transpose(1, 2), (0, 1)),
             n_fft=self.n_fft_inv,
             hop_length=self.hop_inv,
             window=self.w_inv,
