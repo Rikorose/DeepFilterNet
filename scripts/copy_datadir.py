@@ -6,10 +6,14 @@ import shutil
 import subprocess
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from time import sleep
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 import h5py
+
+TIMESTAMP_FORMAT = "%Y%m%d%H%M"
+timestamp = datetime.now().strftime("%Y%m%d%H%M")
 
 
 @dataclass
@@ -34,6 +38,7 @@ def cp(src, tgt):
 def copy_datasets(
     src_dir: str, target_dir: str, cfg_path: str, max_gb: float, lock: Optional[str] = None
 ):
+    os.makedirs(target_dir, exist_ok=True)
     lock_f = os.path.join(target_dir, ".lock")
     have_read_locks = False
     if lock is not None:
@@ -48,11 +53,20 @@ def copy_datasets(
                 warnings.warn(f"<copy_datadir.py>: Could not lock target_dir {target_dir}")
                 sleep(tries)
                 tries *= 2
-                if tries >= 2**12:
+                if tries >= 2**12:  # 2**11 ~ 34 minutes
                     break
-            have_read_locks = sum(1 for _ in open(lock_f)) > 0
+            have_read_locks = False
+            cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+            for line in open(lock_f):
+                try:
+                    lock_timestamp = line.strip().split(".")[1]
+                    lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
+                except:
+                    continue
+                if cur_timestamp - lock_timestamp < timedelta(days=1):
+                    have_read_locks = True
         # Lock the target dir for writing
-        open(lock_f, "a+").write(f"\n{lock}.write")
+        open(lock_f, "a+").write(f"\n{lock}.{timestamp}.write")
     cfg = json.load(open(cfg_path))
     os.makedirs(target_dir, exist_ok=True)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
@@ -92,7 +106,7 @@ def copy_datasets(
         print("Completed: ", futures[future])
 
     if lock is not None:
-        remove_lock(target_dir, lock + ".write", lock + ".read")
+        remove_lock(target_dir, lock, lock + "." + timestamp + ".read")
 
 
 def remove_lock(target_dir: str, lock: str, new_lock: Optional[str] = None):
@@ -101,7 +115,9 @@ def remove_lock(target_dir: str, lock: str, new_lock: Optional[str] = None):
         lines = []
         for line in f.readlines():
             line = line.strip()
-            if line == "" or line == lock or line == new_lock:
+            if line == "" or line.startswith(lock):
+                continue
+            if new_lock is not None and line.startswith(new_lock):
                 continue
             lines.append(line + "\n")
         if new_lock is not None:
@@ -128,11 +144,14 @@ if __name__ == "__main__":
     cp_parser.add_argument("target_dir")
     cp_parser.add_argument("data_cfg")
     cp_parser.add_argument("--max-gb", type=float, default=100)
-    cp_parser.add_argument("--lock", type=str, default=None)
+    cp_parser.add_argument("--lock", "-l", type=str, default=None)
     cleanup_parser = subparsers.add_parser("cleanup")
     cleanup_parser.add_argument("target_dir")
     cleanup_parser.add_argument("--lock", type=str, default=None)
     args = parser.parse_args()
+    if args.subparser_name is None:
+        parser.print_help()
+        exit(1)
     if args.subparser_name in ("cp", "copy-datasets"):
         copy_datasets(args.src_dir, args.target_dir, args.data_cfg, args.max_gb, args.lock)
     else:
