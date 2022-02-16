@@ -10,6 +10,8 @@ from loguru import logger
 from timm.scheduler import CosineLRScheduler
 from timm.scheduler.scheduler import Scheduler
 from torch import Tensor, nn, optim
+from torch.autograd.anomaly_mode import set_detect_anomaly
+from torch.autograd.grad_mode import set_grad_enabled
 from torch.types import Number
 
 from df.checkpoint import load_model, read_cp, write_cp
@@ -238,7 +240,6 @@ def run_epoch(
     dev = get_device()
     l_mem = []
     is_train = split == "train"
-    summary_fn = summary_write  # or summary_noop
     model.train(mode=is_train)
     losses.store_losses = debug or not is_train
     max_steps = loader.len(split) - 1
@@ -257,14 +258,13 @@ def run_epoch(
         clean = batch.speech.to(dev, non_blocking=True)
         atten = batch.atten.to(dev, non_blocking=True)
         snrs = batch.snr.to(dev, non_blocking=True)
-        with torch.autograd.set_detect_anomaly(detect_anomaly):
-            with torch.set_grad_enabled(is_train):
-                enh, m, lsnr, other = model.forward(
-                    spec=as_real(noisy),
-                    feat_erb=feat_erb,
-                    feat_spec=feat_spec,
-                    atten_lim=atten,
-                )
+        with set_detect_anomaly(detect_anomaly and is_train), set_grad_enabled(is_train):
+            enh, m, lsnr, other = model.forward(
+                spec=as_real(noisy),
+                feat_erb=feat_erb,
+                feat_spec=feat_spec,
+                atten_lim=atten,
+            )
             df_alpha, multi_stage_specs = None, []
             if isinstance(other, Tensor):
                 df_alpha = other
@@ -328,7 +328,7 @@ def run_epoch(
                     }
                 )
             log_metrics(f"[{epoch}] [{i}/{max_steps}]", l_dict)
-            summary_fn(
+            summary_write(
                 clean,
                 noisy,
                 enh,
