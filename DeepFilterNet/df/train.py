@@ -403,9 +403,7 @@ def load_opt(
     return opt
 
 
-def load_lrs(
-    steps_per_epoch: int
-) -> np.ndarray:
+def load_lrs(steps_per_epoch: int) -> np.ndarray:
     lr = config.get("lr", float, "optim")
     num_epochs = config.get("max_epochs", int, "train")
     lr_min = config("lr_min", 1e-6, float, section="optim")
