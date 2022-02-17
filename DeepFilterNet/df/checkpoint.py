@@ -15,7 +15,7 @@ from libdf import DF
 
 
 def get_epoch(cp) -> int:
-    return int(os.path.splitext(os.path.basename(cp))[0].split("_")[-1])
+    return int(os.path.basename(cp).split(".")[0].split("_")[-1])
 
 
 def load_model(
@@ -89,17 +89,26 @@ def write_cp(
     epoch: int,
     extension="ckpt",
     metric: Optional[float] = None,
+    cmp="min",
 ):
     check_finite_module(obj)
     if metric is not None:
+        assert cmp in ("min", "max")
         # Each line contains a previous best with entries: (epoch, metric)
-        prev_best_f = open(os.path.join(dirname, ".best"), "a+")
-        # Load last line [-1] and check metric [1]
-        if metric > np.loadtxt(prev_best_f)[-1][1]:
-            np.savetxt(prev_best_f, np.array([[float(epoch), metric]]))
-            cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}.best")
-            cleanup(name, dirname, extension + ".best", nkeep=1)
-        prev_best_f.close()
+        with open(os.path.join(dirname, ".best"), "a+") as prev_best_f:
+            prev_best_f.seek(0)  # "a+" creates a file in read/write mode without truncating
+            lines = prev_best_f.readlines()
+            if len(lines) == 0:
+                prev_best = float("inf" if cmp == "min" else "-inf")
+            else:
+                prev_best = float(lines[-1].strip().split(" ")[1])
+            cmp = "__lt__" if cmp == "min" else "__gt__"
+            if getattr(metric, cmp)(prev_best):
+                prev_best_f.seek(0, os.SEEK_END)
+                np.savetxt(prev_best_f, np.array([[float(epoch), metric]]))
+                cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}.best")
+                torch.save(obj.state_dict(), cp_name)
+                cleanup(name, dirname, extension + ".best", nkeep=1)
     cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}")
     logger.info(f"Writing checkpoint {cp_name} with epoch {epoch}")
     torch.save(obj.state_dict(), cp_name)
