@@ -69,15 +69,17 @@ class Config:
             return "".join(str(v) + cast.delimiter for v in value)[:-1]
         return str(value)
 
-    def set(self, section: str, option: str, value: T, cast: Type[T]):
+    def set(self, option: str, value: T, cast: Type[T], section: Optional[str] = None) -> T:
+        section = self.DEFAULT_SECTION if section is None else section
         section = section.lower()
         if not self.parser.has_section(section):
-            raise ValueError(f"Section not found: {section}")
+            self.parser.add_section(section)
         if self.parser.has_option(section, option):
             if value == self.cast(self.parser.get(section, option), cast):
-                return
+                return value
         self.modified = True
         self.parser.set(section, option, self.tostr(value, cast))
+        return value
 
     def __call__(
         self,
@@ -115,7 +117,7 @@ class Config:
         else:
             value = default
             if save:
-                self.set(section, option, value, cast)
+                self.set(option, value, cast, section)
         return self.cast(value, cast)
 
     def cast(self, value, cast):
@@ -129,7 +131,8 @@ class Config:
             raise ValueError("Parse error")
         return cast(value)
 
-    def get(self, option: str, section: str, cast: Type[T] = str) -> T:
+    def get(self, option: str, cast: Type[T] = str, section: Optional[str] = None) -> T:
+        section = self.DEFAULT_SECTION if section is None else section
         assert self.parser.has_section(section)
         assert self.parser.has_option(section, option)
         return cast(self.parser.get(section, option))
