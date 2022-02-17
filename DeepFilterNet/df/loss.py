@@ -402,7 +402,7 @@ class Loss(nn.Module):
         self.store_losses = False
         self.summaries: Dict[str, List[Tensor]] = self.reset_summaries()
         # Mask Loss
-        self.ml_f = config("factor", 1, float, section="MaskLoss")
+        self.ml_f = config("factor", 0, float, section="MaskLoss")  # e.g. 1
         self.ml_gamma = config("gamma", 0.6, float, section="MaskLoss")
         self.ml_gamma_pred = config("gamma_pred", 0.6, float, section="MaskLoss")
         self.ml_f_under = config("f_under", 2, float, section="MaskLoss")
@@ -417,11 +417,11 @@ class Loss(nn.Module):
             powers=[2, 4],
         )
         # DfAlphaLoss
-        self.cal_f = config("factor", 1e3, float, section="DfAlphaLoss")
+        self.cal_f = config("factor", 0, float, section="DfAlphaLoss")  # e.g. 1e3
         self.cal = DfAlphaLoss(self.cal_f) if self.cal_f > 0 else None
         # SpectralLoss
-        self.sl_fm = config("factor_magnitude", 1e6, float, section="SpectralLoss")
-        self.sl_fc = config("factor_complex", 1e6, float, section="SpectralLoss")
+        self.sl_fm = config("factor_magnitude", 0, float, section="SpectralLoss")  # e.g. 1e4
+        self.sl_fc = config("factor_complex", 0, float, section="SpectralLoss")
         self.sl_gamma = config("gamma", 1, float, section="SpectralLoss")
         self.sl_f = self.sl_fm + self.sl_fc
         if self.sl_f > 0:
