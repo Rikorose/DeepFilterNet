@@ -250,7 +250,7 @@ def run_epoch(
         opt.zero_grad()
         it = start_steps + i  # global training iteration
         if lr_scheduler_values is not None or wd_scheduler_values is not None:
-            for i, param_group in enumerate(opt.param_groups):
+            for param_group in opt.param_groups:
                 if lr_scheduler_values is not None:
                     param_group["lr"] = lr_scheduler_values[it] * param_group.get("lr_scale", 1)
                 if wd_scheduler_values is not None and param_group["weight_decay"] > 0:
