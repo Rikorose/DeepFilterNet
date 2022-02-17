@@ -3,7 +3,6 @@ import math
 import os
 import random
 import subprocess
-import warnings
 from socket import gethostname
 from typing import Any, Set, Union
 
@@ -166,68 +165,66 @@ def get_branch_name():
     return branch
 
 
-def clip_grad_norm_(
-    parameters,
-    max_norm: float,
-    norm_type: float = 2.0,
-    error_if_nonfinite: bool = False,
-) -> torch.Tensor:
-    r"""Pytorch 1.9 backport: Clips gradient norm of an iterable of parameters.
+def cosine_scheduler(
+    base_value: float,
+    final_value: float,
+    epochs: int,
+    niter_per_ep: int,
+    warmup_epochs: int = 0,
+    start_warmup_value: float = 0,
+    warmup_steps: int = -1,
+    initial_ep_per_cycle: float = -1,
+    cycle_decay: float = 1,
+    cycle_mul: float = 1,
+):
+    """Adopted from official ConvNeXt repo."""
+    warmup_schedule = np.array([])
+    warmup_iters = warmup_epochs * niter_per_ep
+    if warmup_steps > 0:
+        warmup_iters = warmup_steps
+    if warmup_epochs > 0:
+        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
-    The norm is computed over all gradients together, as if they were
-    concatenated into a single vector. Gradients are modified in-place.
-
-    Args:
-        parameters (Iterable[Tensor] or Tensor): an iterable of Tensors or a
-            single Tensor that will have gradients normalized
-        max_norm (float or int): max norm of the gradients
-        norm_type (float or int): type of the used p-norm. Can be ``'inf'`` for
-            infinity norm.
-        error_if_nonfinite (bool): if True, an error is thrown if the total
-            norm of the gradients from :attr:``parameters`` is ``nan``,
-            ``inf``, or ``-inf``. Default: False (will switch to True in the future)
-
-    Returns:
-        Total norm of the parameters (viewed as a single vector).
-    """
-    if isinstance(parameters, torch.Tensor):
-        parameters = [parameters]
-    parameters = [p for p in parameters if p.grad is not None]
-    max_norm = float(max_norm)
-    norm_type = float(norm_type)
-    if len(parameters) == 0:
-        return torch.tensor(0.0)
-    device = parameters[0].grad.device
-    if norm_type == torch._six.inf:
-        norms = [p.grad.detach().abs().max().to(device) for p in parameters]
-        total_norm = norms[0] if len(norms) == 1 else torch.max(torch.stack(norms))
+    iters_after_warmup = epochs * niter_per_ep - warmup_iters
+    if initial_ep_per_cycle == -1:
+        initial_ep_per_cycle = iters_after_warmup
+        num_cycles = 1
+        cycle_lengths = [iters_after_warmup]
+        assert cycle_decay == 1
+        assert cycle_mul == 1
     else:
-        total_norm = torch.norm(
-            torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]),
-            norm_type,
-        )
-    if total_norm.isnan() or total_norm.isinf():
-        if error_if_nonfinite:
-            raise RuntimeError(
-                f"The total norm of order {norm_type} for gradients from "
-                "`parameters` is non-finite, so it cannot be clipped. To disable "
-                "this error and scale the gradients by the non-finite norm anyway, "
-                "set `error_if_nonfinite=False`"
-            )
+        initial_cycle_iter = int(round(initial_ep_per_cycle * niter_per_ep))
+        if cycle_mul == 1:
+            num_cycles = int(math.ceil(iters_after_warmup / (initial_ep_per_cycle * niter_per_ep)))
+            cycle_lengths = [initial_cycle_iter] * num_cycles
         else:
-            warnings.warn(
-                "Non-finite norm encountered in torch.nn.utils.clip_grad_norm_; continuing anyway. "
-                "Note that the default behavior will change in a future release to error out "
-                "if a non-finite total norm is encountered. At that point, setting "
-                "error_if_nonfinite=false will be required to retain the old behavior.",
-                FutureWarning,
-                stacklevel=2,
-            )
-    clip_coef = max_norm / (total_norm + 1e-6)
-    if clip_coef < 1:
-        for p in parameters:
-            p.grad.detach().mul_(clip_coef.to(p.grad.device))
-    return total_norm
+            num_cycles = 0
+            cycle_lengths = []
+            i = 0
+            while sum(cycle_lengths) < iters_after_warmup:
+                num_cycles += 1
+                cycle_lengths.append(initial_cycle_iter * cycle_mul**i)
+                i += 1
+    schedule_cycles = []
+    for i in range(num_cycles):
+        cycle_base_value = base_value * cycle_decay**i
+        iters = np.arange(cycle_lengths[i])
+        schedule = np.array(
+            [
+                final_value
+                + 0.5
+                * (cycle_base_value - final_value)
+                * (1 + math.cos(math.pi * i / (len(iters))))
+                for i in iters
+            ]
+        )
+        schedule_cycles.append(schedule)
+
+    schedule = np.concatenate((warmup_schedule, *schedule_cycles))
+    schedule = schedule[: epochs * niter_per_ep]
+
+    assert len(schedule) == epochs * niter_per_ep
+    return schedule
 
 
 # from pytorch/ignite:
