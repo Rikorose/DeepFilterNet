@@ -7,17 +7,17 @@ import numpy as np
 import torch
 import torchaudio
 from loguru import logger
-from timm.scheduler import CosineLRScheduler
-from timm.scheduler.scheduler import Scheduler
 from torch import Tensor, nn, optim
 from torch.autograd.anomaly_mode import set_detect_anomaly
 from torch.autograd.grad_mode import set_grad_enabled
+from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.types import Number
 
 from df.checkpoint import load_model, read_cp, write_cp
 from df.config import Csv, config
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
+from df.lr import cosine_scheduler
 from df.model import ModelParams
 from df.modules import get_device
 from df.utils import (
@@ -25,7 +25,6 @@ from df.utils import (
     as_real,
     check_finite_module,
     check_manual_seed,
-    clip_grad_norm_,
     detach_hidden,
     get_norm_alpha,
     make_np,
@@ -133,8 +132,7 @@ def main():
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
-    last_epoch = epoch if epoch > 0 else None
-    lrs = load_lrs(opt, len(dataloader), last_epoch)
+    lrs = load_lrs(len(dataloader))
 
     losses = setup_losses()
 
@@ -165,7 +163,7 @@ def main():
             opt=opt,
             losses=losses,
             summary_dir=summary_dir,
-            lr_scheduler=lrs,
+            lr_scheduler_values=lrs,
         )
         metrics = {"loss": train_loss}
         try:
@@ -199,7 +197,6 @@ def main():
             logger.info("Stopping training")
             exit(0)
         losses.reset_summaries()
-        lrs.step(epoch + 1, metric=val_loss)
     test_loss = run_epoch(
         model=model,
         epoch=epoch,
@@ -223,7 +220,8 @@ def run_epoch(
     opt: optim.Optimizer,
     losses: Loss,
     summary_dir: str,
-    lr_scheduler: Optional[Scheduler] = None,
+    lr_scheduler_values: Optional[np.ndarray] = None,
+    wd_scheduler_values: Optional[np.ndarray] = None,
 ) -> float:
     global debug
 
@@ -246,10 +244,17 @@ def run_epoch(
     seed = epoch if is_train else 42
     n_nans = 0
     logger.info("Dataloader len: {}".format(loader.len(split)))
-    num_updates = epoch * loader.len(split)
+    start_steps = epoch * loader.len(split)
 
     for i, batch in enumerate(loader.iter_epoch(split, seed)):
         opt.zero_grad()
+        it = start_steps + i  # global training iteration
+        if lr_scheduler_values is not None or wd_scheduler_values is not None:
+            for i, param_group in enumerate(opt.param_groups):
+                if lr_scheduler_values is not None:
+                    param_group["lr"] = lr_scheduler_values[it] * param_group.get("lr_scale", 1)
+                if wd_scheduler_values is not None and param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_scheduler_values[it]
         assert batch.feat_spec is not None
         assert batch.feat_erb is not None
         feat_erb = batch.feat_erb.to(dev, non_blocking=True)
@@ -310,15 +315,12 @@ def run_epoch(
                 opt.step()
             detach_hidden(model)
         l_mem.append(err.detach())
-        if lr_scheduler is not None:
-            num_updates += 1
-            lr_scheduler.step_update(num_updates=num_updates)
         if i % log_freq == 0:
             l_mean = torch.stack(l_mem[-100:]).mean().cpu()
             if torch.isnan(l_mean):
                 check_finite_module(model)
             l_dict = {"loss": l_mean.item()}
-            if lr_scheduler is not None:
+            if lr_scheduler_values is not None:
                 l_dict["lr"] = opt.param_groups[0]["lr"]
             if debug:
                 l_dict.update(
@@ -402,36 +404,29 @@ def load_opt(
 
 
 def load_lrs(
-    opt: optim.Optimizer, steps_per_epoch: Optional[int] = None, last_epoch: Optional[int] = None
-) -> Scheduler:
-    lr = config.get("lr", "optim", float)
-    num_epochs = config.get("max_epochs", "train", int)
+    steps_per_epoch: int
+) -> np.ndarray:
+    lr = config.get("lr", float, "optim")
+    num_epochs = config.get("max_epochs", int, "train")
     lr_min = config("lr_min", 1e-6, float, section="optim")
     lr_warmup = config("lr_warmup", 1e-4, float, section="optim")
     assert lr_warmup < lr
-    n = steps_per_epoch or 1  # num updates per epoch
-    warmup_t = config("warmup_epochs", 3, int, section="optim") * n
+    warmup_epochs = config("warmup_epochs", 3, int, section="optim")
     lr_cycle_mul = config("lr_cycle_mul", 1.0, float, section="optim")
     lr_cycle_decay = config("lr_cycle_decay", 0.5, float, section="optim")
-    lr_cycle_limit = config("lr_cycle_limit", 1, int, section="optim") * n
-    # Update after each epoch or update after each optim step
-    lr_update_per_epoch = config("lr_update_per_epoch", True, bool, section="optim")
-    if not lr_update_per_epoch:
-        assert steps_per_epoch is not None
-    lrs = CosineLRScheduler(
-        opt,
-        t_initial=num_epochs,
-        lr_min=lr_min,
-        warmup_lr_init=lr_warmup,
-        warmup_t=warmup_t,
-        cycle_mul=lr_cycle_mul,
+    lr_cycle_epochs = config("lr_cycle_epochs", -1, int, section="optim")
+    lr_values = cosine_scheduler(
+        lr,
+        lr_min,
+        epochs=num_epochs,
+        niter_per_ep=steps_per_epoch,
+        warmup_epochs=warmup_epochs,
+        start_warmup_value=lr_warmup,
+        initial_ep_per_cycle=lr_cycle_epochs,
         cycle_decay=lr_cycle_decay,
-        cycle_limit=lr_cycle_limit,
-        t_in_epochs=lr_update_per_epoch,
+        cycle_mul=lr_cycle_mul,
     )
-    if last_epoch is not None:
-        lrs.step(last_epoch)
-    return lrs
+    return lr_values
 
 
 @torch.no_grad()
