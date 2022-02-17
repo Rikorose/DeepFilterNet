@@ -1,65 +1,63 @@
 import math
 
+import numpy as np
 
-def cosine_lr_scheduler(
-    lr: float,
-    n_warmup: int = 0,
-    warmup_init_lr: float = -1,
-    min_lr: float = 0.0,
-    t_mult: float = 1.0,
-    lr_period_updates: float = -1,
-    lr_shrink: float = 0.1,
-    max_update: int = -1,
+
+def cosine_scheduler(
+    base_value: float,
+    final_value: float,
+    epochs: int,
+    niter_per_ep: int,
+    warmup_epochs: int = 0,
+    start_warmup_value: float = 0,
+    warmup_steps: int = -1,
+    initial_ep_per_cycle: float = -1,
+    cycle_decay: float = 1,
+    cycle_mul: float = 1,
 ):
-    """Cosine annealing learning rate scheduler with warmup and step decay for LambdaLR.
+    """Adopted from official ConvNeXt repo."""
+    warmup_schedule = np.array([])
+    warmup_iters = warmup_epochs * niter_per_ep
+    if warmup_steps > 0:
+        warmup_iters = warmup_steps
+    if warmup_epochs > 0:
+        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
-    Based on fairseq.optim.lr_scheduler.cosine_lr_scheduler.
-
-    Args:
-        lr (float): (Maximum) learning rate.
-        n_warmup (int): Number of warmup steps with a linear lr increase. Default is 0.
-        warmup_init_lr (float): Initial learning rate during warmup phase. Default is `lr`.
-        min_lr (float): Minimum learning rate during cosine annealing. Default is 0.
-        t_mult (float): Factor to grow the length of each period. Default is 1.
-        lr_period_updates (float): Initial number of updates per period.
-        lr_shrink (float): Shrink factor for each period. Default 0.1.
-        max_update (int): Number of maximum updates (epochs). If specified, will result in 1 period
-            over all updates.
-    """
-    max_lr_base = lr
-    min_lr_base = min_lr
-    warmup_end_lr = max_lr_base
-    warmup_init_lr = min_lr if warmup_init_lr < 0 else warmup_init_lr
-    period = lr_period_updates
-    if period <= 0:
-        assert max_update > 0, "Either lr_period_updates or max_update must be set."
-        period = max_update - n_warmup
-    if n_warmup > 0:
-        step_lr = (warmup_end_lr - warmup_init_lr) / n_warmup
+    iters_after_warmup = epochs * niter_per_ep - warmup_iters
+    if initial_ep_per_cycle == -1:
+        initial_ep_per_cycle = iters_after_warmup
+        num_cycles = 1
+        cycle_lengths = [iters_after_warmup]
     else:
-        step_lr = 1
-    lr_shrink_base = lr_shrink
-
-    def step(epoch: int) -> float:
-        if epoch < n_warmup:
-            return (warmup_init_lr + epoch * step_lr) / max_lr_base
-        cur_updates = epoch - n_warmup
-
-        if t_mult != 1:
-            i = math.floor(math.log(1 - cur_updates / period * (1 - t_mult), t_mult))
-            t_i = t_mult**i * period
-            t_cur = cur_updates - (1 - t_mult**i) / (1 - t_mult) * period
+        initial_cycle_iter = int(round(initial_ep_per_cycle * niter_per_ep))
+        if cycle_mul == 1:
+            num_cycles = int(math.ceil(iters_after_warmup / (initial_ep_per_cycle * niter_per_ep)))
+            cycle_lengths = [initial_cycle_iter] * num_cycles
         else:
-            i = math.floor(cur_updates / period)
-            t_i = period
-            t_cur = cur_updates - (period * i)
+            num_cycles = 0
+            cycle_lengths = []
+            i = 0
+            while sum(cycle_lengths) < iters_after_warmup:
+                num_cycles += 1
+                cycle_lengths.append(initial_cycle_iter * cycle_mul**i)
+                i += 1
+    schedule_cycles = []
+    for i in range(num_cycles):
+        cycle_base_value = base_value * cycle_decay**i
+        iters = np.arange(cycle_lengths[i])
+        schedule = np.array(
+            [
+                final_value
+                + 0.5
+                * (cycle_base_value - final_value)
+                * (1 + math.cos(math.pi * i / (len(iters))))
+                for i in iters
+            ]
+        )
+        schedule_cycles.append(schedule)
 
-        lr_shrink = lr_shrink_base**i
-        min_lr = min_lr_base * lr_shrink
-        max_lr = max_lr_base * lr_shrink
+    schedule = np.concatenate((warmup_schedule, *schedule_cycles))
+    schedule = schedule[: epochs * niter_per_ep]
 
-        return (
-            min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * t_cur / t_i))
-        ) / max_lr_base
-
-    return step
+    assert len(schedule) == epochs * niter_per_ep
+    return schedule
