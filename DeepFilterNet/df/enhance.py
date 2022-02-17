@@ -83,7 +83,7 @@ def init_df(
         allow_defaults=config_allow_defaults,
     )
     if post_filter:
-        config.set(ModelParams().section, "mask_pf", True, bool)
+        config.set("mask_pf", True, bool, ModelParams().section)
     p = ModelParams()
     df_state = DF(
         sr=p.sr,
