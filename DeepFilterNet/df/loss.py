@@ -315,6 +315,9 @@ class SiSdr(nn.Module):
     def forward(self, input: Tensor, target: Tensor):
         # Input shape: [B, T]
         eps = torch.finfo(input.dtype).eps
+        t = input.shape[-1]
+        target = target.reshape(-1, t)
+        input = input.reshape(-1, t)
         # Einsum for batch vector dot product
         Rss: Tensor = torch.einsum("bi,bi->b", target, target).unsqueeze(-1)
         a: Tensor = torch.einsum("bi,bi->b", target, input).add(eps).unsqueeze(-1) / Rss.add(eps)
