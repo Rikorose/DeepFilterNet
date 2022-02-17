@@ -13,7 +13,7 @@ from torch.autograd.grad_mode import set_grad_enabled
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.types import Number
 
-from df.checkpoint import load_model, read_cp, write_cp
+from df.checkpoint import check_patience, load_model, read_cp, write_cp
 from df.config import Csv, config
 from df.logger import init_logger, log_metrics, log_model_summary
 from df.loss import Istft, Loss, MaskLoss
@@ -96,6 +96,8 @@ def main():
         mask_only,
         train_df_only,
     )
+    if not args.resume and os.path.isfile(os.path.join(checkpoint_dir, ".patience")):
+        os.remove(os.path.join(checkpoint_dir, ".patience"))
     try:
         log_model_summary(model, verbose=args.debug)
     except Exception as e:
@@ -133,6 +135,13 @@ def main():
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
     lrs = load_lrs(len(dataloader))
+
+    # Validation optimization target. Used for early stopping and selecting best checkpoint
+    val_criteria = []
+    val_criteria_type = config("VALIDATION_CRITERIA", "loss", section="train")  # must be in metrics
+    val_criteria_rule = config("VALIDATION_CRITERIA_RULE", "min", section="train")
+    val_criteria_rule = val_criteria_rule.replace("less", "min").replace("more", "max")
+    patience = config("EARLY_STOPPING_PATIENCE", 5, int, section="train")
 
     losses = setup_losses()
 
@@ -187,12 +196,18 @@ def main():
             losses=losses,
             summary_dir=summary_dir,
         )
-        write_cp(model, "model", checkpoint_dir, epoch + 1, metric=val_loss)
         metrics = {"loss": val_loss}
         metrics.update(
             {n: torch.mean(torch.stack(vals)).item() for n, vals in losses.get_summaries()}
         )
+        val_criteria = metrics[val_criteria_type]
+        write_cp(
+            model, "model", checkpoint_dir, epoch + 1, metric=val_criteria, cmp=val_criteria_rule
+        )
         log_metrics(f"[{epoch}] [valid]", metrics)
+        check_patience(
+            checkpoint_dir, max_patience=patience, new_metric=val_criteria, cmp=val_criteria_rule
+        )
         if should_stop:
             logger.info("Stopping training")
             exit(0)

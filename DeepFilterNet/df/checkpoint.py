@@ -94,6 +94,7 @@ def write_cp(
     check_finite_module(obj)
     if metric is not None:
         assert cmp in ("min", "max")
+        metric = float(metric) # Make sure it is not an integer
         # Each line contains a previous best with entries: (epoch, metric)
         with open(os.path.join(dirname, ".best"), "a+") as prev_best_f:
             prev_best_f.seek(0)  # "a+" creates a file in read/write mode without truncating
@@ -126,3 +127,35 @@ def cleanup(name: str, dirname: str, extension: str, nkeep=5):
     for cp in checkpoints[nkeep:]:
         logger.debug("Removing old checkpoint: {}".format(cp))
         os.remove(cp)
+
+
+def check_patience(dirname: str, max_patience: int, new_metric: float, cmp: str):
+    cmp = "__lt__" if cmp == "min" else "__gt__"
+    new_metric = float(new_metric) # Make sure it is not an integer
+    prev_patience, prev_metric = read_patience(dirname)
+    if prev_patience is None:
+        prev_patience = max_patience
+    if getattr(new_metric, cmp)(prev_metric):
+        # We have a better new_metric, reset patience
+        write_patience(dirname, max_patience, new_metric)
+    else:
+        # We don't have a better metric, decrement patience
+        new_patience = prev_patience - 1
+        write_patience(dirname, new_patience, prev_metric)
+        if new_patience < 0:
+            raise ValueError(
+                f"No improvements on validation metric ({new_metric}) for {max_patience} epochs. "
+                "Stopping."
+            )
+
+
+def read_patience(dirname: str) -> Tuple[Optional[int], float]:
+    fn = os.path.join(dirname, ".patience")
+    if not os.path.isfile(fn):
+        return None, 0.0
+    patience, metric = np.loadtxt(fn)
+    return int(patience), float(metric)
+
+
+def write_patience(dirname: str, new_patience: int, metric: float):
+    return np.savetxt(os.path.join(dirname, ".patience"), [new_patience, metric])
