@@ -94,7 +94,7 @@ def write_cp(
     check_finite_module(obj)
     if metric is not None:
         assert cmp in ("min", "max")
-        metric = float(metric) # Make sure it is not an integer
+        metric = float(metric)  # Make sure it is not an integer
         # Each line contains a previous best with entries: (epoch, metric)
         with open(os.path.join(dirname, ".best"), "a+") as prev_best_f:
             prev_best_f.seek(0)  # "a+" creates a file in read/write mode without truncating
@@ -131,7 +131,7 @@ def cleanup(name: str, dirname: str, extension: str, nkeep=5):
 
 def check_patience(dirname: str, max_patience: int, new_metric: float, cmp: str):
     cmp = "__lt__" if cmp == "min" else "__gt__"
-    new_metric = float(new_metric) # Make sure it is not an integer
+    new_metric = float(new_metric)  # Make sure it is not an integer
     prev_patience, prev_metric = read_patience(dirname)
     if prev_patience is None:
         prev_patience = max_patience
