@@ -1,4 +1,5 @@
 use std::thread;
+use std::time::Instant;
 
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
@@ -62,6 +63,7 @@ type FdBatch<'py> = (
     &'py PyArray1<i8>,        // snr
     &'py PyArray1<i8>,        // gain
     &'py PyArray1<u8>,        // attenuation limit
+    &'py PyArray1<f32>,       // Timings until each sample and the overall batch was ready
 );
 
 #[pymethods]
@@ -180,6 +182,7 @@ impl _FdDataLoader {
     }
 
     fn get_batch<'py>(&'py mut self, py: Python<'py>) -> PyResult<FdBatch<'py>> {
+        let t0 = Instant::now();
         if self.finished {
             return Err(PyStopIteration::new_err("Epoch finished"));
         }
@@ -202,6 +205,7 @@ impl _FdDataLoader {
                     batch.snr.into_pyarray(py),
                     batch.gain.into_pyarray(py),
                     batch.atten.into_pyarray(py),
+                    push_ret(batch.timings, (Instant::now() - t0).as_secs_f32()).into_pyarray(py),
                 ))
             }
             None => {
@@ -223,6 +227,11 @@ impl _FdDataLoader {
     fn dataset_len(&self, split: &str) -> usize {
         self.loader.dataset_len(split)
     }
+}
+
+fn push_ret<T>(mut a: Vec<T>, b: T) -> Vec<T> {
+    a.push(b);
+    a
 }
 
 fn sort<A, T>(mut array: A) -> A
