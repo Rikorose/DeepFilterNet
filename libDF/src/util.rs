@@ -18,7 +18,7 @@ type Result<T> = std::result::Result<T, UtilsError>;
 pub enum UtilsError {
     #[error("NaN detected")]
     NaN,
-    #[error("Random seed is not initalized using seed_from_u64(x)")]
+    #[error("Random seed is not initialized using seed_from_u64(x)")]
     SeedNotInitialized,
 }
 
