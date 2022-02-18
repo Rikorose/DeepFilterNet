@@ -282,8 +282,8 @@ where
 }
 
 #[derive(Clone)]
-pub struct DatasetBuilder<'a> {
-    ds_dir: &'a str,
+pub struct DatasetBuilder {
+    ds_dir: String,
     sr: usize,
     fft_size: Option<usize>,
     datasets: Option<DatasetSplitConfig>,
@@ -298,10 +298,10 @@ pub struct DatasetBuilder<'a> {
     seed: Option<u64>,
     min_nb_freqs: Option<usize>,
 }
-impl<'a> DatasetBuilder<'a> {
-    pub fn new(ds_dir: &'a str, sr: usize) -> Self {
+impl DatasetBuilder {
+    pub fn new(ds_dir: &str, sr: usize) -> Self {
         DatasetBuilder {
-            ds_dir,
+            ds_dir: ds_dir.to_string(),
             sr,
             datasets: None,
             max_len_s: None,
@@ -359,7 +359,7 @@ impl<'a> DatasetBuilder<'a> {
         let mut has_rirs = false;
         for (i, cfg) in datasets.hdf5s.drain(..).enumerate() {
             let name = cfg.filename();
-            let path = Path::new(self.ds_dir).join(name);
+            let path = Path::new(&self.ds_dir).join(name);
             if (!path.is_file()) && path.read_link().is_err() {
                 eprintln!("Dataset {:?} not found. Skipping.", path);
                 continue;
@@ -413,7 +413,8 @@ impl<'a> DatasetBuilder<'a> {
             reverb,
             seed,
         };
-        // Generate inital speech/noise/rir dataset keys. May be changed at the start of each epoch.
+        // Generate initial speech/noise/rir dataset keys. May be changed at the start of each epoch.
+        seed_from_u64(seed);
         ds.generate_keys()?;
         Ok(ds)
     }

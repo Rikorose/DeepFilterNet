@@ -1,3 +1,5 @@
+use std::thread;
+
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
 use df::dataset::{DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, Split::*};
@@ -98,9 +100,9 @@ impl _FdDataLoader {
             }
             Ok(cfg) => cfg,
         };
-        py.check_signals()?;
         let mut ds_builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha);
+        py.check_signals()?;
         if let Some(max_len_s) = max_len_s {
             ds_builder = ds_builder.max_len(max_len_s)
         }
@@ -116,24 +118,26 @@ impl _FdDataLoader {
         if let Some(nb_freqs) = min_nb_erb_freqs {
             ds_builder = ds_builder.min_nb_erb_freqs(nb_freqs)
         }
-        let valid_ds = ds_builder
-            .clone()
-            .dataset(cfg.split_config(Valid))
-            .build_fft_dataset()
-            .to_py_err()?;
-        py.check_signals()?;
-        let test_ds = ds_builder
-            .clone()
-            .dataset(cfg.split_config(Test))
-            .build_fft_dataset()
-            .to_py_err()?;
-        py.check_signals()?;
+        let valid_handle = {
+            let valid_cfg = cfg.split_config(Valid);
+            let valid_ds_builder = ds_builder.clone();
+            thread::spawn(|| valid_ds_builder.dataset(valid_cfg).build_fft_dataset())
+        };
+        let test_handle = {
+            let test_cfg = cfg.split_config(Test);
+            let test_ds_builder = ds_builder.clone();
+            thread::spawn(|| test_ds_builder.dataset(test_cfg).build_fft_dataset())
+        };
         ds_builder = ds_builder.p_sample_full_speech(1.0);
-        let train_ds = ds_builder
-            .clone()
-            .dataset(cfg.split_config(Train))
-            .build_fft_dataset()
-            .to_py_err()?;
+        let train_handle = {
+            let train_cfg = cfg.split_config(Train);
+            thread::spawn(|| ds_builder.dataset(train_cfg).build_fft_dataset())
+        };
+        let valid_ds = valid_handle.join().unwrap().to_py_err()?;
+        py.check_signals()?;
+        let test_ds = test_handle.join().unwrap().to_py_err()?;
+        py.check_signals()?;
+        let train_ds = train_handle.join().unwrap().to_py_err()?;
         py.check_signals()?;
         let ds = Datasets {
             train: train_ds,
