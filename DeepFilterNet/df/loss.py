@@ -551,7 +551,6 @@ class Loss(nn.Module):
         stoi_vals: Tensor = stoi(y=enh_td.detach(), x=clean_td.detach(), fs_source=self.sr)
         sdr_vals_ms, stoi_vals_ms = [], []
         if multi_stage_td is not None:
-            ic(multi_stage_td.shape)
             for i in range(multi_stage_td.shape[1]):
                 sdr_vals_ms.append(sdr(multi_stage_td[:, i], clean_td))
                 stoi_vals_ms.append(stoi(y=multi_stage_td[:, i], x=clean_td, fs_source=self.sr))
