@@ -497,8 +497,18 @@ class Loss(nn.Module):
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.store_losses and self.istft is not None:
+            assert enhanced_td is not None
+            assert clean_td is not None
             self.store_summaries(
-                enhanced_td.squeeze(1), clean_td.squeeze(1), snrs, ml, sl, mrsl, lsnrl, cal  # type: ignore
+                enhanced_td,
+                clean_td,
+                snrs,
+                ml,
+                sl,
+                mrsl,
+                lsnrl,
+                cal,
+                multi_stage_td=multi_stage_td,
             )
         return ml + sl + mrsl + lsnrl + cal
 
@@ -522,6 +532,7 @@ class Loss(nn.Module):
         mrsl: Tensor,
         lsnrl: Tensor,
         cal: Tensor,
+        multi_stage_td: Optional[Tensor] = None,
     ):
         if ml != 0:
             self.summaries["MaskLoss"].append(ml.detach())
@@ -534,8 +545,16 @@ class Loss(nn.Module):
         if mrsl != 0:
             self.summaries["MultiResSpecLoss"].append(mrsl.detach())
         sdr = SiSdr()
+        enh_td = enh_td.squeeze(1)
+        clean_td = clean_td.squeeze(1)
         sdr_vals: Tensor = sdr(enh_td.detach(), target=clean_td.detach())
         stoi_vals: Tensor = stoi(y=enh_td.detach(), x=clean_td.detach(), fs_source=self.sr)
+        sdr_vals_ms, stoi_vals_ms = [], []
+        if multi_stage_td is not None:
+            ic(multi_stage_td.shape)
+            for i in range(multi_stage_td.shape[1]):
+                sdr_vals_ms.append(sdr(multi_stage_td[:, i], clean_td))
+                stoi_vals_ms.append(stoi(y=multi_stage_td[:, i], x=clean_td, fs_source=self.sr))
         for snr in torch.unique(snrs, sorted=False):
             self.summaries[f"sdr_snr_{snr.item()}"].extend(
                 sdr_vals.masked_select(snr == snrs).split(1)
@@ -543,6 +562,13 @@ class Loss(nn.Module):
             self.summaries[f"stoi_snr_{snr.item()}"].extend(
                 stoi_vals.masked_select(snr == snrs).split(1)
             )
+            for i, (sdr_i, stoi_i) in enumerate(zip(sdr_vals_ms, stoi_vals_ms)):
+                self.summaries[f"sdr_stage_{i}_snr_{snr.item()}"].extend(
+                    sdr_i.masked_select(snr == snrs).split(1)
+                )
+                self.summaries[f"stoi_stage_{i}_snr_{snr.item()}"].extend(
+                    stoi_i.masked_select(snr == snrs).split(1)
+                )
 
 
 def test_local_snr():
