@@ -133,11 +133,12 @@ impl _FdDataLoader {
             let train_cfg = cfg.split_config(Train);
             thread::spawn(|| ds_builder.dataset(train_cfg).build_fft_dataset())
         };
-        let valid_ds = valid_handle.join().unwrap().to_py_err()?;
+        let msg = "Unable to join dataset builder thread";
+        let valid_ds = valid_handle.join().expect(msg).to_py_err()?;
         py.check_signals()?;
-        let test_ds = test_handle.join().unwrap().to_py_err()?;
+        let test_ds = test_handle.join().expect(msg).to_py_err()?;
         py.check_signals()?;
-        let train_ds = train_handle.join().unwrap().to_py_err()?;
+        let train_ds = train_handle.join().expect(msg).to_py_err()?;
         py.check_signals()?;
         let ds = Datasets {
             train: train_ds,
