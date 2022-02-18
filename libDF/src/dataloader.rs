@@ -377,7 +377,7 @@ impl DataLoader {
             if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
                 ids.push(self.cur_out_idx);
                 samples.push(s);
-                timings.push((t0 - Instant::now()).as_secs_f32());
+                timings.push((Instant::now() - t0).as_secs_f32());
                 self.cur_out_idx += 1;
             } else {
                 // Or check worker threads
