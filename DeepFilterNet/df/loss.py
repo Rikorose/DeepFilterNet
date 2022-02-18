@@ -102,7 +102,8 @@ class Istft(nn.Module):
             window=self.w_inv,
             normalized=True,
         )
-        out = out.view(*sh, out.shape[-1])
+        if input.ndim > 2:
+            out = out.view(*sh, out.shape[-1])
         return out
 
 
@@ -496,7 +497,9 @@ class Loss(nn.Module):
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.store_losses and self.istft is not None:
-            self.store_summaries(enhanced_td, clean_td, snrs, ml, sl, mrsl, lsnrl, cal)  # type: ignore
+            self.store_summaries(
+                enhanced_td.squeeze(1), clean_td.squeeze(1), snrs, ml, sl, mrsl, lsnrl, cal  # type: ignore
+            )
         return ml + sl + mrsl + lsnrl + cal
 
     def reset_summaries(self):
