@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import warnings
-from typing import Iterator, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -21,19 +21,15 @@ class Batch:
         # safe to assume writable.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            if len(b) == 10:  # FftDataloader
-                speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, atten = b
-                if erb.size <= 1:
-                    self.feat_erb = None
-                if spec.size <= 1:
-                    self.feat_spec = None
-                else:
-                    self.feat_erb = torch.from_numpy(erb)
-                    self.feat_spec = torch.from_numpy(spec)
-            else:
-                speech, noise, noisy, lengths, max_freq, snr, gain, atten = b
+            assert len(b) == 11
+            speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, atten, timings = b
+            if erb.size <= 1:
                 self.feat_erb = None
+            if spec.size <= 1:
                 self.feat_spec = None
+            else:
+                self.feat_erb = torch.from_numpy(erb)
+                self.feat_spec = torch.from_numpy(spec)
             self.speech = torch.from_numpy(speech)
             self.noise = torch.from_numpy(noise)
             self.noisy = torch.from_numpy(noisy)
@@ -43,6 +39,7 @@ class Batch:
             self.atten = torch.from_numpy(atten).long()
             self.atten[self.atten == 0] = 1000
             self.max_freq = torch.from_numpy(max_freq.astype(np.int32)).long()
+            self.timings = torch.from_numpy(timings.astype(np.float32))
 
     def pin_memory(self):
         self.speech = self.speech.pin_memory()
@@ -125,7 +122,9 @@ class PytorchDataLoader:
         self.pin_memory_thread_done_event: Optional[threading.Event] = None
         self.pin_memory_thread: Optional[threading.Thread] = None
         self.data_queue = None
-        self.timings = [] if log_timings else None
+        self.log_timings = log_timings
+        self.timings_py: List[float] = []
+        self.timings_rs: List[torch.Tensor] = []
         atexit.register(self.loader.cleanup)
 
     def cleanup_pin_memory_thread(self):
@@ -200,13 +199,14 @@ class PytorchDataLoader:
         return q
 
     def _get_batch(self) -> Batch:
-        if self.timings is not None:
+        if self.log_timings:
             t0 = time.time()
         _, batch = self.data_queue.get()
         if isinstance(batch, ExceptionWrapper):
             batch.reraise()
-        if self.timings is not None:
-            self.timings.append(time.time() - t0)
+        if self.log_timings:
+            self.timings_py.append(time.time() - t0)
+            self.timings_rs.append(batch.timings)
         return batch
 
     def iter_epoch(self, split: str, seed: int) -> Iterator[Batch]:
@@ -214,8 +214,9 @@ class PytorchDataLoader:
         # Initializes workers. This needs to be done before pin_memory thread is
         # started via setup_data_queue().
         self.loader.start_epoch(split, seed)
-        if self.timings is not None:
-            self.timings = []
+        if self.log_timings:
+            self.timings_py = []
+            self.timings_rs = []
         # Initialize data out queue (maybe incl. pin memory thread)
         self.setup_data_queue()
         try:
@@ -234,6 +235,19 @@ class PytorchDataLoader:
         except StopIteration:
             if self.pin_memory_thread_done_event is not None:
                 self.pin_memory_thread_done_event.set()
-            if self.timings is not None:
-                logger.info("Avg batch loading time: {}", np.mean(self.timings))
+            if self.log_timings:
+                logger.info("Avg batch loading time (py): {:.4f}s", np.mean(self.timings_py))
+                # Last batch may be shorter, just skip it
+                if len(self.timings_rs[-1]) != len(self.timings_rs[0]):
+                    self.timings_rs = self.timings_rs[:-1]
+                timings_rs = torch.stack(self.timings_rs)
+                timings_samples = timings_rs[:, :-1]
+                timings_batch = timings_rs[:, -1]  # last if for whole batch
+                logger.info("Avg batch loading time (rs): {:.4f}s", timings_batch.mean().item())
+                logger.info(
+                    "Min/Avg/Max sample loading time (rs): {:.4f}/{:.4f}/{:.4f}s",
+                    timings_samples.min().item(),
+                    timings_samples.mean().item(),
+                    timings_samples.max().item(),
+                )
             return

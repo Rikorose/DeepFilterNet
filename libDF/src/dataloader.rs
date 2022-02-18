@@ -5,6 +5,7 @@ use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 use crossbeam_channel::unbounded;
 use ndarray::prelude::*;
@@ -355,7 +356,9 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
+        let t0 = Instant::now();
         let bs = self.batch_size(self.current_split);
+        let mut timings = Vec::with_capacity(bs);
         let mut samples = Vec::with_capacity(bs);
         let target_idx = self.dataset_len(self.current_split).min(self.cur_out_idx + bs);
         if self.cur_out_idx >= self.dataset_len(self.current_split) {
@@ -374,6 +377,7 @@ impl DataLoader {
             if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
                 ids.push(self.cur_out_idx);
                 samples.push(s);
+                timings.push((t0 - Instant::now()).as_secs_f32());
                 self.cur_out_idx += 1;
             } else {
                 // Or check worker threads
@@ -394,6 +398,7 @@ impl DataLoader {
                     Ok((o_idx, Ok(s))) => {
                         if o_idx == self.cur_out_idx {
                             samples.push(s);
+                            timings.push((Instant::now() - t0).as_secs_f32());
                             ids.push(o_idx);
                             self.cur_out_idx += 1;
                         } else {
@@ -420,6 +425,7 @@ impl DataLoader {
             if !self.drained && self.cur_out_idx < target_idx {
                 debug_assert_eq!(batch.batch_size(), self.batch_size(self.current_split));
             }
+            batch.timings = timings;
             Some(batch)
         };
         Ok(out)
@@ -472,6 +478,7 @@ impl Collate<f32> for f32 {
             gain,
             atten,
             ids: Vec::new(),
+            timings: Vec::new(),
         })
     }
 }
@@ -515,6 +522,7 @@ impl Collate<Complex32> for Complex32 {
             gain,
             atten,
             ids: Vec::new(),
+            timings: Vec::new(),
         })
     }
 }
@@ -540,6 +548,7 @@ where
     pub gain: Vec<i8>,
     pub atten: Vec<u8>, // attenuation limit in dB; 0 stands for no limit
     pub ids: Vec<usize>,
+    pub timings: Vec<f32>,
 }
 impl<T> DsBatch<T>
 where
