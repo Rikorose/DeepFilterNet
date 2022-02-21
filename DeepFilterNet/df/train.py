@@ -337,6 +337,8 @@ def run_epoch(
             l_dict = {"loss": l_mean.item()}
             if lr_scheduler_values is not None:
                 l_dict["lr"] = opt.param_groups[0]["lr"]
+            l_dict["t_sample"] = batch.timings[:-1].mean()
+            l_dict["t_batch"] = batch.timings[-1].mean()  # last if for whole batch
             if debug:
                 l_dict.update(
                     {
