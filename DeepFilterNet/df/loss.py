@@ -5,13 +5,12 @@ from typing import Dict, Final, Iterable, List, Optional, Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
-from torch.autograd import Function
 
 from df.config import Csv, config
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
-from df.utils import as_complex
+from df.utils import angle, as_complex
 from libdf import DF
 
 
@@ -33,21 +32,6 @@ def iam(S: Tensor, X: Tensor, eps: float = 1e-10) -> Tensor:
     SS_mag = as_complex(S).abs()
     XX_mag = as_complex(X).abs()
     return (SS_mag / (XX_mag + eps)).clamp(0, 1)
-
-
-class angle(Function):
-    """Similar to torch.angle but robustify the gradient for zero magnitude."""
-
-    @staticmethod
-    def forward(ctx, x: Tensor):
-        ctx.save_for_backward(x)
-        return torch.atan2(x.imag, x.real)
-
-    @staticmethod
-    def backward(ctx, grad: Tensor):
-        (x,) = ctx.saved_tensors
-        grad_inv = grad / (x.real.square() + x.imag.square()).clamp_min_(1e-12)
-        return torch.view_as_complex(torch.stack((-x.imag * grad_inv, x.real * grad_inv), dim=-1))
 
 
 class Stft(nn.Module):
