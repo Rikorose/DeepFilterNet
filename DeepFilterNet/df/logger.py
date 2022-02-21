@@ -1,5 +1,6 @@
 import os
 import sys
+from collections import defaultdict
 from typing import Dict, Optional
 
 import torch
@@ -53,8 +54,16 @@ def get_log_format(debug=False):
 
 def log_metrics(prefix: str, metrics: Dict[str, Number]):
     msg = prefix
+    stages = defaultdict(str)
     for n, v in sorted(metrics.items()):
-        msg += f" | {n}: {v:.5g}"
+        m = f" | {n}: {v:.5g}"
+        if "stage" in n:
+            s = n.split("stage_")[1].split("_snr")[0]
+            stages[s] += m.replace(f"stage_{s}_", "")
+        else:
+            msg += m
+    for s, msg in stages.items():
+        logger.info(f"{prefix} | stage {s}" + msg)
     logger.info(msg)
 
 
