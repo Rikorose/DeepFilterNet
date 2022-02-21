@@ -460,7 +460,7 @@ class Loss(nn.Module):
                 clean_td = self.istft(clean)
                 if multi_stage is not None:
                     # leave out erb enhanced
-                    multi_stage_td = self.istft(multi_stage[:, 1:])
+                    multi_stage_td = self.istft(multi_stage)
 
         ml, sl, mrsl, cal = [torch.zeros((), device=clean.device)] * 4
         if self.ml_f != 0 and self.ml is not None:
@@ -473,7 +473,8 @@ class Loss(nn.Module):
                 sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
             if multi_stage_td is not None:
-                mrsl = self.mrsl(multi_stage_td, clean_td.expand_as(multi_stage_td))
+                ms = multi_stage_td[:, 1:]
+                mrsl = self.mrsl(ms, clean_td.expand_as(ms))
             else:
                 mrsl = self.mrsl(enhanced_td, clean_td)
         lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
