@@ -511,7 +511,7 @@ class MSNet(nn.Module):
                     depth=depth,
                     patch_size=2 ** (i + 1),
                     downsample_hprev=i >= 1,
-                    out_init_scale=2 ** -(i + 1),
+                    out_init_scale=2**-i,
                     global_skip=p.global_skip,
                 )
                 for i, depth in enumerate(self.stages)
@@ -533,7 +533,7 @@ class MSNet(nn.Module):
         m, x_rnn, _ = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
         lsnr, _ = self.lsnr_net(x_rnn)
-        out_specs = [spec.squeeze(1)] * (len(self.refinement_stages) + 1)
+        out_specs = [spec.squeeze(1).clone() for _ in range(len(self.refinement_stages) + 1)]
         # re/im into channel axis
         spec_f = (
             spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2).clone()
