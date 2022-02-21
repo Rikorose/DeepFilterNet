@@ -3,16 +3,18 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from icecream import ic  # noqa
 from timm.models.fx_features import register_notrace_module
 from timm.models.helpers import named_apply
 from timm.models.layers import trunc_normal_
 from timm.models.layers.drop import DropPath
 from timm.models.layers.mlp import ConvMlp, Mlp
 from torch import Tensor, nn
+from torch.nn.parameter import Parameter
 
 from df.config import Csv, DfParams, config
 from df.modules import Mask, erb_fb
-from df.utils import get_device
+from df.utils import angle_re_im, get_device
 from libdf import DF
 
 
@@ -38,6 +40,9 @@ class ModelParams(DfParams):
             config("REFINEMENT_OUTPUT_ACT", default="identity", section=self.section)
             .lower()
             .replace("none", "identity")
+        )
+        self.global_skip: bool = config(
+            "GLOBAL_SKIP", cast=bool, default=False, section=self.section
         )
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
@@ -294,8 +299,10 @@ class ConvOut(nn.Module):
         self.conv1 = Conv2d(in_ch, out_ch, kernel_size=(2, 3))
         self.act: nn.Module = act()
 
-    def forward(self, x):
+    def forward(self, x, skip: Optional[Tensor] = None):
         x = self.convt0(x)
+        if skip is not None:
+            x = x + skip
         x = self.norm(x)
         x = self.conv1(x)
         x = self.act(x)
@@ -332,8 +339,9 @@ class FreqStage(nn.Module):
         patch_size: int = 2,
         conv_mlp: bool = False,
         downsample_hprev: bool = False,
-        layer_scale=1e-6,
-        out_init_scale=1,
+        layer_scale: float = 1e-6,
+        out_init_scale: float = 1,
+        global_skip: bool = False,
     ):
         super().__init__()
         self.lw = width  # Layer width
@@ -346,6 +354,10 @@ class FreqStage(nn.Module):
                 "or reduce the number of stages."
             )
 
+        self.global_skip = global_skip
+        if global_skip:
+            self.global_skip_conv = Conv2d(in_ch, self.lw, (1, 3))
+            in_ch = self.lw
         norm_layer = partial(LayerNorm2d, eps=1e-6)
         cl_norm_layer = norm_layer if conv_mlp else partial(nn.LayerNorm, eps=1e-6)
         self.conv_in = nn.Sequential(
@@ -396,10 +408,12 @@ class FreqStage(nn.Module):
         named_apply(partial(_init_weights, out_init_scale=out_init_scale), self)
 
     def forward(
-        self, input: Tensor, h_prev: Optional[Tensor] = None, h: Optional[Tensor] = None
+        self, x: Tensor, h_prev: Optional[Tensor] = None, h: Optional[Tensor] = None
     ) -> Tuple[Tensor, Tensor, Tensor]:
-        # input shape: [B, 1, T, F]
-        x0 = self.conv_in(input)
+        # input shape: [B, C, T, F]
+        if self.global_skip:
+            x = self.global_skip_conv(x)
+        x0 = self.conv_in(x)
         x1 = self.down_block(x0)
         if h_prev is not None:
             assert self.conv_hprev_down is not None
@@ -409,7 +423,7 @@ class FreqStage(nn.Module):
         x_rnn = x_rnn + x1
         x1 = self.up_block(x_rnn)
         x1 = x1 + x0
-        m = self.conv_out(x1)
+        m = self.conv_out(x1, skip=x if self.global_skip else None)
         return m, x_rnn, h
 
 
@@ -427,8 +441,41 @@ def _init_weights(module, name=None, out_init_scale=1.0):
         nn.init.constant_(module.bias, 0)
 
 
+class ComplexCompression(nn.Module):
+    def __init__(self, n_freqs: int, init_value: float = 0.5):
+        super().__init__()
+        self.c: Tensor
+        self.register_parameter(
+            "c", Parameter(torch.full((n_freqs,), init_value), requires_grad=True)
+        )
+
+    def forward(self, x: Tensor):
+        # x has shape x [B, 2, T, F]
+        x_abs = (x[:, 0].square() + x[:, 1].square()).clamp_min(1e-10).pow(self.c)
+        x_ang = angle_re_im.apply(x[:, 0], x[:, 1])
+        x = torch.stack((x_abs * torch.cos(x_ang), x_abs * torch.sin(x_ang)), dim=1)
+        # x_c = x_abs * torch.exp(1j * x_ang)
+        # x_ = torch.view_as_complex(x.permute(0,2,3,1).contiguous())
+        # torch.allclose(x_, x_c)
+        return x
+
+
+class MagCompression(nn.Module):
+    def __init__(self, n_freqs: int, init_value: float = 0.5):
+        super().__init__()
+        self.c: Tensor
+        self.register_parameter(
+            "c", Parameter(torch.full((n_freqs,), init_value), requires_grad=True)
+        )
+
+    def forward(self, x: Tensor):
+        # x has shape x [B, T, F, 2]
+        x = x.pow(self.c)
+        return x
+
+
 class MSNet(nn.Module):
-    def __init__(self, erb_inv_fb: Tensor):
+    def __init__(self, erb_fb: Tensor, erb_inv_fb: Tensor):
         super().__init__()
         p = ModelParams()
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
@@ -436,7 +483,20 @@ class MSNet(nn.Module):
         self.freq_bins = p.fft_size // 2 + 1
         self.erb_bins = p.nb_erb
         self.df_bins = p.nb_df
-        self.erb_stage = FreqStage(1, 1, nn.Sigmoid, p.conv_ch, p.nb_erb, p.erb_hidden_dim, depth=3)
+        self.erb_fb: Tensor
+        self.erb_comp = MagCompression(self.erb_bins)
+        self.cplx_comp = ComplexCompression(self.df_bins)
+        self.register_buffer("erb_fb", erb_fb, persistent=False)
+        self.erb_stage = FreqStage(
+            1,
+            1,
+            nn.Sigmoid,
+            p.conv_ch,
+            p.nb_erb,
+            p.erb_hidden_dim,
+            depth=3,
+            global_skip=p.global_skip,
+        )
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
         self.refinement_stages = nn.ModuleList(
@@ -452,6 +512,7 @@ class MSNet(nn.Module):
                     patch_size=2 ** (i + 1),
                     downsample_hprev=i >= 1,
                     out_init_scale=2 ** -(i + 1),
+                    global_skip=p.global_skip,
                 )
                 for i, depth in enumerate(self.stages)
             ]
@@ -464,30 +525,24 @@ class MSNet(nn.Module):
         assert len(self.stages) <= 8
 
     def forward(
-        self, spec: Tensor, feat_erb: Tensor, feat_spec: Tensor, atten_lim: Optional[Tensor] = None
+        self, spec: Tensor, atten_lim: Optional[Tensor] = None, **kwargs  # type: ignore
     ) -> Tuple[Tensor, Tensor, Tensor, List[Tensor]]:
-        # Set memory format so stride represents NHWC order
-        m, x_rnn, h_erb = self.erb_stage(feat_erb)
+        # Spec shape: [B, 1, T, F, 2]
+        feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
+        feat_erb = self.erb_comp(feat_erb)
+        m, x_rnn, _ = self.erb_stage(feat_erb)
         spec = self.mask(spec, m, atten_lim)  # [B, 1, T, F, 2]
         lsnr, _ = self.lsnr_net(x_rnn)
         out_specs = [spec.squeeze(1)] * (len(self.refinement_stages) + 1)
         # re/im into channel axis
-        spec_f = spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2)  # [B, 2, T, F_df]
+        spec_f = (
+            spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2).clone()
+        )  # [B, 2, T, F_df]
         h_conv: Optional[Tensor] = None
-        for i, (stage, _lim) in enumerate(zip(self.refinement_stages, self.refinement_snr_max)):
-            refinement, h_conv, _ = stage(spec_f, h_conv)
+        for i, (stage, _) in enumerate(zip(self.refinement_stages, self.refinement_snr_max)):
+            refinement, h_conv, _ = stage(self.cplx_comp(spec_f), h_conv)
             spec_f = spec_f + refinement
             out_specs[i + 1][..., : self.df_bins, :] = spec_f.permute(0, 2, 3, 1)
-            # if lim >= 100:
-            #     spec_f, _ = stage(spec_f)
-            # else:
-            #     idcs = torch.logical_and(lsnr < lim, lsnr > self.refinement_snr_min).squeeze(-1)
-            #     for b in range(spec.shape[0]):
-            #         spec_f_ = spec_f[b, :, idcs[b]].unsqueeze(0)
-            #         ic(spec_f_.shape)
-            #         if spec_f_.numel() > 0:
-            #             spec_f[b, :, idcs[b]] = stage(spec_f_)[0].squeeze(0)
-            #     out_specs.append(spec_f.unsqueeze(-1).transpose(1, -1))
         spec[..., : self.df_bins, :] = spec_f.unsqueeze(-1).transpose(1, -1)
         return spec, m, lsnr, out_specs
 
@@ -497,6 +552,8 @@ def init_model(df_state: Optional[DF] = None, run_df: bool = True, train_mask: b
     p = ModelParams()
     if df_state is None:
         df_state = DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
-    erb_inverse = erb_fb(df_state.erb_widths(), p.sr, inverse=True)
-    model = MSNet(erb_inverse)
+    erb_width = df_state.erb_widths()
+    erb = erb_fb(erb_width, p.sr)
+    erb_inverse = erb_fb(erb_width, p.sr, inverse=True)
+    model = MSNet(erb, erb_inverse)
     return model.to(device=get_device())
