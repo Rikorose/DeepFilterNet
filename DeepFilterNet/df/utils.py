@@ -4,13 +4,14 @@ import os
 import random
 import subprocess
 from socket import gethostname
-from typing import Any, Set, Union
+from typing import Any, Set, Tuple, Union
 
 import numpy as np
 import torch
 from loguru import logger
 from torch import Tensor
 from torch._six import string_classes
+from torch.autograd import Function
 from torch.types import Number
 
 from df.config import config
@@ -69,6 +70,36 @@ def as_real(x: Tensor):
     if torch.is_complex(x):
         return torch.view_as_real(x)
     return x
+
+
+class angle_re_im(Function):
+    """Similar to torch.angle but robustify the gradient for zero magnitude."""
+
+    @staticmethod
+    def forward(ctx, re: Tensor, im: Tensor):
+        ctx.save_for_backward(re, im)
+        return torch.atan2(im, re)
+
+    @staticmethod
+    def backward(ctx, grad: Tensor) -> Tuple[Tensor, Tensor]:
+        re, im = ctx.saved_tensors
+        grad_inv = grad / (re.square() + im.square()).clamp_min_(1e-10)
+        return -im * grad_inv, re * grad_inv
+
+
+class angle(Function):
+    """Similar to torch.angle but robustify the gradient for zero magnitude."""
+
+    @staticmethod
+    def forward(ctx, x: Tensor):
+        ctx.save_for_backward(x)
+        return torch.atan2(x.imag, x.real)
+
+    @staticmethod
+    def backward(ctx, grad: Tensor):
+        (x,) = ctx.saved_tensors
+        grad_inv = grad / (x.real.square() + x.imag.square()).clamp_min_(1e-10)
+        return torch.view_as_complex(torch.stack((-x.imag * grad_inv, x.real * grad_inv), dim=-1))
 
 
 def check_finite_module(obj, name="Module", _raise=True) -> Set[str]:
