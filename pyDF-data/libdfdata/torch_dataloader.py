@@ -71,7 +71,7 @@ class PytorchDataLoader:
         sr: int,
         batch_size: int,
         max_len_s: Optional[float] = 10.0,
-        prefetch=4,
+        prefetch=8,
         num_workers=None,
         pin_memory=True,
         drop_last=False,  # Drop the last batch if it contains fewer samples then batch_size
