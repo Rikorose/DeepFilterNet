@@ -23,58 +23,91 @@ class DsConfig:
     max_freq: int
 
 
+def ln(src, tgt):
+    """Link a file via ln"""
+    return subprocess.check_call(["ln", "-s", src, tgt])
+
+
 def du(path):
     """disk usage in human readable format (e.g. '2,1')"""
     return float(
-        subprocess.check_output(["du", "-sh", "--block-size=1G", path]).split()[0].decode("utf-8")
+        subprocess.check_output(["du", "-shD", "--block-size=1G", path]).split()[0].decode("utf-8")
     )
 
 
-def cp(src, tgt):
+def cp(src, tgt, verbose=0):
     """Copy a file via rsync"""
-    return subprocess.call(["rsync", "-aL", "--info=name,stats", src, tgt])
+    info = []
+    if verbose == 1:
+        info = ["--info=name,stats"]
+    elif verbose > 1:
+        info = ["--info=name,stats2"]
+    try:
+        subprocess.check_call(["rsync", "-aL", *info, src, tgt])
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to copy file {src}: {e.returncode}")
+        if os.path.exists(tgt):
+            os.remove(tgt)
+        print("Linking instead")
+        ln(src, tgt)
+
+
+def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool = False):
+    lock_f = os.path.join(directory, ".lock")
+    have_read_locks = False
+    have_write_locks = False
+    # We can have a write lock allowing exclusive access as well as multiple parallel read locks
+    if os.path.isfile(lock_f):
+        tries = 1
+        while any(
+            line.strip().endswith(".write")
+            and (lock is not None and not line.strip().startswith(lock))
+            for line in open(lock_f)
+        ):
+            have_write_locks = True
+            if not wait_write_lock:
+                break
+            # Wait until the current write lock is released
+            warnings.warn(f"<copy_datadir.py>: Could not lock directory {directory}")
+            sleep(tries)
+            tries *= 2
+            if tries > 2**11:  # 2**11 ~ 34 minutes
+                break
+        have_read_locks = False
+        cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+        for line in open(lock_f):
+            line = line.strip()
+            if lock is not None and line.startswith(lock):
+                continue  # Same lock should not be relevant
+            try:
+                lock_timestamp = line.split(".")[1]
+                lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
+            except Exception as e:
+                print(e)
+                continue
+            if cur_timestamp - lock_timestamp < timedelta(days=1):
+                print("Found existing lock", line.strip())
+                have_read_locks = True
+                break
+    return have_read_locks, have_write_locks
 
 
 def copy_datasets(
     src_dir: str, target_dir: str, cfg_path: str, max_gb: float, lock: Optional[str] = None
 ):
+    print(f"Copying datasets from {src_dir} to {target_dir}", flush=True)
     os.makedirs(target_dir, exist_ok=True)
     lock_f = os.path.join(target_dir, ".lock")
-    have_read_locks = False
-    if lock is not None:
-        # We can have a write lock allowing exclusive access as well as multiple parallel read locks
-        if os.path.isfile(lock_f):
-            tries = 1
-            while any(
-                line.strip().endswith(".write") and not line.strip().startswith(lock)
-                for line in open(lock_f)
-            ):
-                # Waite until the current write lock is released
-                warnings.warn(f"<copy_datadir.py>: Could not lock target_dir {target_dir}")
-                sleep(tries)
-                tries *= 2
-                if tries >= 2**12:  # 2**11 ~ 34 minutes
-                    break
-            have_read_locks = False
-            cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
-            for line in open(lock_f):
-                print("Found existing lock", line.strip())
-                try:
-                    lock_timestamp = line.strip().split(".")[1]
-                    lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
-                except Exception as e:
-                    print(e)
-                    continue
-                if cur_timestamp - lock_timestamp < timedelta(days=1):
-                    have_read_locks = True
-                    break
-        # Lock the target dir for writing
-        open(lock_f, "a+").write(f"\n{lock}.{timestamp}.write")
+    have_read_locks, have_write_locks = has_locks(target_dir, lock, wait_write_lock=True)
+    # Lock the target dir for writing
+    open(lock_f, "a+").write(f"\n{lock}.{timestamp}.write")
     cfg = json.load(open(cfg_path))
     os.makedirs(target_dir, exist_ok=True)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
     futures = {}
     cur_gb = du(target_dir)
+    print(f"Current target dir size: {cur_gb}")
+    print(f"Copying max {max_gb} GB")
     # Start with train since it will be accessed most of the time
     for split in ("train", "valid", "test"):
         # Get all Datasets and sort by dataset type and sampling factor
@@ -95,18 +128,26 @@ def copy_datasets(
                 new_gb = du(fn_src)
                 if cur_gb + new_gb > max_gb:  # If too large, link instead
                     if not os.path.exists(fn_tgt):
-                        print("linking", fn_src)
-                        subprocess.call(["ln", "-s", fn_src, fn_tgt])
+                        print("linking", fn_src, flush=True)
+                        ln(fn_src, fn_tgt)
+                    elif (
+                        not have_read_locks
+                        and os.path.isfile(fn_tgt)
+                        and not os.path.islink(fn_tgt)
+                    ):
+                        # Just run rsync again to make sure the file is not corrupt
+                        print("checking", fn_tgt, flush=True)
+                        futures[executor.submit(cp, fn_src, fn_tgt)] = fn_tgt
                 else:
                     if os.path.islink(fn_tgt) and not have_read_locks:
                         os.remove(fn_tgt)  # Only remove if no other process has a readlock
                     elif have_read_locks and os.path.isfile(fn_tgt):
                         continue
-                    print("copying", fn_src)
+                    print("copying", fn_src, flush=True)
                     cur_gb += new_gb
                     futures[executor.submit(cp, fn_src, fn_tgt)] = fn_tgt
     for future in concurrent.futures.as_completed(futures):
-        print("Completed: ", futures[future])
+        print("Completed", futures[future], flush=True)
 
     if lock is not None:
         remove_lock(target_dir, lock, lock + "." + timestamp + ".read")
@@ -130,12 +171,12 @@ def remove_lock(target_dir: str, lock: str, new_lock: Optional[str] = None):
         f.truncate()
 
 
-def cleanup(target_dir: str):
-    lock_f = os.path.join(target_dir, ".lock")
-    lines = [line.strip() for line in open(lock_f).readlines()]
-    if len(lines) > 0:
-        print("Could not cleanup due to existing locks:", lines)
+def cleanup(target_dir: str, prev_lock: Optional[str] = None):
+    have_read_locks, have_write_locks = has_locks(target_dir, prev_lock, wait_write_lock=True)
+    if have_read_locks or have_write_locks:
+        print("Could not cleanup due to existing locks.")
         return
+    print(f"Cleaning directory {target_dir}")
     shutil.rmtree(target_dir)
 
 
@@ -161,4 +202,4 @@ if __name__ == "__main__":
         if args.lock is not None:
             remove_lock(args.target_dir, args.lock + ".read")
             remove_lock(args.target_dir, args.lock + ".write")
-        cleanup(args.target_dir)
+        cleanup(args.target_dir, args.lock)
