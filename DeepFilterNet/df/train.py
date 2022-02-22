@@ -125,7 +125,7 @@ def main():
         norm_alpha=get_norm_alpha(),
         p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
-        prefetch=10,
+        prefetch=16,
         overfit=overfit,
         seed=seed,
         min_nb_erb_freqs=p.min_nb_freqs,
