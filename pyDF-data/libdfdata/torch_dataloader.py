@@ -87,6 +87,7 @@ class PytorchDataLoader:
         seed=0,
         min_nb_erb_freqs: int = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
+        global_sampling_factor: float = None,  # Additional over/undersampling of all datasets
     ):
         self.fft_size = fft_size
         self.batch_size = batch_size
@@ -114,6 +115,7 @@ class PytorchDataLoader:
             overfit=overfit,
             seed=seed,
             min_nb_erb_freqs=min_nb_erb_freqs,
+            global_sampling_factor=global_sampling_factor,
         )
         self.prefetch = prefetch
         self.pin_memory = pin_memory if torch.cuda.is_available() else False
