@@ -9,8 +9,8 @@
 #SBATCH --mail-type=ALL
 # Time limit format: "hours:minutes:seconds"
 #SBATCH --time=24:00:00
-# Send the SIGUSR1 signal 2 h before time limit
-#SBATCH --signal=B:USR1@7200
+# Send the SIGUSR1 signal 6 h before time limit
+#SBATCH --signal=B:USR1@21600
 
 set -e
 
@@ -118,7 +118,7 @@ setup_env "$CLUSTER" "$PROJECT_HOME" "$MODEL_NAME"
 if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
   test -d "/scratch/$USER" || mkdir "/scratch/$USER"
   NEW_DATA_DIR=/scratch/"$USER"/"$PROJECT_NAME"
-  echo "Seting up data dir in $NEW_DATA_DIR"
+  echo "Setting up data dir in $NEW_DATA_DIR"
   mkdir -p "$NEW_DATA_DIR"
   python3 "$PROJECT_HOME"/scripts/copy_datadir.py cp "$DATA_DIR" "$NEW_DATA_DIR" "$DATA_CFG" \
     --lock $MODEL_NAME --max-gb $COPY_MAX_GB
