@@ -91,6 +91,7 @@ impl _FdDataLoader {
         overfit: Option<bool>,
         seed: Option<u64>,
         min_nb_erb_freqs: Option<usize>,
+        global_sampling_factor: Option<f32>,
     ) -> PyResult<Self> {
         seed_from_u64(42);
         let cfg = match DatasetConfigJson::open(config_path) {
@@ -119,6 +120,9 @@ impl _FdDataLoader {
         }
         if let Some(nb_freqs) = min_nb_erb_freqs {
             ds_builder = ds_builder.min_nb_erb_freqs(nb_freqs)
+        }
+        if let Some(f) = global_sampling_factor {
+            ds_builder = ds_builder.global_sample_factor(f)
         }
         let valid_handle = {
             let valid_cfg = cfg.split_config(Valid);

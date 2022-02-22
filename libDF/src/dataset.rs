@@ -85,6 +85,9 @@ impl Hdf5Cfg {
     pub fn sampling_factor(&self) -> f32 {
         self.1
     }
+    pub fn set_sampling_factor(&mut self, f: f32) {
+        self.1 = f
+    }
     pub fn fallback_sr(&self) -> Option<usize> {
         self.2
     }
@@ -297,6 +300,7 @@ pub struct DatasetBuilder {
     p_fill_speech: Option<f32>,
     seed: Option<u64>,
     min_nb_freqs: Option<usize>,
+    global_sampling_f: Option<f32>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -315,6 +319,7 @@ impl DatasetBuilder {
             p_fill_speech: None,
             seed: None,
             min_nb_freqs: None,
+            global_sampling_f: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -357,7 +362,7 @@ impl DatasetBuilder {
         let mut ds_keys = Vec::new();
         let mut config: Vec<Hdf5Cfg> = Vec::new();
         let mut has_rirs = false;
-        for (i, cfg) in datasets.hdf5s.drain(..).enumerate() {
+        for (i, mut cfg) in datasets.hdf5s.drain(..).enumerate() {
             let name = cfg.filename();
             let path = Path::new(&self.ds_dir).join(name);
             if (!path.is_file()) && path.read_link().is_err() {
@@ -370,6 +375,9 @@ impl DatasetBuilder {
             }
             ds_keys.push((ds.dstype, i, ds.keys()?));
             hdf5_handles.push(ds);
+            if let Some(f) = self.global_sampling_f {
+                cfg.set_sampling_factor(cfg.sampling_factor() * f)
+            }
             config.push(cfg);
         }
         if hdf5_handles.is_empty() {
@@ -444,6 +452,10 @@ impl DatasetBuilder {
         self.nb_erb = nb_erb;
         self.nb_spec = nb_spec;
         self.norm_alpha = norm_alpha;
+        self
+    }
+    pub fn global_sample_factor(mut self, f: f32) -> Self {
+        self.global_sampling_f = Some(f);
         self
     }
     pub fn prob_atten_lim(mut self, p_atten_lim: f32) -> Self {
