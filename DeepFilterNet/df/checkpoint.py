@@ -129,24 +129,28 @@ def cleanup(name: str, dirname: str, extension: str, nkeep=5):
         os.remove(cp)
 
 
-def check_patience(dirname: str, max_patience: int, new_metric: float, cmp: str):
+def check_patience(
+    dirname: str, max_patience: int, new_metric: float, cmp: str = "min", raise_: bool = True
+):
     cmp = "__lt__" if cmp == "min" else "__gt__"
     new_metric = float(new_metric)  # Make sure it is not an integer
     prev_patience, prev_metric = read_patience(dirname)
-    if prev_patience is None:
-        prev_patience = max_patience
-    if getattr(new_metric, cmp)(prev_metric):
+    if prev_patience is None or getattr(new_metric, cmp)(prev_metric):
         # We have a better new_metric, reset patience
-        write_patience(dirname, max_patience, new_metric)
+        write_patience(dirname, 0, new_metric)
     else:
         # We don't have a better metric, decrement patience
-        new_patience = prev_patience - 1
+        new_patience = prev_patience + 1
         write_patience(dirname, new_patience, prev_metric)
-        if new_patience < 0:
-            raise ValueError(
-                f"No improvements on validation metric ({new_metric}) for {max_patience} epochs. "
-                "Stopping."
-            )
+        if new_patience >= max_patience:
+            if raise_:
+                raise ValueError(
+                    f"No improvements on validation metric ({new_metric}) for {max_patience} epochs. "
+                    "Stopping."
+                )
+            else:
+                return False
+    return True
 
 
 def read_patience(dirname: str) -> Tuple[Optional[int], float]:
@@ -159,3 +163,27 @@ def read_patience(dirname: str) -> Tuple[Optional[int], float]:
 
 def write_patience(dirname: str, new_patience: int, metric: float):
     return np.savetxt(os.path.join(dirname, ".patience"), [new_patience, metric])
+
+
+def test_check_patience():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        check_patience(d, 3, 1.0)
+        check_patience(d, 3, 1.0)
+        check_patience(d, 3, 1.0)
+        assert check_patience(d, 3, 1.0, raise_=False) is False
+
+    with tempfile.TemporaryDirectory() as d:
+        check_patience(d, 3, 1.0)
+        check_patience(d, 3, 0.9)
+        check_patience(d, 3, 1.0)
+        check_patience(d, 3, 1.0)
+        assert check_patience(d, 3, 1.0, raise_=False) is False
+
+    with tempfile.TemporaryDirectory() as d:
+        check_patience(d, 3, 1.0, cmp="max")
+        check_patience(d, 3, 1.9, cmp="max")
+        check_patience(d, 3, 1.0, cmp="max")
+        check_patience(d, 3, 1.0, cmp="max")
+        assert check_patience(d, 3, 1.0, cmp="max", raise_=False) is False
