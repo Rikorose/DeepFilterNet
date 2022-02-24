@@ -53,18 +53,24 @@ def get_log_format(debug=False):
 
 
 def log_metrics(prefix: str, metrics: Dict[str, Number]):
-    msg = prefix
+    msg = ""
     stages = defaultdict(str)
+    loss_msg = ""
     for n, v in sorted(metrics.items()):
         m = f" | {n}: {v:.5g}"
         if "stage" in n:
             s = n.split("stage_")[1].split("_snr")[0]
             stages[s] += m.replace(f"stage_{s}_", "")
+        elif "valid" in prefix and "loss" in n.lower():
+            loss_msg += m
         else:
             msg += m
-    for s, msg in stages.items():
-        logger.info(f"{prefix} | stage {s}" + msg)
-    logger.info(msg)
+    for s, msg_s in stages.items():
+        logger.info(f"{prefix} | stage {s}" + msg_s)
+    if len(stages) == 0:
+        logger.info(prefix + msg)
+    if len(loss_msg) > 0:
+        logger.info(prefix + loss_msg)
 
 
 def log_model_summary(model: torch.nn.Module, verbose=False):
