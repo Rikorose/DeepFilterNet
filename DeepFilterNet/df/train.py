@@ -52,6 +52,7 @@ def main():
     )
     parser.add_argument("--no-resume", action="store_false", dest="resume")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--no-debug", action="store_false", dest="debug")
     args = parser.parse_args()
     if not os.path.isfile(args.data_config_file):
         raise FileNotFoundError("Dataset config not found at {}".format(args.data_config_file))
