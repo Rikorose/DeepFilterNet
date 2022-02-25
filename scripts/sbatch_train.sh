@@ -16,7 +16,7 @@ set -e
 
 # Cluster directory containing data, project code, logging, summaries,
 # checkpoitns, etc.
-export CLUSTER=/cluster/$USER
+export CLUSTER=/net/cluster/$USER
 cd "$CLUSTER"
 
 # Workaround for our cluster
@@ -40,7 +40,7 @@ EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 if [ "$DEBUG" -eq 1 ]; then
   DEBUG="--debug"
 else
-  DEBUG=
+  DEBUG="--no-debug"
 fi
 
 echo "Started sbatch script at $(date) in $(pwd)"
@@ -99,7 +99,7 @@ if [ "$PROJECT_BRANCH_CUR" != "$PROJECT_BRANCH" ]; then
   git -C "$PROJECT_HOME" stash save "$stash"
   git -C "$PROJECT_HOME" checkout "$PROJECT_BRANCH"
   stash_idx=$(git -C "$PROJECT_HOME" stash list | grep "$stash" | cut -d: -f1)
-  if [ ! -z "$stash_idx" -a "$stash_idx" != " " ]; then
+  if [ -n "$stash_idx" ] && [ "$stash_idx" != " " ]; then
     # Try to apply current stash; If not possible just proceed.
     if ! git -C "$PROJECT_HOME" stash pop "$stash_idx"; then
       echo "Could not apply stash to branch $PROJECT_BRANCH"
@@ -121,7 +121,7 @@ if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
   echo "Setting up data dir in $NEW_DATA_DIR"
   mkdir -p "$NEW_DATA_DIR"
   python3 "$PROJECT_HOME"/scripts/copy_datadir.py cp "$DATA_DIR" "$NEW_DATA_DIR" "$DATA_CFG" \
-    --lock $MODEL_NAME --max-gb $COPY_MAX_GB
+    --lock "$MODEL_NAME" --max-gb "$COPY_MAX_GB"
   DATA_DIR="$NEW_DATA_DIR"
 fi
 
@@ -170,7 +170,7 @@ PYTHONPATH="$PROJECT_HOME/DeepFilterNet/" python train.py \
   "$DATA_CFG" \
   "$DATA_DIR" \
   "$BASE_DIR" \
-  $DEBUG &
+  "$DEBUG" &
 
 trainprocess=$!
 echo "Started trainprocess: $trainprocess"
