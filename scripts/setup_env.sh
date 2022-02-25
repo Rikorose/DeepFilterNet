@@ -3,6 +3,7 @@
 pytorch_v="1.10"
 cuda_version=11.1
 PYTHON_V=3.9
+MINICONDA_DIR=${MINICONDA_DIR:-"$HOME/miniconda"}
 
 PYTORCH_NIGHTLY=${PYTORCH_NIGHTLY:-0}
 if [ "$PYTORCH_NIGHTLY" -eq 1 ]; then
@@ -16,34 +17,51 @@ INSTALL_LIBDF=${INSTALL_LIBDF:-1}
 INSTALL_PYDEPS=${INSTALL_PYDEPS:-0}
 SUFFIX=""
 
+check_install_conda() {
+  # Check if miniconda is already installed
+  if ! [ -f "$MINICONDA_DIR"/bin/python$PYTHON_V ]; then
+    if [ -d "$MINICONDA_DIR" ]; then
+      echo "Miniconda directory already exists, but python not found."
+      echo "Please cleanup miniconda dir first for an automatic installation."
+      exit 1
+    fi
+    echo "Miniconda not found. Installing..."
+    wget -nv https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh \
+      -O "$CLUSTER"/miniconda.sh
+    bash "$CLUSTER"/miniconda.sh -b -p "$MINICONDA_DIR"
+    rm "$CLUSTER"/miniconda.sh
+  fi
+}
+
+setup_conda() {
+  # Setup miniconda if found; this isn't done lazily, so expect some bash starup delay
+  __conda_setup=$("$MINICONDA_DIR/bin/conda" 'shell.bash' 'hook')
+  if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+  else
+    if [ -f "$MINICONDA_DIR/etc/profile.d/conda.sh" ]; then
+      . "$MINICONDA_DIR/etc/profile.d/conda.sh"
+    else
+      export PATH="$MINICONDA_DIR/bin:$PATH"
+    fi
+  fi
+  unset __conda_setup
+}
+
 setup_env() {
   CLUSTER=$1
-  MINICONDA_DIR="$CLUSTER/miniconda"
   PROJECT_HOME=$2
-  if [ ! -z "$3" ]; then
+  if [ -n "$3" ]; then
     SUFFIX="-$3"
   fi
+  echo "Running on CUDA: $cuda_version"
 
   env="df-$pytorch_v$nightly-cuda$cuda_version$SUFFIX"
   env_path="$MINICONDA_DIR/envs/$env"
   if ! [ -f "$env_path/bin/python$PYTHON_V" ]; then
-    # Check if miniconda is already installed
     echo "Virtualenv $env not found. Installing..."
-    if ! [ -f "$MINICONDA_DIR"/bin/python$PYTHON_V ]; then
-      if [ -d "$MINICONDA_DIR" ]; then
-        echo "Miniconda directory already exists, but python not found."
-        echo "Please cleanup miniconda dir first for an automatic installation."
-        exit 1
-      fi
-      echo "Miniconda not found. Installing..."
-      wget -nv https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh \
-        -O "$CLUSTER"/miniconda.sh
-      bash "$CLUSTER"/miniconda.sh -b -p "$MINICONDA_DIR"
-      rm "$CLUSTER"/miniconda.sh
-    fi
-    export PATH="$MINICONDA_DIR/bin:$PATH"
-
-    echo "Running on CUDA: $cuda_version"
+    check_install_conda
+    setup_conda
 
     echo "Installing conda env to $env_path"
     conda create -y -q -p "$env_path" \
@@ -51,16 +69,14 @@ setup_env() {
       "$pytorch_v_arg" \
       torchaudio \
       cudatoolkit=$cuda_version -c "pytorch$nightly" -c conda-forge
-    source activate "$env"
+    conda activate "$env"
 
     INSTALL_LIBDF=1
     INSTALL_PYDEPS=1
   else
     # Only need to activate the existing env
-    if ! [ -x "$(command -v conda)" ]; then
-      export PATH="$MINICONDA_DIR/bin:$PATH"
-    fi
-    source activate "$env"
+    setup_conda
+    conda activate "$env"
 
     echo "Running on env: $CONDA_DEFAULT_ENV"
   fi
