@@ -11,6 +11,6 @@ path = "src/lib.rs"
 
 [dependencies]
 deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
-pyo3 = { version = "^0.15", default_features = true, features = ["extension-module"]}
+pyo3 = { version = "^0.16", default_features = true, features = ["extension-module"]}
 numpy = ">=0.15.1,<0.16"
 ndarray = "^0.15"
