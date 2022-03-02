@@ -138,7 +138,8 @@ def main():
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
-    lrs = load_lrs(len(dataloader))
+    lrs = setup_lrs(len(dataloader))
+    wds = setup_wds(len(dataloader))
 
     # Validation optimization target. Used for early stopping and selecting best checkpoint
     val_criteria = []
@@ -177,6 +178,7 @@ def main():
             losses=losses,
             summary_dir=summary_dir,
             lr_scheduler_values=lrs,
+            wd_scheduler_values=wds,
         )
         metrics = {"loss": train_loss}
         try:
@@ -341,8 +343,9 @@ def run_epoch(
             l_dict = {"loss": l_mean.item()}
             if lr_scheduler_values is not None:
                 l_dict["lr"] = opt.param_groups[0]["lr"]
-            l_dict["t_sample"] = batch.timings[:-1].mean()
-            l_dict["t_batch"] = batch.timings[-1].mean()  # last if for whole batch
+            if log_timings:
+                l_dict["t_sample"] = batch.timings[:-1].sum()
+                l_dict["t_batch"] = batch.timings[-1].mean()  # last if for whole batch
             if debug:
                 l_dict.update(
                     {
@@ -391,7 +394,7 @@ def load_opt(
     decay = config("weight_decay", 0.05, float, section="optim")
     optimizer = config("optimizer", "adamw", str, section="optim").lower()
     betas: Tuple[int, int] = config(
-        "opt_betas", [0.9, 0.98], Csv(float), section="optim", save=False  # type: ignore
+        "opt_betas", [0.9, 0.999], Csv(float), section="optim", save=False  # type: ignore
     )
     if mask_only:
         params = []
@@ -424,7 +427,7 @@ def load_opt(
     return opt
 
 
-def load_lrs(steps_per_epoch: int) -> np.ndarray:
+def setup_lrs(steps_per_epoch: int) -> np.ndarray:
     lr = config.get("lr", float, "optim")
     num_epochs = config.get("max_epochs", int, "train")
     lr_min = config("lr_min", 1e-6, float, section="optim")
@@ -446,6 +449,18 @@ def load_lrs(steps_per_epoch: int) -> np.ndarray:
         cycle_mul=lr_cycle_mul,
     )
     return lr_values
+
+
+def setup_wds(steps_per_epoch: int) -> Optional[np.ndarray]:
+    decay = config("weight_decay", 0.05, float, section="optim")
+    decay_end = config("weight_decay_end", -1, float, section="optim")
+    if decay_end == -1:
+        return None
+    num_epochs = config.get("max_epochs", int, "train")
+    decay_values = cosine_scheduler(
+        decay, decay_end, niter_per_ep=steps_per_epoch, epochs=num_epochs
+    )
+    return decay_values
 
 
 @torch.no_grad()
