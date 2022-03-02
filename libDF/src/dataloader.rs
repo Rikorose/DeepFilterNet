@@ -356,7 +356,7 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
-        let t0 = Instant::now();
+        let mut t0 = Instant::now();
         let bs = self.batch_size(self.current_split);
         let mut timings = Vec::with_capacity(bs);
         let mut samples = Vec::with_capacity(bs);
@@ -377,7 +377,9 @@ impl DataLoader {
             if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
                 ids.push(self.cur_out_idx);
                 samples.push(s);
-                timings.push((Instant::now() - t0).as_secs_f32());
+                let t1 = Instant::now();
+                timings.push((t1 - t0).as_secs_f32());
+                t0 = t1;
                 self.cur_out_idx += 1;
             } else {
                 // Or check worker threads
@@ -398,7 +400,9 @@ impl DataLoader {
                     Ok((o_idx, Ok(s))) => {
                         if o_idx == self.cur_out_idx {
                             samples.push(s);
-                            timings.push((Instant::now() - t0).as_secs_f32());
+                            let t1 = Instant::now();
+                            timings.push((t1 - t0).as_secs_f32());
+                            t0 = t1;
                             ids.push(o_idx);
                             self.cur_out_idx += 1;
                         } else {
