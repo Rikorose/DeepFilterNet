@@ -330,9 +330,8 @@ class SdrLoss(nn.Module):
 
 
 class SegSdrLoss(nn.Module):
-    def __init__(
-        self, window_sizes: Optional[List[int]] = None, factor: float = 0.2, overlap: float = 0
-    ):
+    def __init__(self, window_sizes: List[int], factor: float = 0.2, overlap: float = 0):
+        # Window size in samples
         super().__init__()
         self.window_sizes = window_sizes
         self.factor = factor
@@ -344,18 +343,16 @@ class SegSdrLoss(nn.Module):
         if self.factor == 0:
             return torch.zeros((), device=input.device)
         loss = torch.zeros((), device=input.device)
-        if self.window_sizes is None:
-            # Non-segmental SdrLoss
-            loss = self.sdr(input, target).mean()
-        else:
-            for ws in self.window_sizes:
-                if ws > input.size(1):
-                    warnings.warn("Input size smaller than window size. Adjusting window size.")
-                    ws = input.size(1)
-                loss += self.sdr(
-                    input=input.unfold(1, ws, int(self.hop * ws)).reshape(-1, ws),
-                    target=target.unfold(1, ws, int(self.hop * ws)).reshape(-1, ws),
-                ).mean()
+        for ws in self.window_sizes:
+            if ws > input.size(-1):
+                warnings.warn(
+                    f"Input size {input.size(-1)} smaller than window size. Adjusting window size."
+                )
+                ws = input.size(1)
+            loss += self.sdr(
+                input=input.unfold(-1, ws, int(self.hop * ws)).reshape(-1, ws),
+                target=target.unfold(-1, ws, int(self.hop * ws)).reshape(-1, ws),
+            ).mean()
         return -loss * self.factor
 
 
@@ -425,7 +422,15 @@ class Loss(nn.Module):
             self.mrsl = MultiResSpecLoss(self.mrsl_ffts, self.mrsl_gamma, self.mrsl_f, self.mrsl_fc)
         else:
             self.mrsl = None
-        self.lsnrl = LocalSnrLoss(factor=0.0005)
+        self.sdrl_f = config("factor", 0, float, section="SdrLoss")
+        if self.sdrl_f > 0:
+            sdr_sgemental_ws = config("segmental_ws", [], Csv(int), section="SdrLoss")
+            if len(sdr_sgemental_ws) > 0:
+                self.sdrl = SegSdrLoss(sdr_sgemental_ws, factor=self.sdrl_f)
+            else:
+                self.sdrl = SdrLoss(self.sdrl_f)
+        self.lsnr_f = config("factor", 0.0005, float, section="LocalSnrLoss")
+        self.lsnrl = LocalSnrLoss(self.lsnr_f) if self.lsnr_f > 0 else None
 
     def forward(
         self,
@@ -455,14 +460,14 @@ class Loss(nn.Module):
             multi_stage = as_complex(torch.stack(multi_stage_specs, dim=1))
         lsnr_gt = self.lsnr(clean, noise=noisy - clean)
         if self.istft is not None:
-            if self.store_losses or self.mrsl is not None:
+            if self.store_losses or self.mrsl is not None or self.sdrl is not None:
                 enhanced_td = self.istft(enhanced)
                 clean_td = self.istft(clean)
                 if multi_stage is not None:
                     # leave out erb enhanced
                     multi_stage_td = self.istft(multi_stage)
 
-        ml, sl, mrsl, cal = [torch.zeros((), device=clean.device)] * 4
+        ml, sl, mrsl, cal, sdrl, lsnrl = [torch.zeros((), device=clean.device)] * 6
         if self.ml_f != 0 and self.ml is not None:
             ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
@@ -477,10 +482,17 @@ class Loss(nn.Module):
                 mrsl = self.mrsl(ms, clean_td.expand_as(ms))
             else:
                 mrsl = self.mrsl(enhanced_td, clean_td)
-        lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
+        if self.lsnr_f != 0:
+            lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
         if self.cal_f != 0 and self.cal is not None and df_alpha is not None:
             lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
             cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
+        if self.sdrl_f != 0:
+            if multi_stage_td is not None:
+                ms = multi_stage_td[:, 1:]
+                sdrl = self.sdrl(ms, clean_td.expand_as(ms))
+            else:
+                sdrl = self.sdrl(enhanced_td, clean_td)
         if self.store_losses and self.istft is not None:
             assert enhanced_td is not None
             assert clean_td is not None
@@ -491,11 +503,12 @@ class Loss(nn.Module):
                 ml,
                 sl,
                 mrsl,
+                sdrl,
                 lsnrl,
                 cal,
                 multi_stage_td=multi_stage_td,
             )
-        return ml + sl + mrsl + lsnrl + cal
+        return ml + sl + mrsl + sdrl + lsnrl + cal
 
     def reset_summaries(self):
         self.summaries = defaultdict(list)
@@ -515,6 +528,7 @@ class Loss(nn.Module):
         ml: Tensor,
         sl: Tensor,
         mrsl: Tensor,
+        sdrl: Tensor,
         lsnrl: Tensor,
         cal: Tensor,
         multi_stage_td: Optional[Tensor] = None,
@@ -523,12 +537,14 @@ class Loss(nn.Module):
             self.summaries["MaskLoss"].append(ml.detach())
         if sl != 0:
             self.summaries["SpectralLoss"].append(sl.detach())
+        if mrsl != 0:
+            self.summaries["MultiResSpecLoss"].append(mrsl.detach())
+        if sdrl != 0:
+            self.summaries["SdrLoss"].append(sdrl.detach())
         if cal != 0:
             self.summaries["DfAlphaLoss"].append(cal.detach())
         if lsnrl != 0:
             self.summaries["LocalSnrLoss"].append(lsnrl.detach())
-        if mrsl != 0:
-            self.summaries["MultiResSpecLoss"].append(mrsl.detach())
         sdr = SiSdr()
         enh_td = enh_td.squeeze(1)
         clean_td = clean_td.squeeze(1)
