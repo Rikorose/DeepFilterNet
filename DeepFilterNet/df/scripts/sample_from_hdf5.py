@@ -5,6 +5,7 @@ import sys
 
 import h5py
 import numpy as np
+import torch
 import torchaudio as ta
 
 
@@ -25,6 +26,7 @@ def main():
     parser.add_argument("--random", "-r", action="store_true")
     parser.add_argument("--out-dir", "-o", type=str, default="out")
     parser.add_argument("--n-samples", "-n", type=int, default=1)
+    parser.add_argument("--n-channels", "-c", type=int, default=1)
     args = parser.parse_args()
 
     with h5py.File(args.hdf5_file, "r", libver="latest", swmr=True) as h5f:
@@ -49,7 +51,9 @@ def main():
                 if not outname.endswith(".wav"):
                     outname += ".wav"
                 print(outname)
-                ta.save(outname, sample[:], sample_rate=sr)
+                if args.n_channels > 0:
+                    sample = sample[: args.n_channels]
+                ta.save(outname, torch.as_tensor(sample[:]), sample_rate=sr)
                 i += 1
                 if n_samples > 0 and i >= n_samples:
                     break
