@@ -128,11 +128,12 @@ def main():
         norm_alpha=get_norm_alpha(),
         p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
-        prefetch=16,
+        prefetch=128,
         overfit=overfit,
         seed=seed,
         min_nb_erb_freqs=p.min_nb_freqs,
-        log_timings=True,
+        log_timings=log_timings,
+        global_sampling_factor=config("GLOBAL_DS_SAMPLING_F", 1.0, float, section="train"),
     )
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
