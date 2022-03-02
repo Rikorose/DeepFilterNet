@@ -48,6 +48,9 @@ class ModelParams(DfParams):
         self.refinement_op: str = config(
             "REFINEMENT_OP", default="mul", section=self.section
         ).lower()
+        self.dp_rate: float = config(
+            "DROP_PATH_RATE", default=0.2, cast=float, section=self.section
+        )  # Also called stochastic_depth_prob
         assert self.refinement_op in ("mul", "add")
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
@@ -472,6 +475,7 @@ class MSNet(nn.Module):
             width_mult=p.width_mult,
             depth_mult=p.depth_mult,
             depth=p.erb_depth,
+            stochastic_depth_prob=p.dp_rate,
         )
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
@@ -487,6 +491,7 @@ class MSNet(nn.Module):
             depth_mult=p.depth_mult,
             depth=p.refinement_depth,
             fstrides=strides,
+            stochastic_depth_prob=p.dp_rate,
         )
         self.refinement_op = ComplexMul() if p.refinement_op == "mul" else ComplexAdd()
         self.lsnr_net = LSNRNet(self.erb_stage.max_width, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
