@@ -85,7 +85,7 @@ setup_env() {
     cd "$PROJECT_HOME"/ || exit 10
     rustup default stable
     rustup update stable
-    cargo build --release
+    cargo build --all-features --release
     pip install -U maturin
     maturin develop --release -m "$PROJECT_HOME"/pyDF/Cargo.toml
     maturin develop --release -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
