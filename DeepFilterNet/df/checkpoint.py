@@ -113,7 +113,7 @@ def write_cp(
     cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}")
     logger.info(f"Writing checkpoint {cp_name} with epoch {epoch}")
     torch.save(obj.state_dict(), cp_name)
-    n_old_cps = config("n_checkpoint_history", default=-1, cast=int, save=False, section="train")
+    n_old_cps = config("n_checkpoint_history", default=3, cast=int, section="train")
     cleanup(name, dirname, extension, nkeep=n_old_cps)
 
 
