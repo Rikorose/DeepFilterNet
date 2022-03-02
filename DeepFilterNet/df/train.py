@@ -34,13 +34,14 @@ from libdfdata import PytorchDataLoader as DataLoader
 
 should_stop = False
 debug = False
+log_timings = False
 state: Optional[DF] = None
 istft: Optional[nn.Module]
 
 
 @logger.catch
 def main():
-    global should_stop, debug, state
+    global should_stop, debug, state, log_timings
 
     parser = argparse.ArgumentParser()
     parser.add_argument("data_config_file", type=str, help="Path to a dataset config file.")
@@ -111,6 +112,7 @@ def main():
     bs_eval: int = config("BATCH_SIZE_EVAL", 0, int, section="train")
     bs_eval = bs_eval if bs_eval > 0 else bs
     overfit = config("OVERFIT", False, bool, section="train")
+    log_timings = config("LOG_TIMINGS", False, bool, section="train", save=False)
     dataloader = DataLoader(
         ds_dir=args.data_dir,
         ds_config=args.data_config_file,
