@@ -1148,7 +1148,20 @@ impl Hdf5Dataset {
         let mut out: Array2<f32> = Array2::zeros((ch, samples));
         let mut block = claxon::Block::empty();
         let mut idx = 0;
-        while let Some(next) = frame_reader.read_next_or_eof(block.into_buffer())? {
+        loop {
+            let next = match frame_reader.read_next_or_eof(block.into_buffer()) {
+                Ok(Some(n)) => n,
+                Ok(None) => break,
+                Err(e) => {
+                    eprintln!("Error decoding flac dataset {} {:?}", key, e);
+                    if e.to_string().contains("CRC") {
+                        break;
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+            };
+            // while let Some(next) = ? {
             let numel = (next.len() / next.channels()) as usize;
             debug_assert_eq!(ch, next.channels() as usize);
             for i in 0..ch {
