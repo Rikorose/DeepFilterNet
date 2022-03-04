@@ -10,10 +10,11 @@ from torch.types import Number
 from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 
 _logger_initialized = False
+WARN_ONCE_NO = logger.level("WARNING").no + 1
 
 
 def init_logger(file: Optional[str] = None, level: str = "INFO"):
-    global _logger_initialized
+    global _logger_initialized, _duplicate_filter
     if _logger_initialized:
         logger.debug("Logger already initialized.")
         return
@@ -21,9 +22,16 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
     level = level.upper()
     if level != "NONE":
         log_format = get_log_format(debug=level == "DEBUG")
-        logger.add(sys.stdout, level=level, format=log_format)
+        logger.add(
+            sys.stdout,
+            level=level,
+            format=log_format,
+            filter=lambda r: r["level"].no != WARN_ONCE_NO,
+        )
         if file is not None:
-            logger.add(file, level=level, format=log_format)
+            logger.add(
+                file, level=level, format=log_format, filter=lambda r: r["level"].no != WARN_ONCE_NO
+            )
 
         logger.info(f"Running on torch {torch.__version__}")
         logger.info(f"Running on host {get_host()}")
@@ -32,7 +40,18 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
             logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
         if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
             logger.info(f"Slurm jobid: {jobid}")
+        logger.level("WARN", no=WARN_ONCE_NO, color="<yellow>")
+        logger.add(
+            sys.stderr,
+            level=max(logger.level(level).no, WARN_ONCE_NO),
+            format=log_format,
+            filter=lambda r: r["level"].no == WARN_ONCE_NO and _duplicate_filter(r),
+        )
     _logger_initialized = True
+
+
+def warn_once(message, *args, **kwargs):
+    logger.log("WARN", message, *args, **kwargs)
 
 
 def get_log_format(debug=False):
@@ -71,6 +90,24 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
         logger.info(prefix + msg)
     if len(loss_msg) > 0:
         logger.info(prefix + loss_msg)
+
+
+class DuplicateFilter:
+    """
+    Filters away duplicate log messages.
+    Modified version of: https://stackoverflow.com/a/60462619
+    """
+
+    def __init__(self):
+        self.msgs = set()
+
+    def __call__(self, record) -> bool:
+        rv = record["message"] not in self.msgs
+        self.msgs.add(record["message"])
+        return rv
+
+
+_duplicate_filter = DuplicateFilter()
 
 
 def log_model_summary(model: torch.nn.Module, verbose=False):
