@@ -24,6 +24,8 @@ def load_model(
     jit: bool = False,
     mask_only: bool = False,
     train_df_only: bool = False,
+    extension: str = "ckpt",
+    best: bool = False,
 ) -> Tuple[nn.Module, int]:
     if mask_only and train_df_only:
         raise ValueError("Only one of `mask_only` `train_df_only` can be enabled")
@@ -33,7 +35,7 @@ def load_model(
     blacklist: List[str] = config("CP_BLACKLIST", [], Csv(), save=False, section="train")  # type: ignore
     epoch = 0
     if cp_dir is not None:
-        epoch = read_cp(model, "model", cp_dir, blacklist=blacklist)
+        epoch = read_cp(model, "model", cp_dir, blacklist=blacklist, extension=extension, best=best)
         epoch = 0 if epoch is None else epoch
     return model, epoch
 
@@ -45,8 +47,15 @@ def read_cp(
     epoch="latest",
     extension="ckpt",
     blacklist=[],
+    best: bool = False,
 ):
-    checkpoints = glob.glob(os.path.join(dirname, f"{name}*.{extension}"))
+    checkpoints = []
+    if best:
+        checkpoints = glob.glob(os.path.join(dirname, f"{name}*.{extension}.best"))
+        if len(checkpoints) == 0:
+            logger.warning("Could not find `best` checkpoint. Checking for default...")
+    if len(checkpoints) == 0:
+        checkpoints = glob.glob(os.path.join(dirname, f"{name}*.{extension}"))
     if len(checkpoints) == 0:
         return None
     latest = max(checkpoints, key=get_epoch)
