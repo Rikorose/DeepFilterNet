@@ -76,7 +76,10 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
     stages = defaultdict(str)
     loss_msg = ""
     for n, v in sorted(metrics.items()):
-        m = f" | {n}: {v:.5f}"
+        if abs(v) > 1e-5:
+            m = f" | {n}: {v:.5f}"
+        else:
+            m = f" | {n}: {v:.3E}"
         if "stage" in n:
             s = n.split("stage_")[1].split("_snr")[0]
             stages[s] += m.replace(f"stage_{s}_", "")
