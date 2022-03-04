@@ -40,7 +40,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
             logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
         if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
             logger.info(f"Slurm jobid: {jobid}")
-        logger.level("WARN", no=WARN_ONCE_NO, color="<yellow>")
+        logger.level("WARNONCE", no=WARN_ONCE_NO, color="<yellow><bold>")
         logger.add(
             sys.stderr,
             level=max(logger.level(level).no, WARN_ONCE_NO),
@@ -51,7 +51,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
 
 
 def warn_once(message, *args, **kwargs):
-    logger.log("WARN", message, *args, **kwargs)
+    logger.log("WARNONCE", message, *args, **kwargs)
 
 
 def get_log_format(debug=False):
