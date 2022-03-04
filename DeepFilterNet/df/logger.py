@@ -21,7 +21,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
     logger.remove()
     level = level.upper()
     if level != "NONE":
-        log_format = get_log_format(debug=level == "DEBUG")
+        log_format = Formatter(debug=level == "DEBUG").format
         logger.add(
             sys.stdout,
             level=level,
@@ -54,21 +54,28 @@ def warn_once(message, *args, **kwargs):
     logger.log("WARNONCE", message, *args, **kwargs)
 
 
-def get_log_format(debug=False):
-    if debug:
-        return (
-            "<green>{time:YYYY-MM-DD HH:mm:ss}</green>"
-            " | <level>{level: <8}</level>"
-            " | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan>"
-            " | <level>{message}</level>"
-        )
-    else:
-        return (
-            "<green>{time:YYYY-MM-DD HH:mm:ss}</green>"
-            " | <level>{level: <8}</level>"
-            " | <cyan>DF</cyan>"
-            " | <level>{message}</level>"
-        )
+class Formatter:
+    def __init__(self, debug=False):
+        if debug:
+            self.fmt = (
+                "<green>{time:YYYY-MM-DD HH:mm:ss}</green>"
+                " | <level>{level: <8}</level>"
+                " | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan>"
+                " | <level>{message}</level>"
+            )
+        else:
+            self.fmt = (
+                "<green>{time:YYYY-MM-DD HH:mm:ss}</green>"
+                " | <level>{level: <8}</level>"
+                " | <cyan>DF</cyan>"
+                " | <level>{message}</level>"
+            )
+        self.fmt += "\n{exception}"
+
+    def format(self, record):
+        if record["level"].no == WARN_ONCE_NO:
+            return self.fmt.replace("{level: <8}", "WARNING ")
+        return self.fmt
 
 
 def log_metrics(prefix: str, metrics: Dict[str, Number]):
