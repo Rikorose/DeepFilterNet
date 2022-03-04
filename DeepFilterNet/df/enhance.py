@@ -93,7 +93,11 @@ def init_df(
         min_nb_erb_freqs=p.min_nb_freqs,
     )
     checkpoint_dir = os.path.join(model_base_dir, "checkpoints")
-    model, _ = load_model_cp(checkpoint_dir, df_state)
+    model, epoch = load_model_cp(checkpoint_dir, df_state, best=True)
+    if epoch is None:
+        logger.error("Could not find a checkpoint")
+        exit(1)
+    logger.debug(f"Loaded checkpoint from epoch {epoch}")
     model = model.to(get_device())
     # Set suffix to model name
     suffix = os.path.basename(os.path.abspath(model_base_dir))
