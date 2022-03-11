@@ -189,12 +189,14 @@ pub(crate) fn resample(
 ) -> Result<Array2<f32>> {
     let channels = x.len_of(Axis(0));
     let len = x.len_of(Axis(1));
-    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size.unwrap_or(1024), channels);
-    let chunk_size = resampler.nbr_frames_needed();
+    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size.unwrap_or(1024), channels)
+        .expect("Could not initialize resampler");
+    let chunk_size = resampler.input_frames_max();
     let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize;
     let chunk_size_out = (chunk_size as u64 * new_sr as u64 / sr as u64) as usize;
     let mut out = Array2::uninit((channels, chunk_size_out * num_chunks));
     let mut inbuf = vec![vec![0f32; chunk_size]; channels];
+    let mut outbuf = resampler.output_buffer_allocate();
     let mut i = 0;
     for (chunk, mut out_chunk) in x
         .axis_chunks_iter(Axis(1), chunk_size)
@@ -210,8 +212,8 @@ pub(crate) fn resample(
                 chunk_ch.assign_to(buf_ch);
             }
         }
-        let resampled = resampler.process(&inbuf)?;
-        for (res_ch, mut out_ch) in resampled.iter().zip(out_chunk.axis_iter_mut(Axis(0))) {
+        resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
+        for (res_ch, mut out_ch) in outbuf.iter().zip(out_chunk.axis_iter_mut(Axis(0))) {
             debug_assert_eq!(res_ch.len(), out_ch.len());
             for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
                 *y = MaybeUninit::new(x);
