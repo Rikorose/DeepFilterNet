@@ -1121,22 +1121,12 @@ impl Hdf5Dataset {
             ds: format!("{:?}", self.file),
         })
     }
-    /// Read a Flac encoded sample from an `hdf5::Dataset`.
-    ///
-    /// Arguments:
-    ///
-    /// * `key`: String idendifier to load the dataset.
-    /// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
-    /// * `r`: Optional range in samples (time axis). `None` will return all samples.
     #[cfg(feature = "flac")]
-    fn read_flac(
+    fn _read_flac<R: std::io::Read>(
         &self,
         key: &str,
-        channel: Option<isize>,
-        r: Option<Range<usize>>,
+        mut reader: claxon::FlacReader<R>,
     ) -> Result<Array2<f32>> {
-        let ds = self.group()?.dataset(key)?;
-        let mut reader = claxon::FlacReader::new(ds.as_byte_reader()?)?;
         let info = reader.streaminfo();
         assert_eq!(
             info.bits_per_sample, 16,
@@ -1161,7 +1151,6 @@ impl Hdf5Dataset {
                     }
                 }
             };
-            // while let Some(next) = ? {
             let numel = (next.len() / next.channels()) as usize;
             debug_assert_eq!(ch, next.channels() as usize);
             for i in 0..ch {
@@ -1175,7 +1164,39 @@ impl Hdf5Dataset {
             idx += numel;
             block = next
         }
-
+        Ok(out)
+    }
+    #[cfg(feature = "flac")]
+    fn read_flac_byte_reader(&self, key: &str) -> Result<Array2<f32>> {
+        let ds = self.group()?.dataset(key)?;
+        let reader = claxon::FlacReader::new(ds.as_byte_reader()?)?;
+        self._read_flac(key, reader)
+    }
+    #[cfg(feature = "flac")]
+    fn read_flac_ds(&self, key: &str) -> Result<Array2<f32>> {
+        let ds = self.group()?.dataset(key)?;
+        let encoded = ds.read_1d()?;
+        let reader = claxon::FlacReader::new(encoded.as_slice().unwrap())?;
+        self._read_flac(key, reader)
+    }
+    /// Read a Flac encoded sample from an `hdf5::Dataset`.
+    ///
+    /// Arguments:
+    ///
+    /// * `key`: String idendifier to load the dataset.
+    /// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
+    /// * `r`: Optional range in samples (time axis). `None` will return all samples.
+    #[cfg(feature = "flac")]
+    fn read_flac(
+        &self,
+        key: &str,
+        channel: Option<isize>,
+        r: Option<Range<usize>>,
+    ) -> Result<Array2<f32>> {
+        let out = match self.read_flac_byte_reader(key) {
+            Ok(x) => x,
+            Err(_) => self.read_flac_ds(key)?,
+        };
         let mut out = self.match_ch(out, 0, channel)?;
         if let Some(r) = r {
             out.slice_axis_inplace(Axis(1), Slice::from(r));
