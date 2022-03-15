@@ -3,7 +3,6 @@ from functools import partial, reduce
 from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from icecream import ic  # noqa
 from torch import Tensor, nn
 from torch.nn.parameter import Parameter
@@ -349,7 +348,7 @@ class FreqStage(nn.Module):
                         num_layers=num_layers[i],
                         se_factor=se_f[i],
                         fused=fused[i],
-                        dp=dp / (depth - 1) * i,
+                        dp=dp / depth * i,
                         width_mult=width_mult,
                         depth_mult=depth_mult,
                         norm_layer=norm_layer,
@@ -456,7 +455,6 @@ class MSNet(nn.Module):
     def __init__(self, erb_fb: Tensor, erb_inv_fb: Tensor):
         super().__init__()
         p = ModelParams()
-        assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
         self.stages = p.stages
         self.freq_bins = p.fft_size // 2 + 1
         self.erb_bins = p.nb_erb
