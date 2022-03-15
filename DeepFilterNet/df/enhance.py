@@ -15,7 +15,7 @@ from torchaudio.backend.common import AudioMetaData
 import df
 from df import config
 from df.checkpoint import load_model as load_model_cp
-from df.logger import init_logger
+from df.logger import init_logger, warn_once
 from df.model import ModelParams
 from df.modules import get_device
 from df.utils import as_complex, as_real, get_norm_alpha, resample
@@ -142,8 +142,9 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
     info = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
     if orig_sr != sr:
-        logger.warning(
-            f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). Resampling..."
+        warn_once(
+            f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
+            "Resampling..."
         )
         audio = resample(audio, orig_sr, sr)
     return audio, info
