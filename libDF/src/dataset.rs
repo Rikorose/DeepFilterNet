@@ -885,9 +885,9 @@ pub enum DType {
 #[derive(Debug)]
 pub struct Hdf5Dataset {
     file: File,
-    dstype: DsType,
-    sr: Option<usize>,
-    codec: Option<Codec>,
+    pub dstype: DsType,
+    pub sr: Option<usize>,
+    pub codec: Option<Codec>,
     max_freq: Option<usize>,
     dtype: Option<DType>,
 }
