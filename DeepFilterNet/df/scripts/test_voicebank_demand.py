@@ -1,14 +1,13 @@
 import glob
 import os
 import sys
-import warnings
 import tempfile
 
 import numpy as np
 import pystoi
 import torch
-from pesq import pesq
 from loguru import logger
+from pesq import pesq
 
 from df.enhance import df_features, init_df, load_audio, save_audio, setup_df_argument_parser
 from df.model import ModelParams
