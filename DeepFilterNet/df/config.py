@@ -155,7 +155,7 @@ class Config:
             self.modified = True
         return value
 
-    def overwrite(self, section: str, option: str, value: str):
+    def overwrite(self, section: str, option: str, value: Any):
         if not self.parser.has_section(section):
             return ValueError(f"Section not found: '{section}'")
         if not self.parser.has_option(section, option):
