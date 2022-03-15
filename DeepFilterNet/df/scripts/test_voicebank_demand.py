@@ -1,11 +1,13 @@
 import glob
 import os
 import sys
+import warnings
 import tempfile
 
 import numpy as np
 import pystoi
 import torch
+from pesq import pesq
 from loguru import logger
 
 from df.enhance import df_features, init_df, load_audio, save_audio, setup_df_argument_parser
@@ -57,6 +59,8 @@ def main(args):
         config_allow_defaults=True,
     )
     assert os.path.isdir(args.dataset_dir)
+    if not HAS_OCTAVE:
+        logger.warning("Running without octave. Skipping composite metrics")
     sr = ModelParams().sr
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
@@ -93,32 +97,33 @@ def main(args):
                 output_dir=enh_dir,
                 suffix=f"{suffix}_{enh_comp[-1][0]:.3f}",
             )
+    logger.info(f"noisy sisdr: {np.mean(noisy_sisdr)}")
+    logger.info(f"enhanced sisdr: {np.mean(enh_sisdr)}")
     logger.info(f"noisy stoi: {np.mean(noisy_stoi)}")
     logger.info(f"enhanced stoi: {np.mean(enh_stoi)}")
     noisy_comp = np.stack(noisy_comp)
     enh_comp = np.stack(enh_comp)
     noisy_pesq = np.mean(noisy_comp[:, 0])
-    noisy_csig = np.mean(noisy_comp[:, 1])
-    noisy_cbak = np.mean(noisy_comp[:, 2])
-    noisy_covl = np.mean(noisy_comp[:, 3])
-    noisy_ssnr = np.mean(noisy_comp[:, 4])
     enh_pesq = np.mean(enh_comp[:, 0])
-    enh_csig = np.mean(enh_comp[:, 1])
-    enh_cbak = np.mean(enh_comp[:, 2])
-    enh_covl = np.mean(enh_comp[:, 3])
-    enh_ssnr = np.mean(enh_comp[:, 4])
     logger.info(f"noisy pesq: {np.mean(noisy_pesq)}")
     logger.info(f"enhanced pesq: {np.mean(enh_pesq)}")
-    logger.info(f"noisy csig: {np.mean(noisy_csig)}")
-    logger.info(f"enhanced csig: {np.mean(enh_csig)}")
-    logger.info(f"noisy cbak: {np.mean(noisy_cbak)}")
-    logger.info(f"enhanced cbak: {np.mean(enh_cbak)}")
-    logger.info(f"noisy covl: {np.mean(noisy_covl)}")
-    logger.info(f"enhanced covl: {np.mean(enh_covl)}")
-    logger.info(f"noisy ssnr: {np.mean(noisy_ssnr)}")
-    logger.info(f"enhanced ssnr: {np.mean(enh_ssnr)}")
-    logger.info(f"noisy sisdr: {np.mean(noisy_sisdr)}")
-    logger.info(f"enhanced sisdr: {np.mean(enh_sisdr)}")
+    if HAS_OCTAVE:
+        noisy_csig = np.mean(noisy_comp[:, 1])
+        noisy_cbak = np.mean(noisy_comp[:, 2])
+        noisy_covl = np.mean(noisy_comp[:, 3])
+        noisy_ssnr = np.mean(noisy_comp[:, 4])
+        enh_csig = np.mean(enh_comp[:, 1])
+        enh_cbak = np.mean(enh_comp[:, 2])
+        enh_covl = np.mean(enh_comp[:, 3])
+        enh_ssnr = np.mean(enh_comp[:, 4])
+        logger.info(f"noisy csig: {np.mean(noisy_csig)}")
+        logger.info(f"enhanced csig: {np.mean(enh_csig)}")
+        logger.info(f"noisy cbak: {np.mean(noisy_cbak)}")
+        logger.info(f"enhanced cbak: {np.mean(enh_cbak)}")
+        logger.info(f"noisy covl: {np.mean(noisy_covl)}")
+        logger.info(f"enhanced covl: {np.mean(enh_covl)}")
+        logger.info(f"noisy ssnr: {np.mean(noisy_ssnr)}")
+        logger.info(f"enhanced ssnr: {np.mean(enh_ssnr)}")
 
 
 def stoi(clean, degraded, sr, extended=False):
@@ -132,19 +137,21 @@ def stoi(clean, degraded, sr, extended=False):
 
 def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
     """Compute pesq, csig, cbak, covl, ssnr"""
-    assert HAS_OCTAVE
     assert len(clean.shape) == 1
     if sr != 16000:
         clean = resample(torch.as_tensor(clean), sr, 16000, method=__resample_method).numpy()
         degraded = resample(torch.as_tensor(degraded), sr, 16000, method=__resample_method).numpy()
         sr = 16000
-    cf = tempfile.NamedTemporaryFile(suffix=".wav")
-    save_audio(cf.name, clean, sr)
-    nf = tempfile.NamedTemporaryFile(suffix=".wav")
-    save_audio(nf.name, degraded, sr)
-    c = semetrics.composite(cf.name, nf.name)
-    cf.close()
-    nf.close()
+    if HAS_OCTAVE:
+        cf = tempfile.NamedTemporaryFile(suffix=".wav")
+        save_audio(cf.name, clean, sr)
+        nf = tempfile.NamedTemporaryFile(suffix=".wav")
+        save_audio(nf.name, degraded, sr)
+        c = semetrics.composite(cf.name, nf.name)
+        cf.close()
+        nf.close()
+    else:
+        c = [pesq(sr, clean, degraded, "wb"), 0, 0, 0, 0]
     return np.asarray(c)
 
 
