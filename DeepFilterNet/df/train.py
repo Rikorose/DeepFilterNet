@@ -92,21 +92,6 @@ def main():
         mask_only=mask_only,
         train_df_only=train_df_only,
     )
-    opt = load_opt(
-        checkpoint_dir if args.resume else None,
-        model,
-        mask_only,
-        train_df_only,
-    )
-    if not args.resume and os.path.isfile(os.path.join(checkpoint_dir, ".patience")):
-        os.remove(os.path.join(checkpoint_dir, ".patience"))
-    try:
-        log_model_summary(model, verbose=args.debug)
-    except Exception as e:
-        logger.warning(f"Failed to print model summary: {e}")
-    if jit:
-        # Load as jit after log_model_summary
-        model = torch.jit.script(model)
 
     bs: int = config("BATCH_SIZE", 1, int, section="train")
     bs_eval: int = config("BATCH_SIZE_EVAL", 0, int, section="train")
@@ -128,7 +113,7 @@ def main():
         norm_alpha=get_norm_alpha(),
         p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
-        prefetch=128,
+        prefetch=config("NUM_PREFETCH_BATCHES", 32, int, section="train"),
         overfit=overfit,
         seed=seed,
         min_nb_erb_freqs=p.min_nb_freqs,
@@ -140,6 +125,22 @@ def main():
     assert epoch >= 0
     lrs = setup_lrs(len(dataloader))
     wds = setup_wds(len(dataloader))
+
+    opt = load_opt(
+        checkpoint_dir if args.resume else None,
+        model,
+        mask_only,
+        train_df_only,
+    )
+    if not args.resume and os.path.isfile(os.path.join(checkpoint_dir, ".patience")):
+        os.remove(os.path.join(checkpoint_dir, ".patience"))
+    try:
+        log_model_summary(model, verbose=args.debug)
+    except Exception as e:
+        logger.warning(f"Failed to print model summary: {e}")
+    if jit:
+        # Load as jit after log_model_summary
+        model = torch.jit.script(model)
 
     # Validation optimization target. Used for early stopping and selecting best checkpoint
     val_criteria = []
@@ -343,6 +344,8 @@ def run_epoch(
             l_dict = {"loss": l_mean.item()}
             if lr_scheduler_values is not None:
                 l_dict["lr"] = opt.param_groups[0]["lr"]
+            if wd_scheduler_values is not None:
+                l_dict["wd"] = opt.param_groups[0]["weight_decay"]
             if log_timings:
                 l_dict["t_sample"] = batch.timings[:-1].sum()
                 l_dict["t_batch"] = batch.timings[-1].mean()  # last if for whole batch
@@ -456,6 +459,11 @@ def setup_wds(steps_per_epoch: int) -> Optional[np.ndarray]:
     decay_end = config("weight_decay_end", -1, float, section="optim")
     if decay_end == -1:
         return None
+    if decay == 0.0:
+        decay = 1e-12
+        logger.warning("Got 'weight_decay_end' value > 0, but weight_decay is disabled.")
+        logger.warning(f"Setting initial weight decay to {decay}.")
+        config.overwrite("optim", "weight_decay", decay)
     num_epochs = config.get("max_epochs", int, "train")
     decay_values = cosine_scheduler(
         decay, decay_end, niter_per_ep=steps_per_epoch, epochs=num_epochs
