@@ -1,12 +1,10 @@
 use std::fmt;
 use std::fs;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
 
-#[cfg(feature = "flac")]
-use claxon;
 use hdf5::{types::VarLenUnicode, File};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
@@ -14,9 +12,19 @@ use rand::Rng;
 use rayon::prelude::*;
 use realfft::num_traits::Zero;
 use serde::Deserialize;
+#[cfg(feature = "codecs")]
+use symphonia::core::{
+    audio::AudioBufferRef,
+    codecs::DecoderOptions,
+    errors::Error as SymphoniaError,
+    formats::{FormatOptions, SeekMode, SeekTo},
+    io::{MediaSource, MediaSourceStream},
+    meta::MetadataOptions,
+    probe::Hint,
+};
+#[cfg(feature = "codecs")]
+use symphonia::default::{codecs::*, formats::*};
 use thiserror::Error;
-#[cfg(feature = "vorbis")]
-use {lewton::inside_ogg::OggStreamReader, ogg::reading::PacketReader as OggPacketReader};
 
 use crate::{augmentations::*, transforms::*, util::*, Complex32, DFState};
 
@@ -57,18 +65,10 @@ pub enum DfDatasetError {
     IoError(#[from] std::io::Error),
     #[error("Json Decoding Error")]
     JsonDecode(#[from] serde_json::Error),
-    #[cfg(feature = "vorbis")]
-    #[error("Vorbis Decode Error")]
-    VorbisError(#[from] lewton::VorbisError),
-    #[cfg(feature = "vorbis")]
-    #[error("Ogg Decode Error")]
-    OggReadError(#[from] ogg::reading::OggReadError),
-    #[cfg(feature = "flac")]
-    #[error("Flac Decode Error")]
-    FlacError(#[from] claxon::Error),
+    #[cfg(feature = "codecs")]
+    #[error("Symphonia Error")]
+    SymphoniaError(#[from] SymphoniaError),
 }
-
-type Signal = Array2<f32>;
 
 fn one() -> f32 {
     1.
@@ -1032,34 +1032,6 @@ impl Hdf5Dataset {
             Codec::FLAC => self.sample_len_flac(ds),
         }
     }
-    fn match_ch<T, D: ndarray::Dimension>(
-        &self,
-        mut x: Array<T, D>,
-        ch_dim: usize,
-        ch_idx: Option<isize>,
-    ) -> Result<Array2<T>> {
-        Ok(match x.ndim() {
-            1 => {
-                // Return in channels first
-                let len = x.len_of(Axis(0));
-                x.into_shape((1, len))?
-            }
-            2 => match ch_idx {
-                Some(-1) => {
-                    let idx = thread_rng()?.gen_range(0..x.len_of(Axis(ch_dim)));
-                    x.slice_axis_inplace(Axis(ch_dim), Slice::from(idx..idx + 1));
-                    x
-                }
-                Some(idx) => {
-                    x.slice_axis_inplace(Axis(ch_dim), Slice::from(idx..idx + 1));
-                    x
-                }
-                None => x,
-            }
-            .into_dimensionality()?,
-            n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
-        })
-    }
     /// Read a PCM encoded sample from an `hdf5::Dataset`.
     ///
     /// Arguments:
@@ -1097,7 +1069,7 @@ impl Hdf5Dataset {
         } else {
             ds.read_dyn::<f32>()?
         };
-        let mut arr = self.match_ch(arr, 0, channel)?;
+        let mut arr = match_ch(arr, 0, channel)?;
         match self.dtype {
             Some(DType::I16) => arr /= std::i16::MAX as f32,
             Some(DType::F32) => (),
@@ -1197,13 +1169,13 @@ impl Hdf5Dataset {
             Ok(x) => x,
             Err(_) => self.read_flac_ds(key)?,
         };
-        let mut out = self.match_ch(out, 0, channel)?;
+        let mut out = match_ch(out, 0, channel)?;
         if let Some(r) = r {
             out.slice_axis_inplace(Axis(1), Slice::from(r));
         }
         Ok(out)
     }
-    #[cfg(not(feature = "vorbis"))]
+    #[cfg(not(feature = "codecs"))]
     fn read_vorbis(
         &self,
         _key: &str,
@@ -1215,88 +1187,44 @@ impl Hdf5Dataset {
             ds: format!("{:?}", self.file),
         })
     }
-    #[cfg(feature = "vorbis")]
-    /// Read a vorbis encoded sample from an `hdf5::Dataset`.
+    #[cfg(feature = "codecs")]
+    /// Read a vorbis/flac encoded sample from an `hdf5::Dataset`.
     ///
     /// Arguments:
     ///
     /// * `key`: String idendifier to load the dataset.
     /// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
     /// * `r`: Optional range in samples (time axis). `None` will return all samples.
-    fn read_vorbis(
+    /// * `codec_ext`: Optional codec file extension ('vorbis', 'flac')
+    fn read_encoded_ds(
         &self,
         key: &str,
         channel: Option<isize>,
         r: Option<Range<usize>>,
+        codec_ext: Option<&str>,
     ) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
-        let mut srr = OggStreamReader::new(ds.as_byte_reader()?)?;
-        let ch = srr.ident_hdr.audio_channels as usize;
-        let len = if let Some(r) = r.as_ref() {
-            srr.seek_absgp_pg(r.start as u64)?;
-            r.end - r.start
-        } else {
-            24000 // start with 0.5s if sr=48000
+
+        // Create the media source stream.
+        let out = {
+            let source = Box::new(DatasetMediaSource::new(&ds)?);
+            read_encoded(source, channel, r, codec_ext)?
         };
-        let mut pck = match srr.read_dec_packet_itl() {
-            Ok(pck) => pck,
-            Err(e) => {
-                if r.is_some() {
-                    // Undo the seek and just start from the beginning
-                    srr = OggStreamReader::new(ds.as_byte_reader()?).unwrap();
-                    srr.read_dec_packet_itl().unwrap()
-                } else {
-                    return Err(e.into());
-                }
-            }
-        };
-        let mut out: Vec<i16> = Vec::with_capacity(len);
-        while let Some(mut p) = pck {
-            out.append(&mut p);
-            if let (Some(r), Some(pos)) = (r.as_ref(), srr.get_last_absgp().map(|p| p as usize)) {
-                if pos >= r.end {
-                    // In some rare curcumstances the decoding start is behind r.start.
-                    // Nor sure if this is an error on my end or on lewton's. Anyways we just
-                    // return a slightly delayed slice, therefore the max operation.
-                    out.truncate((out.len() - (pos - r.end) * ch).max((r.end - r.start) * ch));
-                    debug_assert!(out.len() >= r.end - r.start);
-                    break;
-                }
-            }
-            pck = srr.read_dec_packet_itl()?;
-        }
-        let out = if let Some(r) = r {
-            // We already have a coarse range. The start may contain more samples from its
-            // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
-            // let start_pos = out.len() - (r.end - r.start) * ch;
-            let start_pos = out.len().saturating_sub((r.end - r.start) * ch);
-            // Due to some rare bug, the slice will end up shorter than `len`. I guess similar to
-            // above, the first decoded sample starts after `r.begin`. Threrfore we needed
-            // `saturating_sub` and recalulate the length via `slice.len()`.
-            let slice = &out[start_pos..];
-            ArrayView2::from_shape((slice.len() / ch, ch), slice)?.to_owned()
-        } else {
-            Array2::from_shape_vec((out.len() / ch, ch), out)?
-        };
-        // Select channel
-        let out = self.match_ch(out, 1, channel)?;
-        // Transpose to channels first and convert to float
-        let out = out.t().mapv(|x| x as f32 / std::i16::MAX as f32);
         Ok(out)
     }
 
     pub fn read(&self, key: &str) -> Result<Array2<f32>> {
         match *self.codec.as_ref().unwrap_or_default() {
             Codec::PCM => self.read_pcm(key, Some(0), None),
-            Codec::Vorbis => self.read_vorbis(key, Some(0), None),
-            Codec::FLAC => self.read_flac(key, Some(0), None),
+            Codec::Vorbis => self.read_encoded_ds(key, Some(0), None, Some("vorbis")),
+            Codec::FLAC => self.read_encoded_ds(key, Some(0), None, Some("flac")),
         }
     }
     pub fn read_slc(&self, key: &str, r: Range<usize>) -> Result<Array2<f32>> {
         match *self.codec.as_ref().unwrap_or_default() {
             Codec::PCM => self.read_pcm(key, Some(0), Some(r)),
-            Codec::Vorbis => self.read_vorbis(key, Some(0), Some(r)),
-            Codec::FLAC => self.read_flac(key, Some(0), Some(r)),
+            Codec::Vorbis => self.read_encoded_ds(key, Some(0), Some(r), Some("vorbis")),
+            Codec::FLAC => self.read_encoded_ds(key, Some(0), Some(r), Some("flac")),
         }
     }
 }
@@ -1311,7 +1239,7 @@ fn combine_noises(
     len: usize,
     noises: &mut [Array2<f32>],
     noise_gains: Option<&[f32]>,
-) -> Result<Signal> {
+) -> Result<Array2<f32>> {
     let mut rng = thread_rng()?;
     // Adjust length of noises to clean length
     for ns in noises.iter_mut() {
@@ -1378,7 +1306,7 @@ fn mix_audio_signal(
     gain_db: f32,
     atten_db: Option<f32>,
     noise_resample: Option<LpParam>,
-) -> Result<(Signal, Signal, Signal)> {
+) -> Result<(Array2<f32>, Array2<f32>, Array2<f32>)> {
     let len = clean.len_of(Axis(1));
     if let Some(re) = noise_resample {
         // Low pass filtering via resampling
@@ -1411,6 +1339,182 @@ fn mix_audio_signal(
         mixture *= f;
     }
     Ok((clean_out, noise, mixture))
+}
+struct DatasetMediaSource<'a> {
+    r: hdf5::ByteReader<'a>,
+    size: u64,
+}
+impl<'a> DatasetMediaSource<'a> {
+    fn new(ds: &'a hdf5::Dataset) -> Result<DatasetMediaSource<'a>> {
+        Ok(DatasetMediaSource {
+            r: ds.as_byte_reader()?,
+            size: ds.size() as u64,
+        })
+    }
+}
+impl<'a> Read for DatasetMediaSource<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.r.read(buf)
+    }
+}
+impl<'a> Seek for DatasetMediaSource<'a> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.r.seek(pos)
+    }
+}
+impl<'a> MediaSource for DatasetMediaSource<'a> {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.size)
+    }
+}
+
+fn get_ch(cur_ch: usize, target_ch: isize) -> Result<usize> {
+    Ok(match target_ch {
+        -1 => thread_rng()?.gen_range(0..cur_ch),
+        idx => {
+            assert!(idx > 0);
+            (idx as usize).min(cur_ch)
+        }
+    })
+}
+fn match_ch<T, D: ndarray::Dimension>(
+    mut x: Array<T, D>,
+    ch_dim: usize,
+    ch_idx: Option<isize>,
+) -> Result<Array2<T>> {
+    Ok(match x.ndim() {
+        1 => {
+            // Return in channels first
+            let len = x.len_of(Axis(0));
+            x.into_shape((1, len))?
+        }
+        2 => match ch_idx {
+            None => x,
+            Some(idx) => {
+                let idx = get_ch(2, idx)?;
+                x.slice_axis_inplace(Axis(ch_dim), Slice::from(idx..idx + 1));
+                x
+            }
+        }
+        .into_dimensionality()?,
+        n => return Err(DfDatasetError::PcmUnspportedDimension(n)),
+    })
+}
+#[cfg(feature = "codecs")]
+/// Read a vorbis/flac encoded sample using symphonia.
+///
+/// Arguments:
+///
+/// * `key`: String idendifier to load the dataset.
+/// * `channel`: Optional channel. `-1` will load a random channel, `None` will return all channels.
+/// * `r`: Optional range in samples (time axis). `None` will return all samples.
+/// * `codec_ext`: Optional codec file extension ('vorbis', 'flac')
+fn read_encoded(
+    source: Box<dyn MediaSource>,
+    channel: Option<isize>,
+    r: Option<Range<usize>>,
+    codec_ext: Option<&str>,
+) -> Result<Array2<f32>> {
+    // Create the media source stream.
+    let mss = MediaSourceStream::new(source, Default::default());
+    let fmt_opts: FormatOptions = Default::default();
+    let mut hint = Hint::new();
+    if let Some(ext) = codec_ext {
+        hint.with_extension(ext);
+    }
+    let meta_opts: MetadataOptions = Default::default();
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &fmt_opts, &meta_opts)
+        .expect("unsupported format");
+    let mut format_reader = probed.format;
+    let track = format_reader.as_ref().default_track().unwrap();
+    dbg!(&track.codec_params);
+    let dec_opts: DecoderOptions = Default::default();
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &dec_opts)
+        .expect("unsupported codec");
+    let cur_ch = track.codec_params.channels.unwrap().count();
+    let ch_idx = if let Some(target_ch) = channel {
+        Some(get_ch(cur_ch, target_ch)?)
+    } else {
+        None
+    };
+    let n_ch = if ch_idx.is_some() { 1 } else { cur_ch };
+    let len = if let Some(r) = r.as_ref() {
+        let track_id = track.id;
+        format_reader.seek(
+            SeekMode::Coarse,
+            SeekTo::TimeStamp {
+                ts: r.start as u64,
+                track_id,
+            },
+        )?;
+        r.end - r.start
+    } else {
+        24000 // start with 0.5s if sr=48000
+    };
+    // let mut out = Array2::<f32>::zeros((len, n_ch));
+    let mut out = vec![Vec::<f32>::with_capacity(len); n_ch];
+    loop {
+        let p = format_reader.next_packet()?;
+        // Decode the packet into audio samples.
+        match decoder.decode(&p) {
+            // Ok(decoded) => out.extend_from_slice(decoded.convert()),
+            Ok(AudioBufferRef::F32(decoded)) => {
+                dbg!();
+                let planes = decoded.planes();
+                if let Some(idx) = ch_idx {
+                    // We extract only 1 channesl
+                    out[0].extend_from_slice(planes.planes()[idx])
+                } else {
+                    for (plane, out_p) in planes.planes().iter().zip(out.iter_mut()) {
+                        out_p.extend_from_slice(plane)
+                    }
+                }
+            }
+            Ok(AudioBufferRef::S16(decoded)) => {
+                dbg!();
+                let planes = decoded.planes();
+                if let Some(idx) = ch_idx {
+                    // We extract only 1 channesl
+                    for sample in planes.planes()[idx] {
+                        out[0].push(*sample as f32 / std::i16::MAX as f32)
+                    }
+                } else {
+                    for (plane, out_p) in planes.planes().iter().zip(out.iter_mut()) {
+                        for sample in plane.iter() {
+                            out_p.push(*sample as f32 / std::i16::MAX as f32)
+                        }
+                    }
+                }
+            }
+            Ok(_) => unimplemented!("Symphonia sample format not implemented"),
+            Err(SymphoniaError::IoError(_)) => {
+                // The packet failed to decode due to an IO error, skip the packet.
+                continue;
+            }
+            Err(SymphoniaError::DecodeError(_)) => {
+                // The packet failed to decode due to invalid data, skip the packet.
+                continue;
+            }
+            Err(err) => {
+                // An unrecoverable error occured, halt decoding.
+                panic!("{}", err);
+            }
+        }
+        if r.is_some() && out.len() > len {
+            for out_p in out.iter_mut() {
+                out_p.truncate(len);
+            }
+            break;
+        }
+    }
+    let flattend: Vec<f32> = out.into_iter().flatten().collect();
+    Ok(Array2::from_shape_vec([n_ch, len], flattend)?)
 }
 
 #[cfg(test)]

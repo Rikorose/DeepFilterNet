@@ -27,8 +27,7 @@ default = []
 
 transforms = ["thiserror", "ndarray"]
 dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel", "serde_json", "serde", "hound", "rubato", "bincode"]
-vorbis = ["lewton", "ogg"]
-flac = ["claxon"]
+codecs = ["symphonia"]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -46,9 +45,7 @@ rayon = { version="1.5", optional=true }
 crossbeam-channel = { version="^0.5", optional=true }
 serde_json = { version="1.0", optional=true }
 serde = { version = "1.0", features = ["derive"], optional=true }
-lewton = { version = "^0.10", optional=true }
-ogg = { version = "^0.8", optional=true }
-claxon = { version = "^0.4", optional=true }
+symphonia = { version = "0.5", default_features=false, features=["flac", "vorbis", "ogg"], optional=true }
 
 [dev-dependencies]
 rand = "0.8"
