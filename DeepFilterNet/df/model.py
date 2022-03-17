@@ -1,5 +1,6 @@
 from importlib import import_module
 
+import torch
 from loguru import logger
 
 from df.config import DfParams, config
@@ -18,4 +19,6 @@ def init_model(*args, **kwargs):
     """Initialize the model specified in the config."""
     model = config("MODEL", default="deepfilternet", section="train")
     logger.info(f"Initializing model `{model}`")
-    return getattr(import_module("df." + model), "init_model")(*args, **kwargs)
+    model = getattr(import_module("df." + model), "init_model")(*args, **kwargs)
+    model.to(memory_format=torch.channels_last)
+    return model
