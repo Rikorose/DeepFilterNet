@@ -1,14 +1,10 @@
-import math
-from functools import partial, reduce
+from functools import reduce
 from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 import torch
 from icecream import ic  # noqa
 from torch import Tensor, nn
 from torch.nn.parameter import Parameter
-from torchvision.models._utils import _make_divisible
-from torchvision.ops import StochasticDepth
-from torchvision.ops.misc import SqueezeExcitation
 
 from df.config import Csv, DfParams, config
 from df.modules import GroupedGRU, Mask, erb_fb
