@@ -11,7 +11,7 @@ from torchvision.ops import StochasticDepth
 from torchvision.ops.misc import SqueezeExcitation
 
 from df.config import Csv, DfParams, config
-from df.modules import Mask, erb_fb
+from df.modules import GroupedGRU, Mask, erb_fb
 from df.utils import angle_re_im, get_device
 from libdf import DF
 
@@ -27,17 +27,17 @@ class ModelParams(DfParams):
         self.conv_lookahead: int = config(
             "CONV_LOOKAHEAD", cast=int, default=0, section=self.section
         )
-        self.width_mult: int = config("WIDTH_MULT", cast=float, default=1, section=self.section)
-        self.depth_mult: int = config("DEPTH_MULT", cast=float, default=1, section=self.section)
+        self.erb_widths: List[int] = config(
+            "ERB_WIDTHS", cast=Csv(int), default=[16, 16, 16], section=self.section
+        )
         self.erb_hidden_dim: int = config(
             "ERB_HIDDEN_DIM", cast=int, default=64, section=self.section
         )
-        self.erb_depth: int = config("ERB_DEPTH", cast=int, default=3, section=self.section)
+        self.refinement_widths: List[int] = config(
+            "REFINEMENT_WIDTHS", cast=Csv(int), default=[32, 32, 32, 32], section=self.section
+        )
         self.refinement_hidden_dim: int = config(
             "REFINEMENT_HIDDEN_DIM", cast=int, default=96, section=self.section
-        )
-        self.refinement_depth: int = config(
-            "REFINEMENT_DEPTH", cast=int, default=5, section=self.section
         )
         self.refinement_act: str = (
             config("REFINEMENT_OUTPUT_ACT", default="identity", section=self.section)
@@ -47,10 +47,6 @@ class ModelParams(DfParams):
         self.refinement_op: str = config(
             "REFINEMENT_OP", default="mul", section=self.section
         ).lower()
-        self.dp_rate: float = config(
-            "DROP_PATH_RATE", default=0.2, cast=float, section=self.section
-        )  # Also called stochastic_depth_prob
-        assert self.refinement_op in ("mul", "add")
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
 
@@ -154,124 +150,41 @@ class ConvTranspose2dNormAct(nn.Sequential):
         super().__init__(*layers)
 
 
-class MbConv(nn.Module):
+class GruSE(nn.Module):
+    """GRU with previous adaptive avg pooling like SqueezeExcitation"""
+
     def __init__(
         self,
-        in_ch: int,
-        out_ch: int,
-        expand_ratio: float,
-        kernel: Tuple[int, int],
-        fstride: int,
-        num_layers: int,
-        width_mult: float,
-        depth_mult: float,
-        dp: float,  # stochastic_depth_probability
-        norm_layer: Callable[..., nn.Module],
-        act_layer: Callable[..., nn.Module] = partial(nn.ReLU, inplace=True),
-        se_layer: Callable[..., nn.Module] = SqueezeExcitation,
-        se_factor: float = 0.25,
-        fused: bool = False,
-        transpose: bool = False,
+        input_dim: int,
+        hidden_dim: int,
+        groups: int = 1,
+        skip: Optional[Callable[..., torch.nn.Module]] = nn.Identity,
+        scale_activation: Optional[Callable[..., torch.nn.Module]] = None,
     ):
         super().__init__()
-        assert 1 <= fstride <= 2
-        self.use_res_connect = fstride == 1 and in_ch == out_ch
-        layers: List[nn.Module] = []
+        self.avg_dim = 3
+        if groups == 1:
+            self.gru = nn.GRU(input_dim, hidden_dim)
+        else:
+            self.gru = GroupedGRU(input_dim, hidden_dim, groups=groups)
+        assert (
+            skip or scale_activation is None
+        ), "Can only either use a skip connection or SqueezeExcitation with `scale_activation`"
+        self.fc = nn.Linear(hidden_dim, input_dim)
+        self.skip = skip() if skip is not None else None
+        self.scale = scale_activation() if scale_activation is not None else None
 
-        self.in_ch = self.adjust_channels(in_ch, width_mult)
-        expanded_ch = self.adjust_channels(self.in_ch, expand_ratio)
-        self.out_ch = self.adjust_channels(out_ch, width_mult)
-        self.num_layers = self.adjust_depth(num_layers, depth_mult)
-        # expand
-        if expanded_ch != self.in_ch and not fused:
-            layers.append(
-                Conv2dNormAct(
-                    self.in_ch,
-                    expanded_ch,
-                    kernel_size=1,
-                    norm_layer=norm_layer,
-                    activation_layer=act_layer,
-                    bias=False,
-                )
-            )
-        # depthwise
-        conv_l = Conv2dNormAct if not transpose else ConvTranspose2dNormAct
-        layers.append(
-            conv_l(
-                self.in_ch if fused else expanded_ch,
-                expanded_ch,
-                kernel_size=kernel,
-                fstride=fstride,
-                groups=1 if fused else expanded_ch,
-                bias=False,
-                norm_layer=norm_layer,
-                activation_layer=act_layer,
-            )
-        )
-        # squeeze and excitation
-        squeeze_ch = max(1, int(self.in_ch * se_factor))
-        if se_factor < 1:
-            layers.append(se_layer(expanded_ch, squeeze_ch, activation=act_layer))
-        # project
-        layers.append(
-            nn.Sequential(
-                Conv2dNormAct(
-                    expanded_ch,
-                    self.out_ch,
-                    kernel_size=1,
-                    bias=False,
-                    norm_layer=norm_layer,
-                    activation_layer=None,
-                )
-            )
-        )
-        self.block = nn.Sequential(*layers)
-        self.stochastic_depth = StochasticDepth(dp, "row")
-
-    def forward(self, input: Tensor) -> Tensor:
-        result = self.block(input)
-        if self.use_res_connect:
-            result = self.stochastic_depth(result)
-            result += input
-        return result
-
-    @staticmethod
-    def adjust_channels(channels: int, width_mult: float, min_value: Optional[int] = None) -> int:
-        return _make_divisible(channels * width_mult, 8, min_value)
-
-    @staticmethod
-    def adjust_depth(num_layers: int, depth_mult: float):
-        return int(math.ceil(num_layers * depth_mult))
-
-
-class GruMlp(nn.Module):
-    def __init__(self, ch: int, freqs: int, hidden_size: int, *args, **kwargs):
-        super().__init__()
-        kwargs["batch_first"] = True
-        self.ch = ch
-        self.freqs = freqs
-        io_size = ch * freqs
-        self.gru = nn.GRU(io_size, hidden_size, *args, **kwargs)
-        self.norm = nn.LayerNorm(hidden_size)
-        self.fc = nn.Linear(hidden_size, io_size)
-
-    def forward(self, x: Tensor, h: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-        """GRU transposing [B, C, T, F] input shape to [B, T, C*F]."""
-        _, _, _, f = x.shape
-        x, h = self.gru(x.transpose(1, 2).flatten(2), h)
-        x = self.fc(self.norm(x))
-        x = x.unflatten(2, (-1, f)).transpose(1, 2)
+    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        # x: [B, C, T, F]
+        x = input.mean(dim=self.avg_dim)  # [B, C, T]
+        x = x.transpose(1, 2)  # [B, T, C]
+        x, h = self.gru(x, h)
+        x = self.fc(x).transpose(1, 2).unsqueeze(-1)
+        if self.skip is not None:
+            x = self.skip(input) + x  # a regular skip connection
+        elif self.scale is not None:
+            x = input * self.scale(x)  # like in SqueezeExcitation
         return x, h
-
-
-def _is_contiguous(tensor: torch.Tensor) -> bool:
-    # jit is oh so lovely :/
-    # if torch.jit.is_tracing():
-    #     return True
-    if torch.jit.is_scripting():
-        return tensor.is_contiguous()
-    else:
-        return tensor.is_contiguous(memory_format=torch.contiguous_format)
 
 
 class LSNRNet(nn.Module):
@@ -285,10 +198,39 @@ class LSNRNet(nn.Module):
         self.lsnr_scale = lsnr_max - lsnr_min
         self.lsnr_offset = lsnr_min
 
-    def forward(self, x: Tensor, h: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor]:
         x = self.conv(x)
         x, h = self.gru_snr(x.mean(-1).transpose(1, 2), h)
         x = self.fc_snr(x) * self.lsnr_scale + self.lsnr_offset
+        return x, h
+
+
+class EncLayer(nn.Module):
+    def __init__(
+        self,
+        in_ch,
+        out_ch,
+        kernel,
+        fstride: int,
+        gru_dim: int,
+        gru_groups=1,
+        gru_mode: str = "skip",
+    ):
+        super().__init__()
+        self.conv = Conv2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
+        assert gru_mode in ("skip", "scale")
+        if gru_mode == "skip":
+            skip = nn.Identity
+            scale = None
+        else:
+            skip = None
+            scale = nn.Sigmoid
+        self.gru = GruSE(out_ch, gru_dim, groups=gru_groups, skip=skip, scale_activation=scale)
+
+    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        # x: [B, C, T, F]
+        x = self.conv(input)
+        x, h = self.gru(x, h)
         return x, h
 
 
@@ -299,110 +241,84 @@ class FreqStage(nn.Module):
         out_ch: int,
         out_act: Optional[Callable[..., torch.nn.Module]],
         num_freqs: int,
-        hidden_dim: int,
-        width_mult: float = 1.0,
-        depth_mult: float = 1.0,
-        depth: int = 4,
+        gru_dim: Union[int, List[int]],
+        widths: List[int],
         fstrides: Optional[List[int]] = None,
-        stochastic_depth_prob: float = 0.2,
+        initial_kernel: Tuple[int, int] = (3, 3),
+        kernel: Tuple[int, int] = (1, 3),
+        # squeeze_exitation_factors: Optional[List[float]] = None,
+        # groups: int = 1,
     ):
         super().__init__()
         self.fe = num_freqs  # Number of frequency bins in embedding
         self.in_ch = in_ch
         self.out_ch = out_ch
+        self.depth = len(widths) - 1
         if fstrides is not None:
-            assert len(fstrides) == depth
+            assert len(fstrides) == self.depth
             overall_stride = reduce(lambda x, y: x * y, fstrides)
         else:
-            overall_stride = 2**depth
+            fstrides = [2] * self.depth
+            overall_stride = 2 ** (len(widths) - 1)
+        # if squeeze_exitation_factors is not None:
+        #     assert len(squeeze_exitation_factors) == self.depth
         assert num_freqs % overall_stride == 0, f"num_freqs ({num_freqs}) must correspond to depth"
-        self.hd = hidden_dim
+        self.hd = gru_dim
         norm_layer = nn.BatchNorm2d
 
+        self.enc0 = Conv2dNormAct(
+            in_ch, widths[0], initial_kernel, fstride=1, norm_layer=norm_layer
+        )
         self.enc = nn.ModuleList()
-        self.enc.append(Conv2dNormAct(in_ch, 16, (3, 3), fstride=1, norm_layer=norm_layer))
 
-        dp = stochastic_depth_prob
-        widths = [16, 32, 48, 64, 64, 64, 64, 64][: depth + 1]
-        exp_ratio = [1, 4, 4, 4, 6, 6, 6][:depth]
-        num_layers = [1, 2, 4, 4, 6, 9, 15][:depth]
-        se_f = [1, 0.5, 0.25, 0.25, 0.25, 0.25, 0.25][:depth]
-        fstrides = fstrides or [2] * depth
-        fused = [True, True, False, False, False, False, False][:depth]
-        for i in range(depth):
-            stage: List[nn.Module] = []
+        if isinstance(gru_dim, int):
+            gru_dim = [gru_dim] * self.depth
+        fstrides = fstrides or [2] * self.depth
+        for i in range(self.depth):
             in_ch = widths[i]
             out_ch = widths[i + 1]
             fstride = fstrides[i]
-            for _ in range(num_layers[i]):
-                if stage:
-                    in_ch = out_ch
-                    fstride = 1
-                stage.append(
-                    MbConv(
-                        in_ch,
-                        out_ch,
-                        exp_ratio[i],
-                        kernel=(3, 3),
-                        fstride=fstride,
-                        num_layers=num_layers[i],
-                        se_factor=se_f[i],
-                        fused=fused[i],
-                        dp=dp / depth * i,
-                        width_mult=width_mult,
-                        depth_mult=depth_mult,
-                        norm_layer=norm_layer,
-                    )
-                )
-            self.enc.append(nn.Sequential(*stage))
+            self.enc.append(EncLayer(in_ch, out_ch, kernel, fstride, gru_dim=gru_dim[i]))
 
-        self.max_width = widths[depth]
-        self.rnn = GruMlp(self.max_width, num_freqs // overall_stride, self.hd)
-        dp = stochastic_depth_prob
         self.dec = nn.ModuleList()
-        for i in range(depth - 1, -1, -1):
-            stage: List[nn.Module] = []
+        for i in range(self.depth - 1, -1, -1):
             in_ch = widths[i + 1]
             out_ch = widths[i]
             fstride = fstrides[i]
-            for _ in range(num_layers[i]):
-                if stage:
-                    in_ch = out_ch
-                    fstride = 1
-                stage.append(
-                    MbConv(
-                        in_ch,
-                        out_ch,
-                        exp_ratio[i],
-                        kernel=(3, 3),
-                        fstride=fstride,
-                        num_layers=num_layers[i],
-                        se_factor=se_f[i],
-                        fused=fused[i],
-                        dp=dp / depth * i,
-                        width_mult=width_mult,
-                        depth_mult=depth_mult,
-                        norm_layer=norm_layer,
-                        transpose=True if fstride > 1 else False,
-                    )
-                )
-            self.dec.append(nn.Sequential(*stage))
-        self.dec.append(
-            Conv2dNormAct(
-                16, self.out_ch, (3, 3), fstride=1, norm_layer=norm_layer, activation_layer=out_act
+            self.dec.append(
+                ConvTranspose2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
             )
+        self.dec0 = Conv2dNormAct(
+            widths[0],
+            self.out_ch,
+            kernel,
+            fstride=1,
+            norm_layer=norm_layer,
+            activation_layer=out_act,
         )
 
-    def forward(self, x: Tensor, h: Optional[Tensor] = None) -> Tuple[Tensor, Tensor, Tensor]:
-        # input shape: [B, C, T, F]
+    def encode(self, x: Tensor, h=None) -> Tuple[Tensor, List[Tensor], List[Tensor]]:
         intermediate = []
-        for enc_layer in self.enc:
-            x = enc_layer(x)
+        if h is None:
+            h = [None] * self.depth
+        x = self.enc0(x)
+        for i, enc_layer in enumerate(self.enc):
             intermediate.append(x)
-        x_rnn, h = self.rnn(x, h)
+            x, _ = enc_layer(x, h[i])
+        return x, intermediate, h
+
+    def decode(self, x: Tensor, intermediate: List[Tensor]) -> Tensor:
         for dec_layer, x_enc in zip(self.dec, reversed(intermediate)):
-            x = dec_layer(x + x_enc)
-        return x, x_rnn, h
+            x = dec_layer(x) + x_enc
+        x = self.dec0(x)
+        return x
+
+    def forward(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor, List[Tensor]]:
+        # input shape: [B, C, T, F]
+        # x_rnn, h = self.rnn(x, h)
+        x_inner, intermediate, h = self.encode(x, h)
+        x = self.decode(x_inner, intermediate)
+        return x, x_inner, h
 
 
 class ComplexCompression(nn.Module):
@@ -463,36 +379,26 @@ class MSNet(nn.Module):
         self.erb_comp = MagCompression(self.erb_bins)
         self.cplx_comp = ComplexCompression(self.df_bins)
         self.register_buffer("erb_fb", erb_fb, persistent=False)
-        assert p.erb_depth <= 6
         self.erb_stage = FreqStage(
             in_ch=1,
             out_ch=1,
+            widths=p.erb_widths,
             out_act=nn.Sigmoid,
             num_freqs=p.nb_erb,
-            hidden_dim=p.erb_hidden_dim,
-            width_mult=p.width_mult,
-            depth_mult=p.depth_mult,
-            depth=p.erb_depth,
-            stochastic_depth_prob=p.dp_rate,
+            gru_dim=p.erb_hidden_dim,
         )
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
-        assert p.refinement_depth <= 6
-        strides = [2, 2, 2, 2, 1, 2] if p.refinement_depth == 6 else None
         self.refinement_stage = FreqStage(
             in_ch=2,
             out_ch=2,
             out_act=refinement_act,
+            widths=p.refinement_widths,
             num_freqs=p.nb_df,
-            hidden_dim=p.refinement_hidden_dim,
-            width_mult=p.width_mult,
-            depth_mult=p.depth_mult,
-            depth=p.refinement_depth,
-            fstrides=strides,
-            stochastic_depth_prob=p.dp_rate,
+            gru_dim=p.refinement_hidden_dim,
         )
         self.refinement_op = ComplexMul() if p.refinement_op == "mul" else ComplexAdd()
-        self.lsnr_net = LSNRNet(self.erb_stage.max_width, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
+        self.lsnr_net = LSNRNet(p.erb_widths[-1], lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
 
     def forward(
         self, spec: Tensor, atten_lim: Optional[Tensor] = None, **kwargs  # type: ignore
