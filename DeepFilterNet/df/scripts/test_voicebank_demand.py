@@ -63,7 +63,6 @@ def main(args):
     sr = ModelParams().sr
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
-    enh_dir = None
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
     enh_stoi = []
     noisy_stoi = []
@@ -88,12 +87,12 @@ def main(args):
         if args.log_level.upper() == "DEBUG":
             print(cleanfn, enh_stoi[-1], enh_comp[-1], enh_sisdr[-1])
         enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
-        if enh_dir is not None:
+        if args.output_dir is not None:
             save_audio(
                 os.path.basename(cleanfn),
                 enh,
                 sr,
-                output_dir=enh_dir,
+                output_dir=args.output_dir,
                 suffix=f"{suffix}_{enh_comp[-1][0]:.3f}",
             )
     logger.info(f"noisy sisdr: {np.mean(noisy_sisdr)}")
