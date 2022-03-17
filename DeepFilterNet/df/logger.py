@@ -83,7 +83,7 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
     stages = defaultdict(str)
     loss_msg = ""
     for n, v in sorted(metrics.items()):
-        if abs(v) > 1e-5:
+        if abs(v) > 1e-3:
             m = f" | {n}: {v:.5f}"
         else:
             m = f" | {n}: {v:.3E}"
