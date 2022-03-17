@@ -643,13 +643,15 @@ impl TdDataset {
                     self.ds_name(idx),
                     e
                 );
-                if e.to_string().contains("inflate") {
+                let e_str = e.to_string();
+                if e_str.contains("inflate") || e_str.contains("Flac") {
                     // Get a different speech then
                     let idx = thread_rng()?.gen_range(0..self.len());
                     let (sp_idx, sp_key) = &self.sp_keys[idx];
                     eprintln!(
-                        "Returning a different speech sample from {}",
-                        self.ds_name(*sp_idx)
+                        "Returning a different speech sample from {} due to {}",
+                        self.ds_name(*sp_idx),
+                        e_str
                     );
                     self.read_max_len(*sp_idx, sp_key)?
                 } else {
