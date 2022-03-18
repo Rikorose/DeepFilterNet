@@ -1,9 +1,11 @@
-from functools import reduce
+import math
+from functools import partial, reduce
 from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 import torch
 from icecream import ic  # noqa
 from torch import Tensor, nn
+from torch.nn import init
 from torch.nn.parameter import Parameter
 
 from df.config import Csv, DfParams, config
@@ -230,6 +232,51 @@ class EncLayer(nn.Module):
         return x, h
 
 
+class DecoderOutLayer(nn.Module):
+    def __init__(
+        self, in_ch: int, out_ch: int, n_freqs: int, t_context: int, bias: bool = True, pad=True
+    ):
+        super().__init__()
+        self.n_freqs = n_freqs
+        self.t_context = t_context
+        if pad:
+            self.pad = nn.ConstantPad2d((0, 0, t_context - 1, 0), 0.0)
+        else:
+            self.pad = nn.Identity()
+        in_feat = in_ch * t_context
+        self.weight: Tensor
+        self.register_parameter("weight", Parameter(torch.zeros(n_freqs, in_feat, out_ch)))
+        if bias:
+            self.bias: Optional[Tensor]
+            self.register_parameter("bias", Parameter(torch.zeros(n_freqs, out_ch)))
+        else:
+            self.bias = None
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))  # type: ignore
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [B, C, T, F]
+        x = self.pad(x).permute(0, 2, 3, 1)  # [B, T, F, C]
+        x = x.unfold(1, self.t_context, 1)  # [B, T, F, C, t_context]
+        x = x.flatten(3)
+        # Test if output is same
+        # b, t, f = x.shape[]
+        # w_ = self.w.unsqueeze(0).unsqueeze(0).expand((b, t, f, in_feat, out_ch))
+        # x_ = torch.bmm(x.flatten(0, 2).unsqueeze(1), w_.flatten(0, 2)).view(b, t, f, out_ch)
+        # assert torch.isclose(x, x_).all()
+        x = torch.einsum("btfh,fho->btfo", x, self.weight)  # [B, T, F, O]
+        if self.bias is not None:
+            x = x + self.bias
+        x = x.permute(0, 3, 1, 2)  # [B, O, T, F]
+        return x
+
+
 class FreqStage(nn.Module):
     def __init__(
         self,
@@ -242,6 +289,7 @@ class FreqStage(nn.Module):
         fstrides: Optional[List[int]] = None,
         initial_kernel: Tuple[int, int] = (3, 3),
         kernel: Tuple[int, int] = (1, 3),
+        decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None
         # squeeze_exitation_factors: Optional[List[float]] = None,
         # groups: int = 1,
     ):
@@ -284,14 +332,17 @@ class FreqStage(nn.Module):
             self.dec.append(
                 ConvTranspose2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
             )
-        self.dec0 = Conv2dNormAct(
-            widths[0],
-            self.out_ch,
-            kernel,
-            fstride=1,
-            norm_layer=norm_layer,
-            activation_layer=out_act,
-        )
+        if decoder_out_layer is None:
+            self.dec0 = Conv2dNormAct(
+                widths[0],
+                self.out_ch,
+                kernel,
+                fstride=1,
+                norm_layer=norm_layer,
+                activation_layer=out_act,
+            )
+        else:
+            self.dec0 = decoder_out_layer(widths[0], self.out_ch)
 
     def encode(self, x: Tensor, h=None) -> Tuple[Tensor, List[Tensor], List[Tensor]]:
         intermediate = []
@@ -392,6 +443,7 @@ class MSNet(nn.Module):
             widths=p.refinement_widths,
             num_freqs=p.nb_df,
             gru_dim=p.refinement_hidden_dim,
+            decoder_out_layer=partial(DecoderOutLayer, n_freqs=p.nb_df, t_context=5),
         )
         self.refinement_op = ComplexMul() if p.refinement_op == "mul" else ComplexAdd()
         self.lsnr_net = LSNRNet(p.erb_widths[-1], lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
