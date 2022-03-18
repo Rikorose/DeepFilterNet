@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
-use df::dataset::{DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, Split::*};
+use df::dataset::{
+    DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, FftDataset, Hdf5Cfg, Split::*,
+};
 use df::Complex32;
 use ndarray::{ArrayD, ShapeError};
 use numpy::{IntoPyArray, PyArray1, PyArray4};
@@ -94,7 +96,7 @@ impl _FdDataLoader {
         global_sampling_factor: Option<f32>,
     ) -> PyResult<Self> {
         seed_from_u64(42);
-        let cfg = match DatasetConfigJson::open(config_path) {
+        let mut cfg = match DatasetConfigJson::open(config_path) {
             Err(e) => {
                 return Err(PyRuntimeError::new_err(format!(
                     "DF dataset config not found at '{}' ({:?})",
@@ -141,10 +143,14 @@ impl _FdDataLoader {
         };
         let msg = "Unable to join dataset builder thread";
         let valid_ds = valid_handle.join().expect(msg).to_py_err()?;
+        update_keys(ds_dir, &mut cfg.valid, &valid_ds);
         py.check_signals()?;
         let test_ds = test_handle.join().expect(msg).to_py_err()?;
+        update_keys(ds_dir, &mut cfg.test, &test_ds);
         py.check_signals()?;
         let train_ds = train_handle.join().expect(msg).to_py_err()?;
+        update_keys(ds_dir, &mut cfg.train, &train_ds);
+        cfg.write(config_path).expect("Could not update dataset config.");
         py.check_signals()?;
         let ds = Datasets {
             train: train_ds,
@@ -230,6 +236,16 @@ impl _FdDataLoader {
 
     fn dataset_len(&self, split: &str) -> usize {
         self.loader.dataset_len(split)
+    }
+}
+/// Upates HDF5 keys from the dataset to cfgs
+fn update_keys(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
+    for hdf5cfg in cfgs.iter_mut() {
+        let ds_path = ds_dir.to_owned() + "/" + hdf5cfg.filename();
+        if let Some(ds_keys) = ds.get_hdf5cfg(hdf5cfg.filename()).unwrap().keys(&ds_path).unwrap() {
+            dbg!(ds_path, ds_keys);
+            hdf5cfg.set_keys(ds_keys.clone()).expect("Could not update keys");
+        }
     }
 }
 
