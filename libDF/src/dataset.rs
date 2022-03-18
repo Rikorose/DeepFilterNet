@@ -1,9 +1,14 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::fs;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::BufReader;
+use std::io::BufWriter;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
+use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
 use claxon;
@@ -14,6 +19,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use realfft::num_traits::Zero;
 use serde::Deserialize;
+use serde::Serialize;
 use thiserror::Error;
 #[cfg(feature = "vorbis")]
 use {lewton::inside_ogg::OggStreamReader, ogg::reading::PacketReader as OggPacketReader};
@@ -73,12 +79,23 @@ type Signal = Array2<f32>;
 fn one() -> f32 {
     1.
 }
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Hash, Debug, Clone)]
+pub struct DatasetModified(SystemTime, u64); // Modified time and file size
+impl DatasetModified {
+    fn new(file_name: &str) -> Result<Self> {
+        let meta_data = fs::metadata(file_name)?;
+        Ok(DatasetModified(meta_data.modified()?, meta_data.len()))
+    }
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Hdf5Keys(u64, Vec<String>); // DatasetModified hash, keys
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Hdf5Cfg(
-    pub String,                                              // file name
-    #[serde(default = "one")] pub f32,                       // dataset sampling factor
-    #[serde(default = "Option::default")] pub Option<usize>, // fallback sampling rate
-    #[serde(default = "Option::default")] pub Option<usize>, // fallback max freq
+    pub String,                                                 // file name
+    #[serde(default = "one")] pub f32,                          // dataset sampling factor
+    #[serde(default = "Option::default")] pub Option<usize>,    // fallback sampling rate
+    #[serde(default = "Option::default")] pub Option<usize>,    // fallback max freq
+    #[serde(default = "Option::default")] pub Option<Hdf5Keys>, // cached key list
 );
 impl Hdf5Cfg {
     pub fn filename(&self) -> &str {
@@ -96,8 +113,31 @@ impl Hdf5Cfg {
     pub fn fallback_max_freq(&self) -> Option<usize> {
         self.3
     }
+    pub fn keys(&self, path: &str) -> Result<Option<&Hdf5Keys>> {
+        if let Some(keys) = self.4.as_ref() {
+            let modified = calculate_hash(&DatasetModified::new(path)?);
+            if keys.0 == modified {
+                return Ok(Some(keys));
+            }
+            return Ok(None);
+        }
+        Ok(None)
+    }
+    pub fn set_keys(&mut self, keys: Hdf5Keys) -> Result<()> {
+        self.4.replace(keys);
+        Ok(())
+    }
+    pub fn set_keys_path(&mut self, path: &str, keys: Vec<String>) -> Result<()> {
+        let hash = calculate_hash(&DatasetModified::new(path)?);
+        self.set_keys(Hdf5Keys(hash, keys))
+    }
 }
-#[derive(Deserialize, Debug)]
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+#[derive(Deserialize, Serialize, Debug)]
 pub struct DatasetConfigJson {
     pub train: Vec<Hdf5Cfg>,
     pub valid: Vec<Hdf5Cfg>,
@@ -109,6 +149,12 @@ impl DatasetConfigJson {
         let reader = BufReader::new(file);
         let cfg = serde_json::from_reader(reader)?;
         Ok(cfg)
+    }
+    pub fn write(&self, path: &str) -> Result<()> {
+        let file = fs::OpenOptions::new().write(true).open(path)?;
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &self)?;
+        Ok(())
     }
     pub fn split_config(&self, split: Split) -> DatasetSplitConfig {
         match split {
@@ -369,7 +415,14 @@ impl DatasetBuilder {
                 return Ok(());
             }
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
-            let key_data = (ds.dstype, ds.keys()?);
+            let keys = match cfg.keys(path.to_str().unwrap())? {
+                Some(keys) => {
+                    println!("found keys");
+                    keys.1.clone()
+                }
+                None => ds.keys()?,
+            };
+            let key_data = (ds.dstype, keys);
             let is_rir = ds.dstype == DsType::RIR;
             sender.send(Some((cfg, ds, key_data, is_rir))).unwrap();
             Ok(())
@@ -385,6 +438,8 @@ impl DatasetBuilder {
             if let Some(f) = self.global_sampling_f {
                 cfg.set_sampling_factor(cfg.sampling_factor() * f)
             }
+            let path = ds_path.join(cfg.filename());
+            cfg.set_keys_path(path.to_str().unwrap(), keys.1.clone())?;
             config.push(cfg);
             hdf5_handles.push(ds);
             ds_keys.push((keys.0, i, keys.1));
@@ -501,6 +556,16 @@ pub struct FftDataset {
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
     min_nb_freqs: Option<usize>,
+}
+impl FftDataset {
+    pub fn get_hdf5cfg(&self, filename: &str) -> Option<&Hdf5Cfg> {
+        for cfg in &self.ds.config {
+            if cfg.filename() == filename {
+                return Some(cfg);
+            }
+        }
+        None
+    }
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
