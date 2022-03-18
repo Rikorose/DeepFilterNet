@@ -423,6 +423,7 @@ class Loss(nn.Module):
         else:
             self.mrsl = None
         self.sdrl_f = config("factor", 0, float, section="SdrLoss")
+        self.sdrl = None
         if self.sdrl_f > 0:
             sdr_sgemental_ws = config("segmental_ws", [], Csv(int), section="SdrLoss")
             if len(sdr_sgemental_ws) > 0 and any(ws > 0 for ws in sdr_sgemental_ws):
