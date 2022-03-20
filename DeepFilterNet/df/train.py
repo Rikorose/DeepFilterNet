@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torchaudio
 from loguru import logger
-from pympler.tracker import SummaryTracker
 from torch import Tensor, nn, optim
 from torch.autograd.anomaly_mode import set_detect_anomaly
 from torch.autograd.grad_mode import set_grad_enabled
@@ -247,7 +246,6 @@ def run_epoch(
     wd_scheduler_values: Optional[np.ndarray] = None,
 ) -> float:
     global debug
-    tracker = SummaryTracker()
 
     logger.info("Start {} epoch {}".format(split, epoch))
     log_freq = config("LOG_FREQ", cast=int, default=100, section="train")
@@ -370,7 +368,6 @@ def run_epoch(
                 mask_loss=losses.ml,
                 split=split,
             )
-            tracker.print_diff()
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
     except UnboundLocalError as err:
