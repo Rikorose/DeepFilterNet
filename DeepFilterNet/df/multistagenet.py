@@ -482,7 +482,7 @@ class MSNet(nn.Module):
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
         assert p.refinement_out_layer.lower() in ("locallyconnected", "conv2d")
         refinement_out_layer = (
-            partial(Conv2dNormAct, (3, 1))
+            partial(Conv2dNormAct, kernel_size=(3, 1), norm_layer=None, activation_layer=None)
             if p.refinement_out_layer.lower() == "conv2d"
             else partial(LocallyConnected, n_freqs=p.nb_df, t_context=5)
         )
