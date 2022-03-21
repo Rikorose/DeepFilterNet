@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 import signal
 from typing import Dict, Optional, Tuple
 
@@ -266,7 +267,6 @@ def run_epoch(
     max_steps = loader.len(split) - 1
     seed = epoch if is_train else 42
     n_nans = 0
-    logger.info("Dataloader len: {}".format(loader.len(split)))
     start_steps = epoch * loader.len(split)
 
     for i, batch in enumerate(loader.iter_epoch(split, seed)):
@@ -488,33 +488,35 @@ def summary_write(
     assert state is not None
 
     p = ModelParams()
-    snr = snrs[0].detach().cpu().item()
+    bs = snrs.shape[0]
+    idx = random.randrange(bs)
+    snr = snrs[idx].detach().cpu().item()
 
     def synthesis(x: Tensor) -> Tensor:
         return torch.as_tensor(state.synthesis(make_np(as_complex(x.detach()))))
 
     if mask_loss is not None:
-        ideal = mask_loss.erb_mask_compr(clean[0], noisy[0], compressed=False)
-        ideal = noisy[0] * mask_loss.erb_inv(ideal)
+        ideal = mask_loss.erb_mask_compr(clean[idx], noisy[idx], compressed=False)
+        ideal = noisy[idx] * mask_loss.erb_inv(ideal)
         torchaudio.save(
             os.path.join(summary_dir, f"{split}_idealmask_snr{snr}.wav"), synthesis(ideal), p.sr
         )
     torchaudio.save(
-        os.path.join(summary_dir, f"{split}_clean_snr{snr}.wav"), synthesis(clean[0]), p.sr
+        os.path.join(summary_dir, f"{split}_clean_snr{snr}.wav"), synthesis(clean[idx]), p.sr
     )
     torchaudio.save(
-        os.path.join(summary_dir, f"{split}_noisy_snr{snr}.wav"), synthesis(noisy[0]), p.sr
+        os.path.join(summary_dir, f"{split}_noisy_snr{snr}.wav"), synthesis(noisy[idx]), p.sr
     )
-    torchaudio.save(os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[0]), p.sr)
+    torchaudio.save(os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[idx]), p.sr)
     np.savetxt(
         os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"),
-        lsnr[0].detach().cpu().numpy(),
+        lsnr[idx].detach().cpu().numpy(),
         fmt="%.3f",
     )
     if df_alpha is not None:
         np.savetxt(
             os.path.join(summary_dir, f"{split}_df_alpha_snr{snr}.txt"),
-            df_alpha[0].detach().cpu().numpy(),
+            df_alpha[idx].detach().cpu().numpy(),
         )
 
 
