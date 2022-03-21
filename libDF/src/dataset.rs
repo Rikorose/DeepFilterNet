@@ -349,6 +349,8 @@ pub struct DatasetBuilder {
     seed: Option<u64>,
     min_nb_freqs: Option<usize>,
     global_sampling_f: Option<f32>,
+    snrs: Option<Vec<i8>>,
+    gains: Option<Vec<i8>>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -368,6 +370,8 @@ impl DatasetBuilder {
             seed: None,
             min_nb_freqs: None,
             global_sampling_f: None,
+            snrs: None,
+            gains: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -449,8 +453,8 @@ impl DatasetBuilder {
         if hdf5_handles.is_empty() {
             return Err(DfDatasetError::NoDatasetFoundError);
         }
-        let snrs = vec![-5, 0, 5, 10, 20, 40];
-        let gains = vec![-6, 0, 6];
+        let snrs = self.snrs.unwrap_or_else(|| vec![-5, 0, 5, 10, 20, 40]);
+        let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
         let attenuation_range = (6, 40);
         let p_atten_lim = self.p_atten_lim.unwrap_or(0.);
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
@@ -544,6 +548,14 @@ impl DatasetBuilder {
     }
     pub fn min_nb_erb_freqs(mut self, n: usize) -> Self {
         self.min_nb_freqs = Some(n);
+        self
+    }
+    pub fn snrs(mut self, snrs: Vec<i8>) -> Self {
+        self.snrs = Some(snrs);
+        self
+    }
+    pub fn gains(mut self, gains: Vec<i8>) -> Self {
+        self.gains = Some(gains);
         self
     }
 }

@@ -94,6 +94,8 @@ impl _FdDataLoader {
         seed: Option<u64>,
         min_nb_erb_freqs: Option<usize>,
         global_sampling_factor: Option<f32>,
+        snrs: Option<Vec<i8>>,
+        gains: Option<Vec<i8>>,
     ) -> PyResult<Self> {
         seed_from_u64(42);
         let mut cfg = match DatasetConfigJson::open(config_path) {
@@ -125,6 +127,12 @@ impl _FdDataLoader {
         }
         if let Some(f) = global_sampling_factor {
             ds_builder = ds_builder.global_sample_factor(f)
+        }
+        if let Some(snrs) = snrs {
+            ds_builder = ds_builder.snrs(snrs);
+        }
+        if let Some(gains) = gains {
+            ds_builder = ds_builder.gains(gains);
         }
         let valid_handle = {
             let valid_cfg = cfg.split_config(Valid);
