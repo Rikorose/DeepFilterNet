@@ -1,6 +1,6 @@
 import math
 from functools import partial, reduce
-from typing import Callable, Iterable, List, Optional, Tuple, Union
+from typing import Callable, Final, Iterable, List, Optional, Tuple, Union
 
 import torch
 from icecream import ic  # noqa
@@ -151,16 +151,23 @@ class ConvTranspose2dNormAct(nn.Sequential):
 class GruSE(nn.Module):
     """GRU with previous adaptive avg pooling like SqueezeExcitation"""
 
+    avg_dim: Final[int]
+
     def __init__(
         self,
         input_dim: int,
         hidden_dim: int,
         groups: int = 1,
+        reduce_: str = "frequencies",  # or "channels"
         skip: Optional[Callable[..., torch.nn.Module]] = nn.Identity,
         scale_activation: Optional[Callable[..., torch.nn.Module]] = None,
     ):
         super().__init__()
-        self.avg_dim = 3
+        assert reduce_ in ("channels", "frequencies")
+        if reduce_ == "channels":
+            self.avg_dim = 1
+        else:
+            self.avg_dim = 3
         if groups == 1:
             self.gru = nn.GRU(input_dim, hidden_dim)
         else:
@@ -174,10 +181,16 @@ class GruSE(nn.Module):
 
     def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
         # x: [B, C, T, F]
-        x = input.mean(dim=self.avg_dim)  # [B, C, T]
-        x = x.transpose(1, 2)  # [B, T, C]
+        if self.avg_dim == 1:
+            x = input.mean(dim=self.avg_dim)  # [B, T, C]
+        else:
+            x = input.mean(dim=self.avg_dim).transpose(1, 2)  # [B, T, C]
         x, h = self.gru(x, h)
-        x = self.fc(x).transpose(1, 2).unsqueeze(-1)
+        x = self.fc(x)
+        if self.avg_dim == 1:
+            x = x.unsqueeze(1)
+        else:
+            x = x.transpose(1, 2).unsqueeze(-1)
         if self.skip is not None:
             x = self.skip(input) + x  # a regular skip connection
         elif self.scale is not None:
@@ -213,17 +226,31 @@ class EncLayer(nn.Module):
         gru_dim: int,
         gru_groups=1,
         gru_mode: str = "skip",
+        gru_reduce: str = "frequencies",
+        in_freqs: Optional[int] = None,
     ):
         super().__init__()
-        self.conv = Conv2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
         assert gru_mode in ("skip", "scale")
+        self.conv = Conv2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
+        if gru_reduce == "channels":
+            assert in_freqs is not None
+            gru_in_dim = in_freqs
+        else:
+            gru_in_dim = out_ch
         if gru_mode == "skip":
             skip = nn.Identity
             scale = None
         else:
             skip = None
             scale = nn.Sigmoid
-        self.gru = GruSE(out_ch, gru_dim, groups=gru_groups, skip=skip, scale_activation=scale)
+        self.gru = GruSE(
+            gru_in_dim,
+            gru_dim,
+            groups=gru_groups,
+            reduce_=gru_reduce,
+            skip=skip,
+            scale_activation=scale,
+        )
 
     def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
         # x: [B, C, T, F]
@@ -318,11 +345,24 @@ class FreqStage(nn.Module):
         if isinstance(gru_dim, int):
             gru_dim = [gru_dim] * self.depth
         fstrides = fstrides or [2] * self.depth
+        freqs = num_freqs
         for i in range(self.depth):
             in_ch = widths[i]
             out_ch = widths[i + 1]
             fstride = fstrides[i]
-            self.enc.append(EncLayer(in_ch, out_ch, kernel, fstride, gru_dim=gru_dim[i]))
+            reduce_ = "channels" if i == 0 else "frequencies"
+            freqs = freqs // fstride
+            self.enc.append(
+                EncLayer(
+                    in_ch,
+                    out_ch,
+                    kernel,
+                    fstride,
+                    gru_dim=gru_dim[i],
+                    gru_reduce=reduce_,
+                    in_freqs=freqs,
+                )
+            )
 
         self.dec = nn.ModuleList()
         for i in range(self.depth - 1, -1, -1):
