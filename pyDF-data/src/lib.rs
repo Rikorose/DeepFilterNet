@@ -1,10 +1,12 @@
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Instant;
 
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
 use df::dataset::{
-    DatasetBuilder, DatasetConfigJson, Datasets, DfDatasetError, FftDataset, Hdf5Cfg, Split::*,
+    DatasetBuilder, DatasetConfigCacheJson, DatasetConfigJson, Datasets, DfDatasetError,
+    FftDataset, Hdf5Cfg, Split,
 };
 use df::Complex32;
 use ndarray::{ArrayD, ShapeError};
@@ -107,6 +109,7 @@ impl _FdDataLoader {
             }
             Ok(cfg) => cfg,
         };
+        load_cache(config_path, &mut cfg);
         let mut ds_builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha);
         py.check_signals()?;
@@ -135,18 +138,18 @@ impl _FdDataLoader {
             ds_builder = ds_builder.gains(gains);
         }
         let valid_handle = {
-            let valid_cfg = cfg.split_config(Valid);
+            let valid_cfg = cfg.split_config(Split::Valid);
             let valid_ds_builder = ds_builder.clone();
             thread::spawn(|| valid_ds_builder.dataset(valid_cfg).build_fft_dataset())
         };
         let test_handle = {
-            let test_cfg = cfg.split_config(Test);
+            let test_cfg = cfg.split_config(Split::Test);
             let test_ds_builder = ds_builder.clone();
             thread::spawn(|| test_ds_builder.dataset(test_cfg).build_fft_dataset())
         };
         ds_builder = ds_builder.p_sample_full_speech(1.0);
         let train_handle = {
-            let train_cfg = cfg.split_config(Train);
+            let train_cfg = cfg.split_config(Split::Train);
             thread::spawn(|| ds_builder.dataset(train_cfg).build_fft_dataset())
         };
         let msg = "Unable to join dataset builder thread";
@@ -158,7 +161,7 @@ impl _FdDataLoader {
         py.check_signals()?;
         let train_ds = train_handle.join().expect(msg).to_py_err()?;
         update_keys(ds_dir, &mut cfg.train, &train_ds);
-        cfg.write(config_path).expect("Could not update dataset config.");
+        write_cache(config_path, &cfg);
         py.check_signals()?;
         let ds = Datasets {
             train: train_ds,
@@ -246,11 +249,43 @@ impl _FdDataLoader {
         self.loader.dataset_len(split)
     }
 }
+fn cache_path(cfg_path: &str) -> PathBuf {
+    let mut p = Path::new(cfg_path).to_path_buf();
+    let cache_file_name = p.file_stem().unwrap().to_str().unwrap().to_owned();
+    p.set_file_name(".cache_".to_owned() + &cache_file_name);
+    p.set_extension("cfg");
+    p
+}
+fn load_cache(cfg_path: &str, cfg: &mut DatasetConfigJson) {
+    let cache_path = cache_path(cfg_path);
+    if !cache_path.is_file() {
+        return;
+    }
+    let cache = DatasetConfigCacheJson::open(cache_path.to_str().unwrap())
+        .expect("Could not load dataset keys cache.");
+    cfg.set_keys(Split::Train, &cache.train).expect("Could not set cached keys");
+    cfg.set_keys(Split::Valid, &cache.valid).expect("Could not set cached keys");
+    cfg.set_keys(Split::Test, &cache.test).expect("Could not set cached keys");
+}
+fn write_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
+    let cache_path = cache_path(cfg_path);
+    let cache = DatasetConfigCacheJson {
+        train: cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()).collect(),
+        valid: cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()).collect(),
+        test: cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()).collect(),
+    };
+    cache.write(cache_path.to_str().unwrap()).expect("Failed to write cache.");
+}
 /// Upates HDF5 keys from the dataset to cfgs
 fn update_keys(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
     for hdf5cfg in cfgs.iter_mut() {
         let ds_path = ds_dir.to_owned() + "/" + hdf5cfg.filename();
-        if let Some(ds_keys) = ds.get_hdf5cfg(hdf5cfg.filename()).unwrap().keys(&ds_path).unwrap() {
+        if let Some(ds_keys) = ds
+            .get_hdf5cfg(hdf5cfg.filename())
+            .expect("Could not get hdf5cfg")
+            .load_keys(&ds_path)
+            .expect("Could not load Hdf5Keys.")
+        {
             dbg!(ds_path, ds_keys);
             hdf5cfg.set_keys(ds_keys.clone()).expect("Could not update keys");
         }
