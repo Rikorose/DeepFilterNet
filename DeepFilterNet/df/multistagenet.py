@@ -299,7 +299,7 @@ class FreqStage(nn.Module):
         self.out_ch = out_ch
         self.depth = len(widths) - 1
         if fstrides is not None:
-            assert len(fstrides) == self.depth
+            assert len(fstrides) >= self.depth
             overall_stride = reduce(lambda x, y: x * y, fstrides)
         else:
             fstrides = [2] * self.depth
@@ -434,6 +434,7 @@ class MSNet(nn.Module):
             num_freqs=p.nb_erb,
             gru_dim=p.erb_hidden_dim,
         )
+        strides = [2, 2, 2, 2, 1, 1, 1]
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
         self.refinement_stage = FreqStage(
@@ -443,6 +444,7 @@ class MSNet(nn.Module):
             widths=p.refinement_widths,
             num_freqs=p.nb_df,
             gru_dim=p.refinement_hidden_dim,
+            fstrides=strides,
             decoder_out_layer=partial(DecoderOutLayer, n_freqs=p.nb_df, t_context=5),
         )
         self.refinement_op = ComplexMul() if p.refinement_op == "mul" else ComplexAdd()
