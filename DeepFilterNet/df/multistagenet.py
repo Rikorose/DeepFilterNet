@@ -161,12 +161,12 @@ class GruSE(nn.Module):
         input_dim: int,
         hidden_dim: int,
         groups: int = 1,
-        reduce_: str = "frequencies",  # or "channels"
+        reduce_: str = "frequencies",
         skip: Optional[Callable[..., torch.nn.Module]] = nn.Identity,
         scale_activation: Optional[Callable[..., torch.nn.Module]] = None,
     ):
         super().__init__()
-        assert reduce_ in ("channels", "frequencies")
+        assert reduce_ in ("channels", "frequencies", "none")
         if reduce_ == "channels":
             self.avg_dim = 1
         else:
@@ -314,7 +314,7 @@ class FreqStage(nn.Module):
         out_ch: int,
         out_act: Optional[Callable[..., torch.nn.Module]],
         num_freqs: int,
-        gru_dim: Union[int, List[int]],
+        gru_dim: int,
         widths: List[int],
         fstrides: Optional[List[int]] = None,
         initial_kernel: Tuple[int, int] = (3, 3),
@@ -345,27 +345,32 @@ class FreqStage(nn.Module):
         )
         self.enc = nn.ModuleList()
 
-        if isinstance(gru_dim, int):
-            gru_dim = [gru_dim] * self.depth
+        # if isinstance(gru_dim, int):
+        #     gru_dim = [gru_dim] * self.depth
         fstrides = fstrides or [2] * self.depth
         freqs = num_freqs
         for i in range(self.depth):
             in_ch = widths[i]
             out_ch = widths[i + 1]
             fstride = fstrides[i]
-            reduce_ = "channels" if i == 0 else "frequencies"
             freqs = freqs // fstride
-            self.enc.append(
-                EncLayer(
-                    in_ch,
-                    out_ch,
-                    kernel,
-                    fstride,
-                    gru_dim=gru_dim[i],
-                    gru_reduce=reduce_,
-                    in_freqs=freqs,
-                )
-            )
+            self.enc.append(Conv2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride))
+            # reduce_ = "channels" if i == 0 else "frequencies"
+            # self.enc.append(
+            #     EncLayer(
+            #         in_ch,
+            #         out_ch,
+            #         kernel,
+            #         fstride,
+            #         gru_dim=gru_dim[i],
+            #         gru_reduce=reduce_,
+            #         in_freqs=freqs,
+            #     )
+            # )
+        self.inner_ch = out_ch
+        self.gru = nn.GRU(freqs * out_ch, gru_dim, num_layers=3)
+        self.gru_fc = nn.Linear(gru_dim, freqs * out_ch)
+        self.gru_skip = nn.Conv2d(out_ch, out_ch, 1)
 
         self.dec = nn.ModuleList()
         for i in range(self.depth - 1, -1, -1):
@@ -387,14 +392,17 @@ class FreqStage(nn.Module):
         else:
             self.dec0 = decoder_out_layer(widths[0], self.out_ch)
 
-    def encode(self, x: Tensor, h=None) -> Tuple[Tensor, List[Tensor], List[Tensor]]:
+    def encode(self, x: Tensor, h=None) -> Tuple[Tensor, List[Tensor], Tensor]:
         intermediate = []
-        if h is None:
-            h = [None] * self.depth
+        # if h is None:
+        #     h = [None] * self.depth
         x = self.enc0(x)
-        for i, enc_layer in enumerate(self.enc):
+        for enc_layer in self.enc:
             intermediate.append(x)
-            x, _ = enc_layer(x, h[i])
+            x = enc_layer(x)
+        x_gru, h = self.gru(x.permute(0, 2, 3, 1).flatten(2), h)
+        x_gru = self.gru_fc(x_gru).unflatten(2, (-1, self.inner_ch)).permute(0, 3, 1, 2)
+        x = self.gru_skip(x) + x_gru
         return x, intermediate, h
 
     def decode(self, x: Tensor, intermediate: List[Tensor]) -> Tensor:
@@ -403,7 +411,7 @@ class FreqStage(nn.Module):
         x = self.dec0(x)
         return x
 
-    def forward(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor, List[Tensor]]:
+    def forward(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor, Tensor]:
         # input shape: [B, C, T, F]
         # x_rnn, h = self.rnn(x, h)
         x_inner, intermediate, h = self.encode(x, h)
