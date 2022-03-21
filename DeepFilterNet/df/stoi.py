@@ -2,6 +2,7 @@ from typing import List, Tuple
 
 import numpy as np
 import torch
+from loguru import logger
 from torch import Tensor
 from torch.nn import functional as F
 
@@ -191,6 +192,9 @@ def stoi(x, y, fs_source):
 
     for i in range(B):
         # To spectral domain
+        if x_[i].numel() < N_fft:
+            logger.warning("Could not calculate STOI (not enough frames left")
+            continue
         x = _stft(x_[i], win_size=N_frame, fft_size=N_fft, hop_size=N_frame // 2)
         y = _stft(y_[i], win_size=N_frame, fft_size=N_fft, hop_size=N_frame // 2)
         # Power spectrogram
