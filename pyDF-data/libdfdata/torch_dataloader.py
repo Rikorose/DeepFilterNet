@@ -88,6 +88,8 @@ class PytorchDataLoader:
         min_nb_erb_freqs: int = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
         global_sampling_factor: float = None,  # Additional over/undersampling of all datasets
+        snrs=None,  # Signal to noise ratios (SNRs) to generate. Defaults to [-5,0,5,10,20,40] dB
+        gains=None,  # Additional gains applied to speech. Defaults to [-6,0,6] dB
     ):
         self.fft_size = fft_size
         self.batch_size = batch_size
@@ -116,6 +118,8 @@ class PytorchDataLoader:
             seed=seed,
             min_nb_erb_freqs=min_nb_erb_freqs,
             global_sampling_factor=global_sampling_factor,
+            snrs=snrs,
+            gains=gains,
         )
         self.prefetch = prefetch
         self.pin_memory = pin_memory if torch.cuda.is_available() else False
