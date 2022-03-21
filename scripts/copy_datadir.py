@@ -126,7 +126,8 @@ def copy_datasets(
                 fn_src = os.path.join(src_dir, fn)
                 fn_tgt = os.path.join(target_dir, fn)
                 new_gb = du(fn_src)
-                if cur_gb + new_gb > max_gb:  # If too large, link instead
+                if cur_gb + new_gb > max_gb or "test" in fn_src.lower():
+                    # If too large or a test dataset, link instead
                     if not os.path.exists(fn_tgt):
                         print("linking", fn_src, flush=True)
                         ln(fn_src, fn_tgt)

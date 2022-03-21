@@ -25,13 +25,6 @@ export PYTHONUSERBASE="/cluster/$USER/.python_packages"
 PROJECT_NAME=DeepFilterNet
 DATA_DIR=${DATA_DIR:-$CLUSTER/Data/voicebank-demand-test}     # Set to the directory containing the HDF5s
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
-DEBUG=${DEBUG:-0}                            # Debug mode passed to the python train script
-
-if [ "$DEBUG" -eq 1 ]; then
-  DEBUG="--debug"
-else
-  DEBUG="--no-debug"
-fi
 
 echo "Started sbatch script at $(date) in $(pwd)"
 
@@ -111,8 +104,7 @@ printf "\n***Starting training***\n\n"
 
 PYTHONPATH="$PROJECT_HOME/DeepFilterNet/" python scripts/test_voicebank_demand.py \
   -m "$BASE_DIR" \
-  "$DATA_DIR" \
-  "$DEBUG" &
+  "$DATA_DIR"
 
 trainprocess=$!
 echo "Started trainprocess: $trainprocess"
