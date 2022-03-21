@@ -168,11 +168,9 @@ impl DatasetConfigJson {
             Split::Test => &mut self.valid,
         };
         for k in keys.iter() {
-            let cfg = s
-                .iter_mut()
-                .find(|cfg| cfg.filename() == k.filename)
-                .expect("Cache keys not found");
-            cfg.set_keys(k.clone())?;
+            if let Some(cfg) = s.iter_mut().find(|cfg| cfg.filename() == k.filename) {
+                cfg.set_keys(k.clone())?;
+            }
         }
         Ok(())
     }
@@ -194,12 +192,14 @@ impl DatasetConfigJson {
     }
 }
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct DatasetConfigCacheJson {
-    pub train: Vec<Hdf5Keys>,
-    pub valid: Vec<Hdf5Keys>,
-    pub test: Vec<Hdf5Keys>,
-}
+pub struct DatasetConfigCacheJson(Vec<Hdf5Keys>);
 impl DatasetConfigCacheJson {
+    pub fn new(keys: Vec<Hdf5Keys>) -> Self {
+        DatasetConfigCacheJson(keys)
+    }
+    pub fn keys(&self) -> &Vec<Hdf5Keys> {
+        &self.0
+    }
     pub fn open(cache_path: &str) -> Result<Self> {
         let file = fs::File::open(cache_path)?;
         let reader = BufReader::new(file);
