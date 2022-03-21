@@ -261,19 +261,23 @@ fn load_cache(cfg_path: &str, cfg: &mut DatasetConfigJson) {
     if !cache_path.is_file() {
         return;
     }
+    println!(
+        "Loading HDF5 key cache from {}",
+        cache_path.to_str().unwrap_or_default()
+    );
     let cache = DatasetConfigCacheJson::open(cache_path.to_str().unwrap())
         .expect("Could not load dataset keys cache.");
-    cfg.set_keys(Split::Train, &cache.train).expect("Could not set cached keys");
-    cfg.set_keys(Split::Valid, &cache.valid).expect("Could not set cached keys");
-    cfg.set_keys(Split::Test, &cache.test).expect("Could not set cached keys");
+    cfg.set_keys(Split::Train, cache.keys()).expect("Could not set cached keys");
+    cfg.set_keys(Split::Valid, cache.keys()).expect("Could not set cached keys");
+    cfg.set_keys(Split::Test, cache.keys()).expect("Could not set cached keys");
 }
 fn write_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
     let cache_path = cache_path(cfg_path);
-    let cache = DatasetConfigCacheJson {
-        train: cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()).collect(),
-        valid: cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()).collect(),
-        test: cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()).collect(),
-    };
+    let mut cache = Vec::new();
+    cache.extend(cfg.train.iter().map(|x| x.keys_unchecked().unwrap().clone()));
+    cache.extend(cfg.valid.iter().map(|x| x.keys_unchecked().unwrap().clone()));
+    cache.extend(cfg.test.iter().map(|x| x.keys_unchecked().unwrap().clone()));
+    let cache = DatasetConfigCacheJson::new(cache);
     cache.write(cache_path.to_str().unwrap()).expect("Failed to write cache.");
 }
 /// Upates HDF5 keys from the dataset to cfgs
@@ -286,7 +290,6 @@ fn update_keys(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
             .load_keys(&ds_path)
             .expect("Could not load Hdf5Keys.")
         {
-            dbg!(ds_path, ds_keys);
             hdf5cfg.set_keys(ds_keys.clone()).expect("Could not update keys");
         }
     }
