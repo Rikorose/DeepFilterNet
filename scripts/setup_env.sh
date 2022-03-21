@@ -15,6 +15,7 @@ else
 fi
 INSTALL_LIBDF=${INSTALL_LIBDF:-1}
 INSTALL_PYDEPS=${INSTALL_PYDEPS:-0}
+INSTALL_PYTESTDEPS=${INSTALL_PYTESTDEPS:-0}
 SUFFIX=""
 
 check_install_conda() {
@@ -85,7 +86,6 @@ setup_env() {
     cd "$PROJECT_HOME"/ || exit 10
     rustup default stable
     rustup update stable
-    cargo build --all-features --release
     pip install -U maturin
     maturin develop --release -m "$PROJECT_HOME"/pyDF/Cargo.toml
     maturin develop --release -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
@@ -95,6 +95,11 @@ setup_env() {
     echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
     pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
     pip install h5py
+  fi
+  if [ $INSTALL_PYTESTDEPS -eq 1 ]; then
+    echo "Installing test requirements"
+    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
+    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements_test.txt
   fi
 }
 
