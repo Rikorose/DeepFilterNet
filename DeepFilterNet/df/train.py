@@ -507,7 +507,9 @@ def summary_write(
     torchaudio.save(
         os.path.join(summary_dir, f"{split}_noisy_snr{snr}.wav"), synthesis(noisy[idx]), p.sr
     )
-    torchaudio.save(os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[idx]), p.sr)
+    torchaudio.save(
+        os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[idx]), p.sr
+    )
     np.savetxt(
         os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"),
         lsnr[idx].detach().cpu().numpy(),
