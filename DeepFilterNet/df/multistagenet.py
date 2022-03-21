@@ -45,6 +45,9 @@ class ModelParams(DfParams):
         self.refinement_op: str = config(
             "REFINEMENT_OP", default="mul", section=self.section
         ).lower()
+        self.refinement_out_layer: str = config(
+            "REFINEMENT_OUTPUT_LAYER", default="LocallyConnected", section=self.section
+        )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
 
@@ -259,7 +262,7 @@ class EncLayer(nn.Module):
         return x, h
 
 
-class DecoderOutLayer(nn.Module):
+class LocallyConnected(nn.Module):
     def __init__(
         self, in_ch: int, out_ch: int, n_freqs: int, t_context: int, bias: bool = True, pad=True
     ):
@@ -477,6 +480,12 @@ class MSNet(nn.Module):
         strides = [2, 2, 2, 2, 1, 1, 1]
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         refinement_act = {"tanh": nn.Tanh, "identity": nn.Identity}[p.refinement_act.lower()]
+        assert p.refinement_out_layer.lower() in ("locallyconnected", "conv2d")
+        refinement_out_layer = (
+            partial(Conv2dNormAct, (3, 1))
+            if p.refinement_out_layer.lower() == "conv2d"
+            else partial(LocallyConnected, n_freqs=p.nb_df, t_context=5)
+        )
         self.refinement_stage = FreqStage(
             in_ch=2,
             out_ch=2,
@@ -485,7 +494,7 @@ class MSNet(nn.Module):
             num_freqs=p.nb_df,
             gru_dim=p.refinement_hidden_dim,
             fstrides=strides,
-            decoder_out_layer=partial(DecoderOutLayer, n_freqs=p.nb_df, t_context=5),
+            decoder_out_layer=refinement_out_layer,
         )
         self.refinement_op = ComplexMul() if p.refinement_op == "mul" else ComplexAdd()
         self.lsnr_net = LSNRNet(p.erb_widths[-1], lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
