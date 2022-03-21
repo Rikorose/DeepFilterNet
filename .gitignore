@@ -2,6 +2,7 @@
 *.wav
 *.png
 *.pdf
+.cache*
 out/
 export/
 DeepFilterNet/poetry.lock
