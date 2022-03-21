@@ -87,9 +87,7 @@ impl DatasetModified {
         Ok(DatasetModified(meta_data.modified()?, meta_data.len()))
     }
 }
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Hdf5Keys(u64, Vec<String>); // DatasetModified hash, keys
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Hdf5Cfg(
     pub String,                                                 // file name
     #[serde(default = "one")] pub f32,                          // dataset sampling factor
@@ -113,23 +111,30 @@ impl Hdf5Cfg {
     pub fn fallback_max_freq(&self) -> Option<usize> {
         self.3
     }
-    pub fn keys(&self, path: &str) -> Result<Option<&Hdf5Keys>> {
+    pub fn keys_unchecked(&self) -> Option<&Hdf5Keys> {
+        self.4.as_ref()
+    }
+    pub fn load_keys(&self, ds_path: &str) -> Result<Option<&Hdf5Keys>> {
         if let Some(keys) = self.4.as_ref() {
-            let modified = calculate_hash(&DatasetModified::new(path)?);
-            if keys.0 == modified {
+            let modified = calculate_hash(&DatasetModified::new(ds_path)?);
+            if keys.hash == modified {
                 return Ok(Some(keys));
             }
             return Ok(None);
         }
         Ok(None)
     }
+    pub fn set_keys_path(&mut self, path: &str, keys: Vec<String>) -> Result<()> {
+        let hash = calculate_hash(&DatasetModified::new(path)?);
+        self.set_keys(Hdf5Keys {
+            filename: self.filename().to_string(),
+            hash,
+            keys,
+        })
+    }
     pub fn set_keys(&mut self, keys: Hdf5Keys) -> Result<()> {
         self.4.replace(keys);
         Ok(())
-    }
-    pub fn set_keys_path(&mut self, path: &str, keys: Vec<String>) -> Result<()> {
-        let hash = calculate_hash(&DatasetModified::new(path)?);
-        self.set_keys(Hdf5Keys(hash, keys))
     }
 }
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
@@ -137,23 +142,38 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     t.hash(&mut s);
     s.finish()
 }
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Hdf5Keys {
+    pub filename: String,
+    hash: u64,
+    keys: Vec<String>,
+}
+#[derive(Deserialize, Debug)]
 pub struct DatasetConfigJson {
     pub train: Vec<Hdf5Cfg>,
     pub valid: Vec<Hdf5Cfg>,
     pub test: Vec<Hdf5Cfg>,
 }
 impl DatasetConfigJson {
-    pub fn open(path: &str) -> Result<Self> {
-        let file = fs::File::open(path)?;
+    pub fn open(cfg_path: &str) -> Result<Self> {
+        let file = fs::File::open(cfg_path)?;
         let reader = BufReader::new(file);
         let cfg = serde_json::from_reader(reader)?;
         Ok(cfg)
     }
-    pub fn write(&self, path: &str) -> Result<()> {
-        let file = fs::OpenOptions::new().write(true).open(path)?;
-        let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, &self)?;
+    pub fn set_keys<S: Into<Split>>(&mut self, split: S, keys: &[Hdf5Keys]) -> Result<()> {
+        let s = match split.into() {
+            Split::Train => &mut self.train,
+            Split::Valid => &mut self.valid,
+            Split::Test => &mut self.valid,
+        };
+        for k in keys.iter() {
+            let cfg = s
+                .iter_mut()
+                .find(|cfg| cfg.filename() == k.filename)
+                .expect("Cache keys not found");
+            cfg.set_keys(k.clone())?;
+        }
         Ok(())
     }
     pub fn split_config(&self, split: Split) -> DatasetSplitConfig {
@@ -171,6 +191,26 @@ impl DatasetConfigJson {
                 split: Split::Test,
             },
         }
+    }
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct DatasetConfigCacheJson {
+    pub train: Vec<Hdf5Keys>,
+    pub valid: Vec<Hdf5Keys>,
+    pub test: Vec<Hdf5Keys>,
+}
+impl DatasetConfigCacheJson {
+    pub fn open(cache_path: &str) -> Result<Self> {
+        let file = fs::File::open(cache_path)?;
+        let reader = BufReader::new(file);
+        let cfg = serde_json::from_reader(reader)?;
+        Ok(cfg)
+    }
+    pub fn write(&self, cache_path: &str) -> Result<()> {
+        let file = fs::OpenOptions::new().create(true).write(true).open(cache_path)?;
+        let writer = BufWriter::new(file);
+        serde_json::to_writer(writer, &self)?;
+        Ok(())
     }
 }
 
@@ -419,10 +459,10 @@ impl DatasetBuilder {
                 return Ok(());
             }
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
-            let keys = match cfg.keys(path.to_str().unwrap())? {
+            let keys = match cfg.load_keys(path.to_str().unwrap())? {
                 Some(keys) => {
                     println!("found keys");
-                    keys.1.clone()
+                    keys.keys.clone()
                 }
                 None => ds.keys()?,
             };
