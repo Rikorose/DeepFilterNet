@@ -1,11 +1,12 @@
 from typing import Optional, Tuple
 
 import torch
+from loguru import logger
 from torch import Tensor, nn
 
 from df.config import DfParams, config
 from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
-from df.multistagenet import MagCompression, ComplexCompression
+from df.multistagenet import ComplexCompression, FreqStage, LSNRNet, MagCompression
 from libdf import DF
 
 
@@ -198,6 +199,17 @@ class DfDecoder(nn.Module):
         self.df_lookahead = p.df_lookahead
         self.gru_groups = p.gru_groups
 
+        k = p.conv_k_enc
+        k0 = 1 if k == 1 and p.conv_lookahead == 0 else max(2, k)
+        wf = p.conv_width_f
+        kwargs = {"batch_norm": True, "depthwise": p.conv_depthwise}
+        self.df_conv0 = convkxf(
+            2, layer_width, fstride=1, k=k0, lookahead=p.conv_lookahead, **kwargs
+        )
+        self.df_conv1 = convkxf(layer_width, layer_width * wf**1, k=k, **kwargs)
+        self.df_fc_emb = GroupedLinear(
+            layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups
+        )
         self.df_convp = convkxf(
             layer_width, self.df_order * 2, k=1, f=1, complex_in=True, batch_norm=True
         )
@@ -215,10 +227,14 @@ class DfDecoder(nn.Module):
         )
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
 
-    def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, feat_spec: Tensor, emb: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
-        c, _ = self.df_gru(emb.transpose(0, 1))  # [T, B, H], H: df_n_hidden
+        c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
+        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
         c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F]
+        c, _ = self.df_gru(emb.transpose(0, 1))  # [T, B, H], H: df_n_hidden
+        cemb = c1.permute(2, 0, 1, 3).reshape(t, b, -1)  # [T, B, C * Fc/4]
+        cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
         c = c.transpose(0, 1)  # [B, T, H]
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_fc_out(c)  # [B, T, F*O*2], O: df_order
@@ -254,6 +270,9 @@ class DfNet(nn.Module):
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.df_dec = DfDecoder()
+        self.erb_stage = FreqStage(
+            1, 1, out_act=nn.Sigmoid, widths=[32, 32, 32], num_freqs=p.nb_erb, gru_dim=128
+        )
         self.df_op = torch.jit.script(
             DfOp(
                 p.nb_df,
@@ -263,11 +282,10 @@ class DfNet(nn.Module):
                 method=p.dfop_method,
             )
         )
+        self.lsnr_net = LSNRNet(32, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
 
         self.run_df = run_df
         if not run_df:
-            from loguru import logger
-
             logger.warning("Runing without DF")
         self.train_mask = train_mask
 
@@ -284,11 +302,15 @@ class DfNet(nn.Module):
         feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
         feat_erb = self.erb_comp(feat_erb)
         feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
-        e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
-        m = self.erb_dec(emb, e3, e2, e1, e0)
+        # e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
+        # m = self.erb_dec(emb, e3, e2, e1, e0)
+        m, emb, _ = self.erb_stage(feat_erb)
+        lsnr, _ = self.lsnr_net(emb)
+        emb = emb.permute(0,2,3,1).flatten(2)
         spec = self.mask(spec, m, atten_lim)
+        feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
         if self.run_df:
-            df_coefs, df_alpha = self.df_dec(emb, c0)
+            df_coefs, df_alpha = self.df_dec(feat_spec, emb)
             spec = self.df_op(spec, df_coefs, df_alpha)
         else:
             df_alpha = torch.zeros(spec.shape[0], spec.shape[2], 1, device=spec.device)
