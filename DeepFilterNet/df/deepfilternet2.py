@@ -214,7 +214,7 @@ class DfDecoder(nn.Module):
             layer_width, self.df_order * 2, k=1, f=1, complex_in=True, batch_norm=True
         )
         self.df_gru = GroupedGRU(
-            p.emb_hidden_dim,
+            256,  # p.emb_hidden_dim,
             self.df_n_hidden,
             num_layers=self.df_n_layers,
             batch_first=False,
@@ -232,6 +232,7 @@ class DfDecoder(nn.Module):
         c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
         c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
         c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F]
+        # ic(emb.shape, self.df_gru)
         c, _ = self.df_gru(emb.transpose(0, 1))  # [T, B, H], H: df_n_hidden
         cemb = c1.permute(2, 0, 1, 3).reshape(t, b, -1)  # [T, B, C * Fc/4]
         cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
@@ -255,6 +256,7 @@ class DfNet(nn.Module):
         p = ModelParams()
         layer_width = p.conv_ch
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
+        self.lookahead=p.conv_lookahead
         self.freq_bins = p.fft_size // 2 + 1
         self.emb_dim = layer_width * p.nb_erb
         self.erb_bins = p.nb_erb
@@ -265,14 +267,23 @@ class DfNet(nn.Module):
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
+        erb_widths = [32, 64, 64, 64]
+        self.erb_stage = FreqStage(
+            1,
+            1,
+            out_act=nn.Sigmoid,
+            widths=erb_widths,
+            fstrides=[2, 2, 2],
+            num_freqs=p.nb_erb,
+            gru_dim=256,
+            separable_conv=True,
+            kernel=(2, 3),
+        )
 
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.df_dec = DfDecoder()
-        self.erb_stage = FreqStage(
-            1, 1, out_act=nn.Sigmoid, widths=[32, 32, 32], num_freqs=p.nb_erb, gru_dim=128
-        )
         self.df_op = torch.jit.script(
             DfOp(
                 p.nb_df,
@@ -282,7 +293,7 @@ class DfNet(nn.Module):
                 method=p.dfop_method,
             )
         )
-        self.lsnr_net = LSNRNet(32, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
+        self.lsnr_net = LSNRNet(erb_widths[-1], lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
 
         self.run_df = run_df
         if not run_df:
@@ -306,7 +317,7 @@ class DfNet(nn.Module):
         # m = self.erb_dec(emb, e3, e2, e1, e0)
         m, emb, _ = self.erb_stage(feat_erb)
         lsnr, _ = self.lsnr_net(emb)
-        emb = emb.permute(0,2,3,1).flatten(2)
+        emb = emb.permute(0, 2, 3, 1).flatten(2)
         spec = self.mask(spec, m, atten_lim)
         feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
         if self.run_df:
