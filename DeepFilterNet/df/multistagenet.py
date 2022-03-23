@@ -83,7 +83,7 @@ class Conv2dNormAct(nn.Sequential):
         layers = []
         if any(x > 0 for x in pad):
             layers.append(nn.ConstantPad2d(pad, 0.0))
-        groups = min(in_ch, out_ch) if separable else 1
+        groups = math.gcd(in_ch, out_ch) if separable else 1
         layers.append(
             nn.Conv2d(
                 in_ch,
@@ -134,7 +134,7 @@ class ConvTranspose2dNormAct(nn.Sequential):
         layers = []
         if any(x > 0 for x in pad):
             layers.append(nn.ConstantPad2d(pad, 0.0))
-        groups = min(in_ch, out_ch) if separable else 1
+        groups = math.gcd(in_ch, out_ch) if separable else 1
         layers.append(
             nn.ConvTranspose2d(
                 in_ch,
@@ -326,9 +326,7 @@ class FreqStage(nn.Module):
         initial_kernel: Tuple[int, int] = (3, 3),
         kernel: Tuple[int, int] = (1, 3),
         separable_conv: bool = False,
-        decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None
-        # squeeze_exitation_factors: Optional[List[float]] = None,
-        # groups: int = 1,
+        decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None,
     ):
         super().__init__()
         self.fe = num_freqs  # Number of frequency bins in embedding
@@ -397,7 +395,7 @@ class FreqStage(nn.Module):
         else:
             self.dec0 = decoder_out_layer(widths[0], self.out_ch)
 
-    def encode(self, x: Tensor, h=None) -> Tuple[Tensor, List[Tensor], Tensor]:
+    def encode(self, x: Tensor) -> Tuple[Tensor, List[Tensor]]:
         intermediate = []
         # if h is None:
         #     h = [None] * self.depth
@@ -405,10 +403,13 @@ class FreqStage(nn.Module):
         for enc_layer in self.enc:
             intermediate.append(x)
             x = enc_layer(x)
+        return x, intermediate
+
+    def embed(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor]:
         x_gru, h = self.gru(x.permute(0, 2, 3, 1).flatten(2), h)
         x_gru = self.gru_fc(x_gru).unflatten(2, (-1, self.inner_ch)).permute(0, 3, 1, 2)
         x = self.gru_skip(x) + x_gru
-        return x, intermediate, h
+        return x, h
 
     def decode(self, x: Tensor, intermediate: List[Tensor]) -> Tensor:
         for dec_layer, x_enc in zip(self.dec, reversed(intermediate)):
@@ -418,10 +419,10 @@ class FreqStage(nn.Module):
 
     def forward(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor, Tensor]:
         # input shape: [B, C, T, F]
-        # x_rnn, h = self.rnn(x, h)
-        x_inner, intermediate, h = self.encode(x, h)
+        x_enc, intermediate = self.encode(x)
+        x_inner, h = self.embed(x_enc, h)
         x = self.decode(x_inner, intermediate)
-        return x, x_inner, h
+        return x, x_enc, h
 
 
 class ComplexCompression(nn.Module):
