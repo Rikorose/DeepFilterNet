@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Optional, Tuple
 
 import torch
@@ -7,7 +8,7 @@ from torch import Tensor, nn
 
 from df.config import DfParams, config
 from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
-from df.multistagenet import ComplexCompression, FreqStage, LSNRNet, MagCompression
+from df.multistagenet import ComplexCompression, FreqStage, LSNRNet, LocallyConnected, MagCompression
 from libdf import DF
 
 
@@ -292,6 +293,7 @@ class DfNet(nn.Module):
             gru_dim=256,
             num_freqs=p.nb_df,
             separable_conv=True,
+            decoder_out_layer=partial(LocallyConnected, n_freqs=p.nb_df)
         )
 
         self.df_order = p.df_order
