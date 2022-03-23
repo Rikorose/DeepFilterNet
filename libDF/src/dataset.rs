@@ -114,18 +114,20 @@ impl Hdf5Cfg {
     pub fn keys_unchecked(&self) -> Option<&Hdf5Keys> {
         self.4.as_ref()
     }
-    pub fn load_keys(&self, ds_path: &str) -> Result<Option<&Hdf5Keys>> {
-        if let Some(keys) = self.4.as_ref() {
-            let modified = calculate_hash(&DatasetModified::new(ds_path)?);
-            if keys.hash == modified {
+    pub fn hash_from_ds_path(&self, ds_path: &str) -> Result<u64> {
+        Ok(calculate_hash(&DatasetModified::new(ds_path)?))
+    }
+    pub fn load_keys(&self, hash: u64) -> Result<Option<&Hdf5Keys>> {
+        if let Some(keys) = self.keys_unchecked() {
+            if keys.hash == hash {
                 return Ok(Some(keys));
             }
+            println!("Hash does not match for {}", self.filename());
             return Ok(None);
         }
         Ok(None)
     }
-    pub fn set_keys_path(&mut self, path: &str, keys: Vec<String>) -> Result<()> {
-        let hash = calculate_hash(&DatasetModified::new(path)?);
+    pub fn set_keys_new(&mut self, hash: u64, keys: Vec<String>) -> Result<()> {
         self.set_keys(Hdf5Keys {
             filename: self.filename().to_string(),
             hash,
@@ -165,11 +167,13 @@ impl DatasetConfigJson {
         let s = match split.into() {
             Split::Train => &mut self.train,
             Split::Valid => &mut self.valid,
-            Split::Test => &mut self.valid,
+            Split::Test => &mut self.test,
         };
-        for k in keys.iter() {
-            if let Some(cfg) = s.iter_mut().find(|cfg| cfg.filename() == k.filename) {
-                cfg.set_keys(k.clone())?;
+        for cfg in s.iter_mut() {
+            if let Some(cache) = keys.iter().find(|c| c.filename == cfg.filename()) {
+                cfg.set_keys(cache.clone())?;
+            } else {
+                eprintln!("Could not find cached keys for {}", cfg.filename());
             }
         }
         Ok(())
@@ -458,17 +462,18 @@ impl DatasetBuilder {
                 eprintln!("Dataset {:?} not found. Skipping.", path);
                 return Ok(());
             }
+            let mut cfg = cfg.clone();
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
-            let keys = match cfg.load_keys(path.to_str().unwrap())? {
-                Some(keys) => {
-                    println!("found keys");
-                    keys.keys.clone()
-                }
-                None => ds.keys()?,
+            let modified_hash = cfg.hash_from_ds_path(path.to_str().unwrap())?;
+            let keys = cfg.load_keys(modified_hash)?.cloned();
+            match keys {
+                Some(keys) => cfg.set_keys(keys)?,
+                None => cfg.set_keys_new(modified_hash, ds.keys()?)?,
             };
-            let key_data = (ds.dstype, keys);
-            let is_rir = ds.dstype == DsType::RIR;
-            sender.send(Some((cfg, ds, key_data, is_rir))).unwrap();
+            if let Some(f) = self.global_sampling_f {
+                cfg.set_sampling_factor(cfg.sampling_factor() * f)
+            }
+            sender.send(Some((cfg, ds))).unwrap();
             Ok(())
         })?;
         sender.send(None).unwrap();
@@ -477,17 +482,11 @@ impl DatasetBuilder {
         let mut ds_keys = Vec::new();
         let mut has_rirs = false;
         let mut i = 0;
-        while let Some((cfg, ds, keys, r)) = receiver.try_recv().unwrap() {
-            let mut cfg = cfg.clone();
-            if let Some(f) = self.global_sampling_f {
-                cfg.set_sampling_factor(cfg.sampling_factor() * f)
-            }
-            let path = ds_path.join(cfg.filename());
-            cfg.set_keys_path(path.to_str().unwrap(), keys.1.clone())?;
+        while let Some((cfg, ds)) = receiver.try_recv().unwrap() {
+            has_rirs = has_rirs || ds.dstype == DsType::RIR;
+            ds_keys.push((ds.dstype, i, cfg.keys_unchecked().unwrap().keys.clone()));
             config.push(cfg);
             hdf5_handles.push(ds);
-            ds_keys.push((keys.0, i, keys.1));
-            has_rirs = has_rirs || r;
             i += 1;
         }
         if hdf5_handles.is_empty() {
@@ -1009,6 +1008,7 @@ pub struct Hdf5Dataset {
     pub codec: Option<Codec>,
     max_freq: Option<usize>,
     dtype: Option<DType>,
+    // modified_hash: u64,
 }
 
 fn get_dstype(file: &File) -> Option<DsType> {
