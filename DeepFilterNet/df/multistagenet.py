@@ -59,9 +59,9 @@ class Conv2dNormAct(nn.Sequential):
         kernel_size: Union[int, Iterable[int]],
         fstride: int = 1,
         dilation: int = 1,
-        groups: int = 1,
         fpad: bool = True,
         bias: bool = True,
+        separable: bool = False,
         norm_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.BatchNorm2d,
         activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
     ):
@@ -83,6 +83,7 @@ class Conv2dNormAct(nn.Sequential):
         layers = []
         if any(x > 0 for x in pad):
             layers.append(nn.ConstantPad2d(pad, 0.0))
+        groups = min(in_ch, out_ch) if separable else 1
         layers.append(
             nn.Conv2d(
                 in_ch,
@@ -95,6 +96,8 @@ class Conv2dNormAct(nn.Sequential):
                 bias=bias,
             )
         )
+        if separable:
+            layers.append(nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False))
         if norm_layer is not None:
             layers.append(norm_layer(out_ch))
         if activation_layer is not None:
@@ -110,9 +113,9 @@ class ConvTranspose2dNormAct(nn.Sequential):
         kernel_size: Union[int, Tuple[int, int]],
         fstride: int = 1,
         dilation: int = 1,
-        groups: int = 1,
         fpad: bool = True,
         bias: bool = True,
+        separable: bool = False,
         norm_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.BatchNorm2d,
         activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
     ):
@@ -131,6 +134,7 @@ class ConvTranspose2dNormAct(nn.Sequential):
         layers = []
         if any(x > 0 for x in pad):
             layers.append(nn.ConstantPad2d(pad, 0.0))
+        groups = min(in_ch, out_ch) if separable else 1
         layers.append(
             nn.ConvTranspose2d(
                 in_ch,
@@ -144,6 +148,8 @@ class ConvTranspose2dNormAct(nn.Sequential):
                 bias=bias,
             )
         )
+        if separable:
+            layers.append(nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False))
         if norm_layer is not None:
             layers.append(norm_layer(out_ch))
         if activation_layer is not None:
@@ -206,7 +212,7 @@ class LSNRNet(nn.Module):
         self, in_ch: int, hidden_dim: int = 16, fstride=2, lsnr_min: int = -15, lsnr_max: int = 40
     ):
         super().__init__()
-        self.conv = Conv2dNormAct(in_ch, in_ch, kernel_size=(1, 3), fstride=fstride, groups=in_ch)
+        self.conv = Conv2dNormAct(in_ch, in_ch, kernel_size=(1, 3), fstride=fstride, separable=True)
         self.gru_snr = nn.GRU(in_ch, hidden_dim)
         self.fc_snr = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
         self.lsnr_scale = lsnr_max - lsnr_min
@@ -319,6 +325,7 @@ class FreqStage(nn.Module):
         fstrides: Optional[List[int]] = None,
         initial_kernel: Tuple[int, int] = (3, 3),
         kernel: Tuple[int, int] = (1, 3),
+        separable_conv: bool = False,
         decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None
         # squeeze_exitation_factors: Optional[List[float]] = None,
         # groups: int = 1,
@@ -341,12 +348,15 @@ class FreqStage(nn.Module):
         norm_layer = nn.BatchNorm2d
 
         self.enc0 = Conv2dNormAct(
-            in_ch, widths[0], initial_kernel, fstride=1, norm_layer=norm_layer
+            in_ch,
+            widths[0],
+            initial_kernel,
+            fstride=1,
+            norm_layer=norm_layer,
+            separable=separable_conv,
         )
         self.enc = nn.ModuleList()
 
-        # if isinstance(gru_dim, int):
-        #     gru_dim = [gru_dim] * self.depth
         fstrides = fstrides or [2] * self.depth
         freqs = num_freqs
         for i in range(self.depth):
@@ -354,19 +364,11 @@ class FreqStage(nn.Module):
             out_ch = widths[i + 1]
             fstride = fstrides[i]
             freqs = freqs // fstride
-            self.enc.append(Conv2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride))
-            # reduce_ = "channels" if i == 0 else "frequencies"
-            # self.enc.append(
-            #     EncLayer(
-            #         in_ch,
-            #         out_ch,
-            #         kernel,
-            #         fstride,
-            #         gru_dim=gru_dim[i],
-            #         gru_reduce=reduce_,
-            #         in_freqs=freqs,
-            #     )
-            # )
+            self.enc.append(
+                Conv2dNormAct(
+                    in_ch, out_ch, kernel_size=kernel, fstride=fstride, separable=separable_conv
+                )
+            )
         self.inner_ch = out_ch
         self.gru = nn.GRU(freqs * out_ch, gru_dim, num_layers=3)
         self.gru_fc = nn.Linear(gru_dim, freqs * out_ch)
@@ -378,7 +380,9 @@ class FreqStage(nn.Module):
             out_ch = widths[i]
             fstride = fstrides[i]
             self.dec.append(
-                ConvTranspose2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
+                ConvTranspose2dNormAct(
+                    in_ch, out_ch, kernel_size=kernel, fstride=fstride, separable=separable_conv
+                )
             )
         if decoder_out_layer is None:
             self.dec0 = Conv2dNormAct(
@@ -386,8 +390,9 @@ class FreqStage(nn.Module):
                 self.out_ch,
                 kernel,
                 fstride=1,
-                norm_layer=norm_layer,
+                norm_layer=None,
                 activation_layer=out_act,
+                separable=separable_conv,
             )
         else:
             self.dec0 = decoder_out_layer(widths[0], self.out_ch)
