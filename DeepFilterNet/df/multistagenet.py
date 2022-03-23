@@ -420,7 +420,7 @@ class FreqStage(nn.Module):
 
 
 class ComplexCompression(nn.Module):
-    def __init__(self, n_freqs: int, init_value: float = 0.5):
+    def __init__(self, n_freqs: int, init_value: float = 0.3):
         super().__init__()
         self.c: Tensor
         self.register_parameter(
@@ -439,16 +439,18 @@ class ComplexCompression(nn.Module):
 
 
 class MagCompression(nn.Module):
-    def __init__(self, n_freqs: int, init_value: float = 0.5):
+    def __init__(self, n_freqs: int, init_value: float = 0.3):
         super().__init__()
         self.c: Tensor
         self.register_parameter(
             "c", Parameter(torch.full((n_freqs,), init_value), requires_grad=True)
         )
+        self.mn: Tensor
+        self.register_parameter("mn", Parameter(torch.full((n_freqs,), -0.2), requires_grad=True))
 
     def forward(self, x: Tensor):
         # x has shape x [B, T, F, 2]
-        x = x.pow(self.c)
+        x = x.pow(self.c) + self.mn
         return x
 
 
