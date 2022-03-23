@@ -162,6 +162,7 @@ impl _FdDataLoader {
         let train_ds = train_handle.join().expect(msg).to_py_err()?;
         update_keys(ds_dir, &mut cfg.train, &train_ds);
         write_cache(config_path, &cfg);
+        println!("Finished openning datasets");
         py.check_signals()?;
         let ds = Datasets {
             train: train_ds,
@@ -265,11 +266,14 @@ fn load_cache(cfg_path: &str, cfg: &mut DatasetConfigJson) {
         "Loading HDF5 key cache from {}",
         cache_path.to_str().unwrap_or_default()
     );
-    let cache = DatasetConfigCacheJson::open(cache_path.to_str().unwrap())
-        .expect("Could not load dataset keys cache.");
-    cfg.set_keys(Split::Train, cache.keys()).expect("Could not set cached keys");
-    cfg.set_keys(Split::Valid, cache.keys()).expect("Could not set cached keys");
-    cfg.set_keys(Split::Test, cache.keys()).expect("Could not set cached keys");
+    match DatasetConfigCacheJson::open(cache_path.to_str().unwrap()) {
+        Err(e) => eprintln!("Could not load dataset keys cache: {}", e),
+        Ok(cache) => {
+            cfg.set_keys(Split::Train, cache.keys()).expect("Could not set cached keys");
+            cfg.set_keys(Split::Valid, cache.keys()).expect("Could not set cached keys");
+            cfg.set_keys(Split::Test, cache.keys()).expect("Could not set cached keys");
+        }
+    }
 }
 fn write_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
     let cache_path = cache_path(cfg_path);
@@ -284,10 +288,9 @@ fn write_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
 fn update_keys(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
     for hdf5cfg in cfgs.iter_mut() {
         let ds_path = ds_dir.to_owned() + "/" + hdf5cfg.filename();
-        if let Some(ds_keys) = ds
-            .get_hdf5cfg(hdf5cfg.filename())
-            .expect("Could not get hdf5cfg")
-            .load_keys(&ds_path)
+        let cfg = ds.get_hdf5cfg(hdf5cfg.filename()).expect("Could not get hdf5cfg");
+        if let Some(ds_keys) = cfg
+            .load_keys(cfg.hash_from_ds_path(&ds_path).expect("Could not calculate hash"))
             .expect("Could not load Hdf5Keys.")
         {
             hdf5cfg.set_keys(ds_keys.clone()).expect("Could not update keys");
