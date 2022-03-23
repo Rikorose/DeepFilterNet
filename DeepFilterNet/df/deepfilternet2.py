@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 import torch
 from loguru import logger
 from torch import Tensor, nn
+import torch.nn.functional as F
 
 from df.config import DfParams, config
 from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
@@ -262,6 +263,9 @@ class DfNet(nn.Module):
         self.erb_bins = p.nb_erb
         self.erb_fb: Tensor
         self.erb_comp = MagCompression(p.nb_erb)
+        if p.conv_lookahead>0:
+            pad = (0, 0, p.conv_lookahead, -p.conv_lookahead)
+            self.erb_comp = nn.Sequential(self.erb_comp, nn.ConstantPad2d(pad, 0.0))
         self.cplx_comp = ComplexCompression(p.nb_df)
         self.register_buffer("erb_fb", erb_fb, persistent=False)
         self.enc = Encoder()
