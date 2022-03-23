@@ -281,8 +281,9 @@ class DfNet(nn.Module):
             num_freqs=p.nb_erb,
             gru_dim=256,
             separable_conv=True,
-            kernel=(2, 3),
+            kernel=(1, 3),
         )
+        ic(self.enc, self.erb_dec, self.erb_stage)
 
         self.df_order = p.df_order
         self.df_bins = p.nb_df
@@ -297,7 +298,7 @@ class DfNet(nn.Module):
                 method=p.dfop_method,
             )
         )
-        self.lsnr_net = LSNRNet(erb_widths[-1], lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
+        self.lsnr_net = LSNRNet(erb_widths[-1], 64, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
 
         self.run_df = run_df
         if not run_df:
