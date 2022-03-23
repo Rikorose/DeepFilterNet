@@ -269,22 +269,14 @@ class EncLayer(nn.Module):
 
 
 class LocallyConnected(nn.Module):
-    def __init__(
-        self, in_ch: int, out_ch: int, n_freqs: int, t_context: int, bias: bool = True, pad=True
-    ):
+    def __init__(self, in_ch: int, out_ch: int, n_freqs: int, bias: bool = True):
         super().__init__()
         self.n_freqs = n_freqs
-        self.t_context = t_context
-        if pad:
-            self.pad = nn.ConstantPad2d((0, 0, t_context - 1, 0), 0.0)
-        else:
-            self.pad = nn.Identity()
-        in_feat = in_ch * t_context
         self.weight: Tensor
-        self.register_parameter("weight", Parameter(torch.zeros(n_freqs, in_feat, out_ch)))
+        self.register_parameter("weight", Parameter(torch.zeros(in_ch, out_ch, n_freqs)))
         if bias:
             self.bias: Optional[Tensor]
-            self.register_parameter("bias", Parameter(torch.zeros(n_freqs, out_ch)))
+            self.register_parameter("bias", Parameter(torch.zeros(out_ch, 1, n_freqs)))
         else:
             self.bias = None
         self.reset_parameters()
@@ -298,18 +290,9 @@ class LocallyConnected(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # x: [B, C, T, F]
-        x = self.pad(x).permute(0, 2, 3, 1)  # [B, T, F, C]
-        x = x.unfold(1, self.t_context, 1)  # [B, T, F, C, t_context]
-        x = x.flatten(3)
-        # Test if output is same
-        # b, t, f = x.shape[]
-        # w_ = self.w.unsqueeze(0).unsqueeze(0).expand((b, t, f, in_feat, out_ch))
-        # x_ = torch.bmm(x.flatten(0, 2).unsqueeze(1), w_.flatten(0, 2)).view(b, t, f, out_ch)
-        # assert torch.isclose(x, x_).all()
-        x = torch.einsum("btfh,fho->btfo", x, self.weight)  # [B, T, F, O]
+        x = torch.einsum("bctf,cof->botf", x, self.weight)  # [B, O, T, F]
         if self.bias is not None:
             x = x + self.bias
-        x = x.permute(0, 3, 1, 2)  # [B, O, T, F]
         return x
 
 
@@ -368,6 +351,7 @@ class FreqStage(nn.Module):
                 )
             )
         self.inner_ch = out_ch
+        # self.lc_emb_in = LocallyConnected(out_ch, gru_dim//freqs, n_freqs=freqs)
         self.gru = nn.GRU(freqs * out_ch, gru_dim, num_layers=3)
         self.gru_fc = nn.Linear(gru_dim, freqs * out_ch)
         self.gru_skip = nn.Conv2d(out_ch, out_ch, 1)
