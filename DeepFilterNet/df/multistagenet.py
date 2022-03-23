@@ -4,6 +4,7 @@ from typing import Callable, Final, Iterable, List, Optional, Tuple, Union
 
 import torch
 from icecream import ic  # noqa
+from loguru import logger
 from torch import Tensor, nn
 from torch.nn import init
 from torch.nn.parameter import Parameter
@@ -289,8 +290,51 @@ class LocallyConnected(nn.Module):
             init.uniform_(self.bias, -bound, bound)
 
     def forward(self, x: Tensor) -> Tensor:
-        # x: [B, C, T, F]
-        x = torch.einsum("bctf,cof->botf", x, self.weight)  # [B, O, T, F]
+        # x: [B, Ci, T, F]
+        x = torch.einsum("bctf,cof->botf", x, self.weight)  # [B, Co, T, F]
+        if self.bias is not None:
+            x = x + self.bias
+        return x
+
+
+class GroupedConnected(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int, n_freqs: int, n_groups: int, bias: bool = True):
+        super().__init__()
+        self.weight: Tensor
+        self.n_freqs = n_freqs
+        n_groups = n_groups if n_groups > 0 else n_freqs
+        ic(n_groups, n_freqs, in_ch, out_ch)
+        if n_groups == n_freqs:
+            logger.warning("Use more performant LocallyConnected since they are equivalent now.")
+        assert (
+            n_freqs % n_groups == 0
+        ), "Number of frequencies must be dividable by the number of groups"
+        self.n_groups = n_groups
+        self.n_unfold = n_freqs // n_groups
+        self.register_parameter(
+            "weight", Parameter(torch.zeros(n_groups, n_freqs // n_groups, in_ch, out_ch))
+        )
+        if bias:
+            self.bias: Optional[Tensor]
+            self.register_parameter("bias", Parameter(torch.zeros(out_ch, 1, n_freqs)))
+        else:
+            self.bias = None
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))  # type: ignore
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [B, Ci, T, F]
+        x = x.permute(0, 2, 3, 1)  # [B, T, F, Ci]
+        x = x.unflatten(2, (self.n_groups, self.n_unfold))  # [B, T, G, F/G, Ci]
+        x = torch.einsum("btfgi,fgio->btfgo", x, self.weight)  # [B, T, G, F/G, Co]
+        x = x.flatten(2, 3)  # [B, T, F, Co]
+        x = x.permute(0, 3, 1, 2)  # [B, Co, T, F]
         if self.bias is not None:
             x = x + self.bias
         return x
