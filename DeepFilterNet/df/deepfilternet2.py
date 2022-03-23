@@ -1,9 +1,9 @@
 from typing import Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from loguru import logger
 from torch import Tensor, nn
-import torch.nn.functional as F
 
 from df.config import DfParams, config
 from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
@@ -257,13 +257,13 @@ class DfNet(nn.Module):
         p = ModelParams()
         layer_width = p.conv_ch
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
-        self.lookahead=p.conv_lookahead
+        self.lookahead = p.conv_lookahead
         self.freq_bins = p.fft_size // 2 + 1
         self.emb_dim = layer_width * p.nb_erb
         self.erb_bins = p.nb_erb
         self.erb_fb: Tensor
         self.erb_comp = MagCompression(p.nb_erb)
-        if p.conv_lookahead>0:
+        if p.conv_lookahead > 0:
             pad = (0, 0, p.conv_lookahead, -p.conv_lookahead)
             self.erb_comp = nn.Sequential(self.erb_comp, nn.ConstantPad2d(pad, 0.0))
         self.cplx_comp = ComplexCompression(p.nb_df)
@@ -284,11 +284,21 @@ class DfNet(nn.Module):
             kernel=(1, 3),
         )
         ic(self.enc, self.erb_dec, self.erb_stage)
+        self.df_stage = FreqStage(
+            2,
+            2 * p.df_order,
+            out_act=nn.Tanh,
+            widths=[64, 64, 64, 64, 64],
+            gru_dim=256,
+            num_freqs=p.nb_df,
+            separable_conv=True,
+        )
 
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.df_dec = DfDecoder()
+        ic(self.df_dec, self.df_stage)
         self.df_op = torch.jit.script(
             DfOp(
                 p.nb_df,
@@ -317,7 +327,7 @@ class DfNet(nn.Module):
         # ic(self.cplx_comp.c)
         feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
         feat_erb = self.erb_comp(feat_erb)
-        feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
+        # feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
         # e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
         # m = self.erb_dec(emb, e3, e2, e1, e0)
         m, emb, _ = self.erb_stage(feat_erb)
@@ -325,9 +335,12 @@ class DfNet(nn.Module):
         emb = emb.permute(0, 2, 3, 1).flatten(2)
         spec = self.mask(spec, m, atten_lim)
         feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
+        df_alpha = None
         if self.run_df:
-            df_coefs, df_alpha = self.df_dec(feat_spec, emb)
+            # df_coefs, df_alpha = self.df_dec(feat_spec, emb)
+            # spec = self.df_op(spec, df_coefs, df_alpha)
+            # ic(df_coefs.shape, spec.shape)
+            df_coefs, _, _ = self.df_stage(feat_spec)
+            df_coefs = df_coefs.unflatten(1, (self.df_order, 2)).permute(0, 3, 1, 4, 2)
             spec = self.df_op(spec, df_coefs, df_alpha)
-        else:
-            df_alpha = torch.zeros(spec.shape[0], spec.shape[2], 1, device=spec.device)
         return spec, m, lsnr, df_alpha
