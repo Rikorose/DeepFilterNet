@@ -125,15 +125,14 @@ def main():
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
-    lrs = setup_lrs(len(dataloader))
-    wds = setup_wds(len(dataloader))
-
     opt = load_opt(
         checkpoint_dir if args.resume else None,
         model,
         mask_only,
         train_df_only,
     )
+    lrs = setup_lrs(len(dataloader))
+    wds = setup_wds(len(dataloader))
     if not args.resume and os.path.isfile(os.path.join(checkpoint_dir, ".patience")):
         os.remove(os.path.join(checkpoint_dir, ".patience"))
     try:
