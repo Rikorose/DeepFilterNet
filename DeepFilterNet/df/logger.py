@@ -8,7 +8,7 @@ import torch
 from loguru import logger
 from torch.types import Number
 
-from df.multistagenet import GroupedLinear, LocalLinear
+from df.multistagenet import GroupedGRULayer, GroupedLinear, LocalLinear
 from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 
 _logger_initialized = False
@@ -150,6 +150,7 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
         custom_modules_hooks={
             GroupedLinear: grouped_linear_flops_counter_hook,
             LocalLinear: local_linear_flops_counter_hook,
+            GroupedGRULayer: grouped_gru_flops_counter_hook,
         },
     )
     logger.info(f"Model complexity: {params/1e6:.3f}M #Params, {macs/1e6:.1f}M MACS")
@@ -165,15 +166,33 @@ def grouped_linear_flops_counter_hook(module: GroupedLinear, input, output):
     bias_flops = np.prod(output.shape) if module.bias is not None else 0
     # GroupedLinear calculates "btfgi,fgio->btfgo"
     weight_flops = np.prod(input.shape) * output_last_dim
-    module.__flops__ += int(weight_flops + bias_flops)
+    module.__flops__ += int(weight_flops + bias_flops)  # type: ignore
 
 
 def local_linear_flops_counter_hook(module: LocalLinear, input, output):
     # input: ([B, Ci, T, F],)
     # output: [B, Co, T, F]
-    input = input[0]  # [B, C, T, F]
+    input = input[0]  # [B, Ci, T, F]
     output_last_dim = module.weight.shape[1]
     bias_flops = np.prod(output.shape) if module.bias is not None else 0
     # LocalLinear calculates "bitf,iof->botf"
     weight_flops = np.prod(input.shape) * output_last_dim
-    module.__flops__ += int(weight_flops + bias_flops)
+    module.__flops__ += int(weight_flops + bias_flops)  # type: ignore
+
+
+def grouped_gru_flops_counter_hook(module: GroupedGRULayer, input, output):
+    # input: ([B, Ci, T, F],)
+    # output: ([B, Co, T, F],)
+    input = input[0]  # [B, Ci, T, F]
+    output = output[0]  # [B, Ci, T, F]
+    input = input.permute(0, 2, 3, 1)  # [B, T, F, Ci]
+    input = input.unflatten(2, (module.n_groups, module.g_freqs)).flatten(3)  # [B, T, F/G, G*Ci]
+    input_shape = list(input.shape)
+    # 2 for bias ih and hh, 3 for r,z,n
+    bias_flops = 2 * 3 * np.prod(input_shape) if module.bias_hh_l is not None else 0
+    # GroupedGRULayer input calculates "btgi,goi->btgo"
+    weight_flops = np.prod(input_shape) * module.weight_hh_l.shape[-2]
+    # GroupedGRULayer hidden calculates t*"bgo,gpo->bgp"
+    input_shape[-1] = module.weight_ih_l.shape[-2]
+    weight_flops += np.prod(input.shape) * module.weight_hh_l.shape[-2]
+    module.__flops__ += int(weight_flops + bias_flops)  # type: ignore
