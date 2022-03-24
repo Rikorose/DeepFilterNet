@@ -339,6 +339,108 @@ class GroupedLinear(nn.Module):
         return x
 
 
+class GroupedGRULayer(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int, n_freqs: int, n_groups: int, bias: bool = True):
+        super().__init__()
+        assert n_freqs % n_groups == 0
+        self.n_freqs = n_freqs
+        self.g_freqs = n_freqs // n_groups
+        self.n_groups = n_groups
+        self.out_ch = self.g_freqs * out_ch
+        self._in_ch = in_ch
+        self.input_size = self.g_freqs * in_ch
+        self.weight_ih_l: Tensor
+        self.register_parameter(
+            "weight_ih_l",
+            Parameter(torch.zeros(n_groups, 3 * self.out_ch, self.input_size)),
+        )
+        self.weight_hh_l: Tensor
+        self.register_parameter(
+            "weight_hh_l",
+            Parameter(torch.zeros(n_groups, 3 * self.out_ch, self.out_ch)),
+        )
+        if bias:
+            self.bias_ih_l: Tensor
+            self.register_parameter("bias_ih_l", Parameter(torch.zeros(n_groups, 3 * self.out_ch)))
+            self.bias_hh_l: Tensor
+            self.register_parameter("bias_hh_l", Parameter(torch.zeros(n_groups, 3 * self.out_ch)))
+        else:
+            self.bias_ih_l = None  # type: ignore
+            self.bias_hh_l = None  # type: ignore
+
+    def init_hidden(self, batch_size: int, device: torch.device = torch.device("cpu")) -> Tensor:
+        return torch.zeros(batch_size, self.n_groups, self.out_ch, device=device)
+
+    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        # input: [B, Ci, T, F]
+        assert self.n_freqs == input.shape[-1]
+        assert self._in_ch == input.shape[1]
+        if h is None:
+            h = self.init_hidden(input.shape[0])
+        input = input.permute(0, 2, 3, 1).unflatten(2, (self.n_groups, self.g_freqs)).flatten(3)
+        input = torch.einsum("btgi,goi->btgo", input, self.weight_ih_l)
+        if self.bias_ih_l is not None:
+            input = input + self.bias_ih_l
+        h_out: List[Tensor] = []
+        for t in range(input.shape[1]):
+            hh = torch.einsum("bgo,gpo->bgp", h, self.weight_hh_l)
+            if self.bias_hh_l is not None:
+                hh = hh + self.bias_hh_l
+            ri, zi, ni = input[:, t].split(self.out_ch, dim=2)
+            rh, zh, nh = hh.split(self.out_ch, dim=2)
+            r = torch.sigmoid(ri + rh)
+            z = torch.sigmoid(zi + zh)
+            n = torch.tanh(ni + r * nh)
+            h = (1 - z) * n + z * h
+            h_out.append(h)
+        out = torch.stack(h_out, dim=1)  # [B, T, G, F/G*Co]
+        out = out.unflatten(3, (self.g_freqs, -1)).flatten(2, 3)  # [B, T, F, Co]
+        out = out.permute(0, 3, 1, 2)  # [B, Co, T, F]
+        return out, h
+
+
+class GroupedGRU(nn.Module):
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        n_freqs: int,
+        n_groups: int,
+        n_layers: int = 1,
+        bias: bool = True,
+        add_outputs: bool = False,
+    ):
+        super().__init__()
+        self.grus: List[GroupedGRULayer] = nn.ModuleList()  # type: ignore
+        gru_layer = partial(
+            GroupedGRULayer, out_ch=out_ch, n_freqs=n_freqs, n_groups=n_groups, bias=bias
+        )
+        self.grus.append(gru_layer(in_ch=in_ch))
+        for _ in range(1, n_layers):
+            self.grus.append(gru_layer(in_ch=out_ch))
+        self.add_outputs = add_outputs
+
+    def init_hidden(self, batch_size: int, device: torch.device = torch.device("cpu")) -> Tensor:
+        return torch.stack(tuple(g.init_hidden(batch_size, device) for g in self.grus))
+
+    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        if h is None:
+            h = self.init_hidden(input.shape[0], input.device)
+        h_out = []
+        output = None
+        for i, gru in enumerate(self.grus):
+            input, hl = gru(input, h[i])
+            h_out.append(hl)
+            if self.add_outputs:
+                if output is None:
+                    output = input
+                else:
+                    output = output + input
+        if not self.add_outputs:
+            output = input
+        return output, torch.stack(h_out)  # type: ignore
+
+
 class FreqStage(nn.Module):
     def __init__(
         self,
@@ -353,6 +455,7 @@ class FreqStage(nn.Module):
         kernel: Tuple[int, int] = (1, 3),
         separable_conv: bool = False,
         num_gru_layers: int = 3,
+        num_gru_groups: int = 8,
         global_pathway: bool = False,
         decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None,
     ):
@@ -397,7 +500,21 @@ class FreqStage(nn.Module):
             )
         self.inner_freqs = freqs
         self.lin_emb_in = LocalLinear(out_ch, gru_dim // freqs, n_freqs=freqs)
-        self.gru = nn.GRU(gru_dim // freqs * freqs, gru_dim, num_layers=num_gru_layers)
+        if num_gru_groups == 1:
+            self.gru = CFGRU(
+                freqs=self.inner_freqs,
+                input_size=gru_dim // freqs * freqs,
+                hidden_size=gru_dim,
+                num_layers=num_gru_layers,
+            )
+        else:
+            self.gru = GroupedGRU(
+                in_ch=gru_dim // freqs,
+                out_ch=gru_dim // freqs,
+                n_freqs=freqs,
+                n_groups=min(freqs, num_gru_groups),
+                n_layers=num_gru_layers,
+            )
         self.lin_emb_out = LocalLinear(gru_dim // freqs, out_ch, n_freqs=freqs)
         self.gru_skip = nn.Conv2d(out_ch, out_ch, 1)
 
@@ -438,9 +555,7 @@ class FreqStage(nn.Module):
 
     def embed(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
         x = self.lin_emb_in(input)
-        x = x.permute(0, 2, 3, 1).flatten(2)
         x_gru, h = self.gru(x, h)
-        x_gru = x.unflatten(2, (self.inner_freqs, -1)).permute(0, 3, 1, 2)
         x_gru = self.lin_emb_out(x_gru)
         x = self.gru_skip(input) + x_gru
         return x, h
@@ -458,6 +573,19 @@ class FreqStage(nn.Module):
         x_inner, h = self.embed(x_enc, h)
         x = self.decode(x_inner, intermediate)
         return x, x_enc, h
+
+
+class CFGRU(nn.Module):
+    def __init__(self, freqs: int, *args, **kwargs):
+        super().__init__()
+        self.inner_freqs = freqs
+        self.gru = nn.GRU(*args, **kwargs)
+
+    def forward(self, x, h):
+        x = x.permute(0, 2, 3, 1).flatten(2)
+        x_gru, h = self.gru(x, h)
+        x_gru = x.unflatten(2, (self.inner_freqs, -1)).permute(0, 3, 1, 2)
+        return x_gru, h
 
 
 class ComplexCompression(nn.Module):
