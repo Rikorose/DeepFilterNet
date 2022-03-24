@@ -11,7 +11,7 @@ from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, g
 from df.multistagenet import (
     ComplexCompression,
     FreqStage,
-    LocallyConnected,
+    GroupedLinear,
     LSNRNet,
     MagCompression,
 )
@@ -295,11 +295,12 @@ class DfNet(nn.Module):
             2,
             2 * p.df_order,
             out_act=nn.Tanh,
-            widths=[64, 64, 64, 64, 64],
+            widths=[64, 64, 64],
+            fstrides=[2, 1],
             gru_dim=256,
             num_freqs=p.nb_df,
             separable_conv=True,
-            decoder_out_layer=partial(LocallyConnected, n_freqs=p.nb_df),
+            decoder_out_layer=partial(GroupedLinear, n_freqs=p.nb_df, n_groups=8),
         )
 
         self.df_order = p.df_order
