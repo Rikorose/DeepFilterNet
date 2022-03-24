@@ -147,7 +147,10 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
         as_strings=False,
         print_per_layer_stat=verbose,
         verbose=verbose,
-        custom_modules_hooks={GroupedLinear: grouped_linear_flops_counter_hook, LocalLinear: local_linear_flops_counter_hook},
+        custom_modules_hooks={
+            GroupedLinear: grouped_linear_flops_counter_hook,
+            LocalLinear: local_linear_flops_counter_hook,
+        },
     )
     logger.info(f"Model complexity: {params/1e6:.3f}M #Params, {macs/1e6:.1f}M MACS")
 

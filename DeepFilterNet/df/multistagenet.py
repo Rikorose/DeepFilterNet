@@ -269,7 +269,7 @@ class EncLayer(nn.Module):
         return x, h
 
 
-class LocallyConnected(nn.Module):
+class LocalLinear(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, bias: bool = True):
         super().__init__()
         self.n_freqs = n_freqs
@@ -297,7 +297,7 @@ class LocallyConnected(nn.Module):
         return x
 
 
-class GroupedConnected(nn.Module):
+class GroupedLinear(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, n_groups: int, bias: bool = True):
         super().__init__()
         self.weight: Tensor
@@ -396,9 +396,9 @@ class FreqStage(nn.Module):
                 )
             )
         self.inner_freqs = freqs
-        self.lin_emb_in = LocallyConnected(out_ch, gru_dim // freqs, n_freqs=freqs)
+        self.lin_emb_in = LocalLinear(out_ch, gru_dim // freqs, n_freqs=freqs)
         self.gru = nn.GRU(gru_dim // freqs * freqs, gru_dim, num_layers=num_gru_layers)
-        self.lin_emb_out = LocallyConnected(gru_dim // freqs, out_ch, n_freqs=freqs)
+        self.lin_emb_out = LocalLinear(gru_dim // freqs, out_ch, n_freqs=freqs)
         self.gru_skip = nn.Conv2d(out_ch, out_ch, 1)
 
         self.dec = nn.ModuleList()
@@ -406,8 +406,9 @@ class FreqStage(nn.Module):
             in_ch = widths[i + 1]
             out_ch = widths[i]
             fstride = fstrides[i]
+            dec_layer = ConvTranspose2dNormAct if fstride > 1 else Conv2dNormAct
             self.dec.append(
-                ConvTranspose2dNormAct(
+                dec_layer(
                     in_ch, out_ch, kernel_size=kernel, fstride=fstride, separable=separable_conv
                 )
             )
@@ -530,7 +531,7 @@ class MSNet(nn.Module):
         refinement_out_layer = (
             partial(Conv2dNormAct, kernel_size=(3, 1), norm_layer=None, activation_layer=None)
             if p.refinement_out_layer.lower() == "conv2d"
-            else partial(GroupedConnected, n_freqs=p.nb_df, n_groups=8)
+            else partial(GroupedLinear, n_freqs=p.nb_df, n_groups=8)
         )
         self.refinement_stage = FreqStage(
             in_ch=2,
