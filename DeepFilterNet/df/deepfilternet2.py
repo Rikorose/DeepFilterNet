@@ -300,6 +300,7 @@ class DfNet(nn.Module):
             gru_dim=256,
             num_freqs=p.nb_df,
             separable_conv=True,
+            global_pathway=True,
             decoder_out_layer=partial(GroupedLinear, n_freqs=p.nb_df, n_groups=8),
         )
 
