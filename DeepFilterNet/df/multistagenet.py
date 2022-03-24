@@ -354,6 +354,7 @@ class FreqStage(nn.Module):
         kernel: Tuple[int, int] = (1, 3),
         separable_conv: bool = False,
         num_gru_layers: int = 3,
+        global_pathway: bool = False,
         decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None,
     ):
         super().__init__()
@@ -412,6 +413,9 @@ class FreqStage(nn.Module):
                     in_ch, out_ch, kernel_size=kernel, fstride=fstride, separable=separable_conv
                 )
             )
+        self.global_pathway = (
+            Conv2dNormAct(widths[0], widths[0], 1) if global_pathway else nn.Identity()
+        )
         if decoder_out_layer is None:
             self.dec0 = Conv2dNormAct(
                 widths[0],
@@ -443,6 +447,7 @@ class FreqStage(nn.Module):
         return x, h
 
     def decode(self, x: Tensor, intermediate: List[Tensor]) -> Tensor:
+        intermediate[0] = self.global_pathway(intermediate[0])
         for dec_layer, x_enc in zip(self.dec, reversed(intermediate)):
             x = dec_layer(x) + x_enc
         x = self.dec0(x)
