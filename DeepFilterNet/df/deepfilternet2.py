@@ -275,9 +275,6 @@ class DfNet(nn.Module):
             self.erb_comp = nn.Sequential(self.erb_comp, nn.ConstantPad2d(pad, 0.0))
         self.cplx_comp = ComplexCompression(p.nb_df)
         self.register_buffer("erb_fb", erb_fb, persistent=False)
-        self.enc = Encoder()
-        self.erb_dec = ErbDecoder()
-        self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         erb_widths = [32, 64, 64, 64]
         self.erb_stage = FreqStage(
             1,
@@ -290,7 +287,10 @@ class DfNet(nn.Module):
             separable_conv=True,
             kernel=(1, 3),
         )
-        ic(self.enc, self.erb_dec, self.erb_stage)
+        # self.enc = Encoder()
+        # self.erb_dec = ErbDecoder()
+        # ic(self.enc, self.erb_dec, self.erb_stage)
+        self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
         self.df_stage = FreqStage(
             2,
             2 * p.df_order,
@@ -305,8 +305,8 @@ class DfNet(nn.Module):
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
-        self.df_dec = DfDecoder()
-        ic(self.df_dec, self.df_stage)
+        # self.df_dec = DfDecoder()
+        # ic(self.df_dec, self.df_stage)
         self.df_op = torch.jit.script(
             DfOp(
                 p.nb_df,

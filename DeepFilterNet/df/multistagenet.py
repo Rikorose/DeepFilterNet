@@ -353,6 +353,7 @@ class FreqStage(nn.Module):
         initial_kernel: Tuple[int, int] = (3, 3),
         kernel: Tuple[int, int] = (1, 3),
         separable_conv: bool = False,
+        num_gru_layers: int = 3,
         decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None,
     ):
         super().__init__()
@@ -394,10 +395,10 @@ class FreqStage(nn.Module):
                     in_ch, out_ch, kernel_size=kernel, fstride=fstride, separable=separable_conv
                 )
             )
-        self.inner_ch = out_ch
-        # self.lc_emb_in = LocallyConnected(out_ch, gru_dim//freqs, n_freqs=freqs)
-        self.gru = nn.GRU(freqs * out_ch, gru_dim, num_layers=3)
-        self.gru_fc = nn.Linear(gru_dim, freqs * out_ch)
+        self.inner_freqs = freqs
+        self.lin_emb_in = LocallyConnected(out_ch, gru_dim // freqs, n_freqs=freqs)
+        self.gru = nn.GRU(gru_dim // freqs * freqs, gru_dim, num_layers=num_gru_layers)
+        self.lin_emb_out = LocallyConnected(gru_dim // freqs, out_ch, n_freqs=freqs)
         self.gru_skip = nn.Conv2d(out_ch, out_ch, 1)
 
         self.dec = nn.ModuleList()
@@ -425,18 +426,19 @@ class FreqStage(nn.Module):
 
     def encode(self, x: Tensor) -> Tuple[Tensor, List[Tensor]]:
         intermediate = []
-        # if h is None:
-        #     h = [None] * self.depth
         x = self.enc0(x)
         for enc_layer in self.enc:
             intermediate.append(x)
             x = enc_layer(x)
         return x, intermediate
 
-    def embed(self, x: Tensor, h=None) -> Tuple[Tensor, Tensor]:
-        x_gru, h = self.gru(x.permute(0, 2, 3, 1).flatten(2), h)
-        x_gru = self.gru_fc(x_gru).unflatten(2, (-1, self.inner_ch)).permute(0, 3, 1, 2)
-        x = self.gru_skip(x) + x_gru
+    def embed(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        x = self.lin_emb_in(input)
+        x = x.permute(0, 2, 3, 1).flatten(2)
+        x_gru, h = self.gru(x, h)
+        x_gru = x.unflatten(2, (self.inner_freqs, -1)).permute(0, 3, 1, 2)
+        x_gru = self.lin_emb_out(x_gru)
+        x = self.gru_skip(input) + x_gru
         return x, h
 
     def decode(self, x: Tensor, intermediate: List[Tensor]) -> Tensor:
@@ -528,7 +530,7 @@ class MSNet(nn.Module):
         refinement_out_layer = (
             partial(Conv2dNormAct, kernel_size=(3, 1), norm_layer=None, activation_layer=None)
             if p.refinement_out_layer.lower() == "conv2d"
-            else partial(LocallyConnected, n_freqs=p.nb_df, t_context=5)
+            else partial(GroupedConnected, n_freqs=p.nb_df, n_groups=8)
         )
         self.refinement_stage = FreqStage(
             in_ch=2,
