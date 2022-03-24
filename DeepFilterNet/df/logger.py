@@ -3,10 +3,12 @@ import sys
 from collections import defaultdict
 from typing import Dict, Optional
 
+import numpy as np
 import torch
 from loguru import logger
 from torch.types import Number
 
+from df.multistagenet import GroupedLinear, LocalLinear
 from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 
 _logger_initialized = False
@@ -145,5 +147,30 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
         as_strings=False,
         print_per_layer_stat=verbose,
         verbose=verbose,
+        custom_modules_hooks={GroupedLinear: grouped_linear_flops_counter_hook, LocalLinear: local_linear_flops_counter_hook},
     )
     logger.info(f"Model complexity: {params/1e6:.3f}M #Params, {macs/1e6:.1f}M MACS")
+
+
+def grouped_linear_flops_counter_hook(module: GroupedLinear, input, output):
+    # input: ([B, Ci, T, F],)
+    # output: [B, Co, T, F]
+    input = input[0]  # [B, C, T, F]
+    output_last_dim = module.weight.shape[-1]
+    input = input.permute(0, 2, 3, 1)
+    input = input.unflatten(2, (module.n_groups, module.n_unfold))  # [B, T, G, F/G, Ci]
+    bias_flops = np.prod(output.shape) if module.bias is not None else 0
+    # GroupedLinear calculates "btfgi,fgio->btfgo"
+    weight_flops = np.prod(input.shape) * output_last_dim
+    module.__flops__ += int(weight_flops + bias_flops)
+
+
+def local_linear_flops_counter_hook(module: LocalLinear, input, output):
+    # input: ([B, Ci, T, F],)
+    # output: [B, Co, T, F]
+    input = input[0]  # [B, C, T, F]
+    output_last_dim = module.weight.shape[1]
+    bias_flops = np.prod(output.shape) if module.bias is not None else 0
+    # LocalLinear calculates "bitf,iof->botf"
+    weight_flops = np.prod(input.shape) * output_last_dim
+    module.__flops__ += int(weight_flops + bias_flops)
