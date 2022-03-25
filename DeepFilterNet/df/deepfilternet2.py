@@ -7,7 +7,7 @@ from loguru import logger
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from df.config import DfParams, config
+from df.config import DfParams, config, Csv
 from df.modules import (
     Conv2dNormAct,
     ConvTranspose2dNormAct,
@@ -32,20 +32,15 @@ class ModelParams(DfParams):
         self.conv_lookahead: int = config(
             "CONV_LOOKAHEAD", cast=int, default=0, section=self.section
         )
-        self.conv_k_enc: int = config("CONV_K_ENC", cast=int, default=2, section=self.section)
-        self.conv_k_dec: int = config("CONV_K_DEC", cast=int, default=1, section=self.section)
         self.conv_ch: int = config("CONV_CH", cast=int, default=16, section=self.section)
-        self.conv_width_f: int = config(
-            "CONV_WIDTH_FACTOR", cast=int, default=1, section=self.section
-        )
-        self.conv_dec_mode: str = config(
-            "CONV_DEC_MODE", default="transposed", section=self.section
-        )
         self.conv_depthwise: bool = config(
             "CONV_DEPTHWISE", cast=bool, default=True, section=self.section
         )
         self.convt_depthwise: bool = config(
             "CONVT_DEPTHWISE", cast=bool, default=True, section=self.section
+        )
+        self.conv_kernel: List[int] = config(
+            "CONV_KERNEL", cast=Csv(int), default=(1, 3), section=self.section
         )
         self.emb_hidden_dim: int = config(
             "EMB_HIDDEN_DIM", cast=int, default=256, section=self.section
@@ -83,7 +78,6 @@ class Encoder(nn.Module):
         super().__init__()
         p = ModelParams()
         layer_width = p.conv_ch
-        wf = p.conv_width_f
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
         self.erb_conv0 = Conv2dNormAct(
@@ -93,7 +87,7 @@ class Encoder(nn.Module):
             Conv2dNormAct,
             in_ch=layer_width,
             out_ch=layer_width,
-            kernel_size=(1, 3),
+            kernel_size=p.conv_kernel,
             bias=False,
             separable=True,
         )
@@ -103,9 +97,9 @@ class Encoder(nn.Module):
         self.df_conv0 = Conv2dNormAct(
             2, layer_width, kernel_size=(3, 3), bias=False, separable=True
         )
-        self.df_conv1 = conv_layer(fstride=1)
+        self.df_conv1 = conv_layer(fstride=2)
         self.erb_bins = p.nb_erb
-        self.emb_dim = layer_width * p.nb_erb // 4 * wf**2
+        self.emb_dim = layer_width * p.nb_erb // 4
         self.df_fc_emb = GroupedLinear(
             layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups
         )
@@ -153,10 +147,9 @@ class ErbDecoder(nn.Module):
         super().__init__()
         p = ModelParams()
         layer_width = p.conv_ch
-        wf = p.conv_width_f
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
 
-        self.emb_width = layer_width * wf**2
+        self.emb_width = layer_width
         self.emb_dim = self.emb_width * (p.nb_erb // 4)
         self.fc_emb = nn.Sequential(
             GroupedLinear(
@@ -166,7 +159,7 @@ class ErbDecoder(nn.Module):
         )
         tconv_layer = partial(
             ConvTranspose2dNormAct,
-            kernel_size=(1, 3),
+            kernel_size=p.conv_kernel,
             bias=False,
             separable=True,
         )
@@ -177,13 +170,15 @@ class ErbDecoder(nn.Module):
         )
         # convt: TransposedConvolution, convp: Pathway (encoder to decoder) convolutions
         self.conv3p = conv_layer(layer_width, self.emb_width, kernel_size=1)
-        self.convt3 = conv_layer(self.emb_width, layer_width, kernel_size=(1, 3))
+        self.convt3 = conv_layer(self.emb_width, layer_width, kernel_size=p.conv_kernel)
         self.conv2p = conv_layer(layer_width, self.emb_width, kernel_size=1)
         self.convt2 = tconv_layer(layer_width, layer_width, fstride=2)
         self.conv1p = conv_layer(layer_width, self.emb_width, kernel_size=1)
         self.convt1 = tconv_layer(layer_width, layer_width, fstride=2)
         self.conv0p = conv_layer(layer_width, self.emb_width, kernel_size=1)
-        self.conv0_out = conv_layer(layer_width, 1, kernel_size=(1, 3), activation_layer=nn.Sigmoid)
+        self.conv0_out = conv_layer(
+            layer_width, 1, kernel_size=p.conv_kernel, activation_layer=nn.Sigmoid
+        )
 
     def forward(self, emb, e3, e2, e1, e0) -> Tensor:
         # Estimates erb mask
@@ -212,14 +207,9 @@ class DfDecoder(nn.Module):
         self.gru_groups = p.gru_groups
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
-        self.df_conv0 = conv_layer(2, layer_width, fstride=1, kernel_size=(1, 3))
-        self.df_conv1 = conv_layer(layer_width, layer_width, fstride=1, kernel_size=(1, 3))
-        self.df_fc_emb = GroupedLinear(
-            layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups
-        )
         self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=1)
         self.df_gru = GroupedGRU(
-            256,  # p.emb_hidden_dim,
+            p.emb_hidden_dim,
             self.df_n_hidden,
             num_layers=self.df_n_layers,
             batch_first=False,
@@ -232,15 +222,10 @@ class DfDecoder(nn.Module):
         )
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
 
-    def forward(self, feat_spec: Tensor, emb: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
-        c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
-        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
-        c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F]
-        # ic(emb.shape, self.df_gru)
         c, _ = self.df_gru(emb.transpose(0, 1))  # [T, B, H], H: df_n_hidden
-        cemb = c1.permute(2, 0, 1, 3).reshape(t, b, -1)  # [T, B, C * Fc/4]
-        cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
+        c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F]
         c = c.transpose(0, 1)  # [B, T, H]
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_fc_out(c)  # [B, T, F*O*2], O: df_order
@@ -269,57 +254,22 @@ class DfNet(nn.Module):
         self.erb_bins: int = p.nb_erb
         self.erb_comp = MagCompression(p.nb_erb)
         if p.conv_lookahead > 0:
-            pad = (0, 0, p.conv_lookahead, -p.conv_lookahead)
-            # self.erb_comp = nn.Sequential(self.erb_comp, nn.ConstantPad2d(pad, 0.0))
+            pad = (0, 0, -p.conv_lookahead, p.conv_lookahead)
             self.pad = nn.ConstantPad2d(pad, 0.0)
+            # self.pad = nn.ConstantPad2d(pad, 0.0)
         else:
             self.pad = nn.Identity()
-        # self.cplx_comp = ComplexCompression(p.nb_df)
         self.register_buffer("erb_fb", erb_fb, persistent=False)
         erb_widths = [32, 64, 64, 64]
-        # self.erb_stage = torch.jit.script(
-        #     FreqStage(
-        #         1,
-        #         1,
-        #         kernel=(1, 3),
-        #         initial_kernel=(1, 3),
-        #         out_act=nn.Sigmoid,
-        #         widths=erb_widths,
-        #         fstrides=[2, 2, 2],
-        #         num_freqs=p.nb_erb,
-        #         gru_dim=256,
-        #         num_gru_layers=3,
-        #         num_gru_groups=1,
-        #         separable_conv=True,
-        #         pathway_convs=True,
-        #     )
-        # )
-        # ic(self.erb_stage)
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
         ic(self.erb_dec)
-        # ic(self.enc, self.erb_dec, self.erb_stage)
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
-        # self.df_stage = FreqStage(
-        #     2,
-        #     2 * p.df_order,
-        #     out_act=nn.Tanh,
-        #     widths=[64, 64, 64],
-        #     fstrides=[2, 1],
-        #     gru_dim=256,
-        #     num_freqs=p.nb_df,
-        #     num_gru_layers=3,
-        #     num_gru_groups=1,
-        #     separable_conv=True,
-        #     pathway_convs=True,
-        #     # decoder_out_layer=partial(GroupedLinearMS, n_freqs=p.nb_df, n_groups=8),
-        # )
 
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.df_dec = DfDecoder()
-        # ic(self.df_dec, self.df_stage)
         self.df_op = torch.jit.script(
             DfOp(
                 p.nb_df,
@@ -329,7 +279,6 @@ class DfNet(nn.Module):
                 method=p.dfop_method,
             )
         )
-        self.lsnr_net = LSNRNet(erb_widths[-1], 64, lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
 
         self.run_df = run_df
         if not run_df:
@@ -362,7 +311,7 @@ class DfNet(nn.Module):
         spec = self.mask(spec, m)
         # feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
         # ic(feat_spec.shape)
-        df_coefs, df_alpha = self.df_dec(feat_spec, emb)
+        df_coefs, df_alpha = self.df_dec(emb, c0)
         spec = self.df_op(spec, df_coefs, df_alpha)
         # ic(df_coefs.shape, spec.shape)
 
