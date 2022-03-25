@@ -283,14 +283,12 @@ def run_epoch(
         feat_spec = as_real(batch.feat_spec.to(dev, non_blocking=True))
         noisy = batch.noisy.to(dev, non_blocking=True)
         clean = batch.speech.to(dev, non_blocking=True)
-        atten = batch.atten.to(dev, non_blocking=True)
         snrs = batch.snr.to(dev, non_blocking=True)
         with set_detect_anomaly(detect_anomaly and is_train), set_grad_enabled(is_train):
             enh, m, lsnr, other = model.forward(
                 spec=as_real(noisy),
                 feat_erb=feat_erb,
                 feat_spec=feat_spec,
-                atten_lim=atten,
             )
             df_alpha, multi_stage_specs = None, []
             if isinstance(other, Tensor):
