@@ -1,3 +1,4 @@
+from copy import deepcopy
 import os
 import sys
 from collections import defaultdict
@@ -141,7 +142,7 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
     feat_spec = torch.randn([b, 1, t, p.nb_df, 2]).to(device)
 
     macs, params = ptflops.get_model_complexity_info(
-        model,
+        deepcopy(model),
         (t,),
         input_constructor=lambda _: {"spec": spec, "feat_erb": feat_erb, "feat_spec": feat_spec},
         as_strings=False,
