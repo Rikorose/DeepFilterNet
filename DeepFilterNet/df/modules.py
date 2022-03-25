@@ -1,5 +1,6 @@
+import math
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -10,6 +11,114 @@ from typing_extensions import Final
 from df.model import ModelParams
 from df.utils import as_complex, as_real, get_device, get_norm_alpha
 from libdf import unit_norm_init
+
+
+class Conv2dNormAct(nn.Sequential):
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        kernel_size: Union[int, Iterable[int]],
+        fstride: int = 1,
+        dilation: int = 1,
+        fpad: bool = True,
+        bias: bool = True,
+        separable: bool = False,
+        norm_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.BatchNorm2d,
+        activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
+    ):
+        """Causal Conv2d by delaying the signal for any lookahead.
+
+        Expected input format: [B, C, T, F]
+        """
+        lookahead = 0  # This needs to be handled on the input feature side
+        # Padding on time axis
+        kernel_size = (
+            (kernel_size, kernel_size) if isinstance(kernel_size, int) else tuple(kernel_size)
+        )
+        if fpad:
+            fpad_ = kernel_size[1] // 2 + dilation - 1
+        else:
+            fpad_ = 0
+        pad = (0, 0, lookahead, kernel_size[0] - 1 - lookahead)
+        layers = []
+        if any(x > 0 for x in pad):
+            layers.append(nn.ConstantPad2d(pad, 0.0))
+        groups = math.gcd(in_ch, out_ch) if separable else 1
+        if groups == 1:
+            separable = False
+        layers.append(
+            nn.Conv2d(
+                in_ch,
+                out_ch,
+                kernel_size=kernel_size,
+                padding=(0, fpad_),
+                stride=(1, fstride),  # Stride over time is always 1
+                dilation=(1, dilation),  # Same for dilation
+                groups=groups,
+                bias=bias,
+            )
+        )
+        if separable:
+            layers.append(nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False))
+        if norm_layer is not None:
+            layers.append(norm_layer(out_ch))
+        if activation_layer is not None:
+            layers.append(activation_layer())
+        super().__init__(*layers)
+
+
+class ConvTranspose2dNormAct(nn.Sequential):
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        kernel_size: Union[int, Tuple[int, int]],
+        fstride: int = 1,
+        dilation: int = 1,
+        fpad: bool = True,
+        bias: bool = True,
+        separable: bool = False,
+        norm_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.BatchNorm2d,
+        activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
+    ):
+        """Causal ConvTranspose2d.
+
+        Expected input format: [B, C, T, F]
+        """
+        # Padding on time axis, with lookahead = 0
+        kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        if fpad:
+            fpad_ = kernel_size[1] // 2
+        else:
+            fpad_ = 0
+        pad = (0, 0, 0, kernel_size[0] - 1)
+        layers = []
+        if any(x > 0 for x in pad):
+            layers.append(nn.ConstantPad2d(pad, 0.0))
+        groups = math.gcd(in_ch, out_ch) if separable else 1
+        if groups == 1:
+            separable = False
+        layers.append(
+            nn.ConvTranspose2d(
+                in_ch,
+                out_ch,
+                kernel_size=kernel_size,
+                padding=(kernel_size[0] - 1, fpad_ + dilation - 1),
+                output_padding=(0, fpad_),
+                stride=(1, fstride),  # Stride over time is always 1
+                dilation=(1, dilation),
+                groups=groups,
+                bias=bias,
+            )
+        )
+        if separable:
+            layers.append(nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False))
+        if norm_layer is not None:
+            layers.append(norm_layer(out_ch))
+        if activation_layer is not None:
+            layers.append(activation_layer())
+        super().__init__(*layers)
 
 
 def convkxf(
@@ -651,7 +760,7 @@ def test_grouped_gru():
 
     # now grouped gru
     num = 2
-    m = GroupedGRU(i, h, num, g, batch_first=True, shuffle=True)
+    m = GroupedGRUMS(i, h, num, g, batch_first=True, shuffle=True)
     ic(m)
     h0 = m.get_h0(b)
     assert list(h0.shape) == [num * g, b, h // g]
