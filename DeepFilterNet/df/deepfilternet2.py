@@ -1,20 +1,24 @@
 from functools import partial
-from typing import Optional, Tuple
+from typing import Final, Optional, Tuple
 
 import torch
 from icecream import ic  # noqa
 from loguru import logger
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 from df.config import DfParams, config
-from df.modules import DfOp, GroupedGRU, GroupedLinear, Mask, convkxf, erb_fb, get_device
-from df.multistagenet import (
-    ComplexCompression,
-    FreqStage,
+from df.modules import (
+    Conv2dNormAct,
+    ConvTranspose2dNormAct,
+    DfOp,
+    GroupedGRU,
     GroupedLinear,
-    LSNRNet,
-    MagCompression,
+    Mask,
+    erb_fb,
+    get_device,
 )
+from df.multistagenet import ComplexCompression, FreqStage, GroupedLinearMS, LSNRNet, MagCompression
 from libdf import DF
 
 
@@ -82,26 +86,24 @@ class Encoder(nn.Module):
         wf = p.conv_width_f
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
-        k = p.conv_k_enc
-        kwargs = {"batch_norm": True, "depthwise": p.conv_depthwise}
-        k0 = 1 if k == 1 and p.conv_lookahead == 0 else max(2, k)
-        cl = 1 if p.conv_lookahead > 0 else 0
-        self.erb_conv0 = convkxf(1, layer_width, k=k0, fstride=1, lookahead=cl, **kwargs)
-        cl = 1 if p.conv_lookahead > 1 else 0
-        self.erb_conv1 = convkxf(
-            layer_width * wf**0, layer_width * wf**1, k=k, lookahead=cl, **kwargs
+        self.erb_conv0 = Conv2dNormAct(
+            1, layer_width, kernel_size=(3, 3), bias=False, separable=True
         )
-        cl = 1 if p.conv_lookahead > 2 else 0
-        self.erb_conv2 = convkxf(
-            layer_width * wf**1, layer_width * wf**2, k=k, lookahead=cl, **kwargs
+        conv_layer = partial(
+            Conv2dNormAct,
+            in_ch=layer_width,
+            out_ch=layer_width,
+            kernel_size=(1, 3),
+            bias=False,
+            separable=True,
         )
-        self.erb_conv3 = convkxf(
-            layer_width * wf**2, layer_width * wf**2, k=k, fstride=1, **kwargs
+        self.erb_conv1 = conv_layer(fstride=2)
+        self.erb_conv2 = conv_layer(fstride=2)
+        self.erb_conv3 = conv_layer(fstride=1)
+        self.df_conv0 = Conv2dNormAct(
+            2, layer_width, kernel_size=(3, 3), bias=False, separable=True
         )
-        self.df_conv0 = convkxf(
-            2, layer_width, fstride=1, k=k0, lookahead=p.conv_lookahead, **kwargs
-        )
-        self.df_conv1 = convkxf(layer_width, layer_width * wf**1, k=k, **kwargs)
+        self.df_conv1 = conv_layer(fstride=1)
         self.erb_bins = p.nb_erb
         self.emb_dim = layer_width * p.nb_erb // 4 * wf**2
         self.df_fc_emb = GroupedLinear(
@@ -162,24 +164,26 @@ class ErbDecoder(nn.Module):
             ),
             nn.ReLU(inplace=True),
         )
-        k = p.conv_k_dec
-        kwargs = {"k": k, "batch_norm": True, "depthwise": p.conv_depthwise}
-        tkwargs = {
-            "k": k,
-            "batch_norm": True,
-            "depthwise": p.convt_depthwise,
-            "mode": p.conv_dec_mode,
-        }
-        pkwargs = {"k": 1, "f": 1, "batch_norm": True}
+        tconv_layer = partial(
+            ConvTranspose2dNormAct,
+            kernel_size=(1, 3),
+            bias=False,
+            separable=True,
+        )
+        conv_layer = partial(
+            Conv2dNormAct,
+            bias=False,
+            separable=True,
+        )
         # convt: TransposedConvolution, convp: Pathway (encoder to decoder) convolutions
-        self.conv3p = convkxf(layer_width * wf**2, self.emb_width, **pkwargs)
-        self.convt3 = convkxf(self.emb_width, layer_width * wf**2, fstride=1, **kwargs)
-        self.conv2p = convkxf(layer_width * wf**2, layer_width * wf**2, **pkwargs)
-        self.convt2 = convkxf(layer_width * wf**2, layer_width * wf**1, **tkwargs)
-        self.conv1p = convkxf(layer_width * wf**1, layer_width * wf**1, **pkwargs)
-        self.convt1 = convkxf(layer_width * wf**1, layer_width * wf**0, **tkwargs)
-        self.conv0p = convkxf(layer_width, layer_width, **pkwargs)
-        self.conv0_out = convkxf(layer_width, 1, fstride=1, k=k, act=nn.Sigmoid())
+        self.conv3p = conv_layer(layer_width, self.emb_width, kernel_size=1)
+        self.convt3 = conv_layer(self.emb_width, layer_width, kernel_size=(1, 3))
+        self.conv2p = conv_layer(layer_width, self.emb_width, kernel_size=1)
+        self.convt2 = tconv_layer(layer_width, layer_width, fstride=2)
+        self.conv1p = conv_layer(layer_width, self.emb_width, kernel_size=1)
+        self.convt1 = tconv_layer(layer_width, layer_width, fstride=2)
+        self.conv0p = conv_layer(layer_width, self.emb_width, kernel_size=1)
+        self.conv0_out = conv_layer(layer_width, 1, kernel_size=(1, 3), activation_layer=nn.Sigmoid)
 
     def forward(self, emb, e3, e2, e1, e0) -> Tensor:
         # Estimates erb mask
@@ -207,20 +211,13 @@ class DfDecoder(nn.Module):
         self.df_lookahead = p.df_lookahead
         self.gru_groups = p.gru_groups
 
-        k = p.conv_k_enc
-        k0 = 1 if k == 1 and p.conv_lookahead == 0 else max(2, k)
-        wf = p.conv_width_f
-        kwargs = {"batch_norm": True, "depthwise": p.conv_depthwise}
-        self.df_conv0 = convkxf(
-            2, layer_width, fstride=1, k=k0, lookahead=p.conv_lookahead, **kwargs
-        )
-        self.df_conv1 = convkxf(layer_width, layer_width * wf**1, k=k, **kwargs)
+        conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
+        self.df_conv0 = conv_layer(2, layer_width, fstride=1, kernel_size=(1, 3))
+        self.df_conv1 = conv_layer(layer_width, layer_width, fstride=1, kernel_size=(1, 3))
         self.df_fc_emb = GroupedLinear(
             layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups
         )
-        self.df_convp = convkxf(
-            layer_width, self.df_order * 2, k=1, f=1, complex_in=True, batch_norm=True
-        )
+        self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=1)
         self.df_gru = GroupedGRU(
             256,  # p.emb_hidden_dim,
             self.df_n_hidden,
@@ -253,6 +250,8 @@ class DfDecoder(nn.Module):
 
 
 class DfNet(nn.Module):
+    run_df: Final[bool]
+
     def __init__(
         self,
         erb_fb: Tensor,
@@ -264,50 +263,62 @@ class DfNet(nn.Module):
         p = ModelParams()
         layer_width = p.conv_ch
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
-        self.lookahead = p.conv_lookahead
-        self.freq_bins = p.fft_size // 2 + 1
-        self.emb_dim = layer_width * p.nb_erb
-        self.erb_bins = p.nb_erb
-        self.erb_fb: Tensor
+        self.lookahead: int = p.conv_lookahead
+        self.freq_bins: int = p.fft_size // 2 + 1
+        self.emb_dim: int = layer_width * p.nb_erb
+        self.erb_bins: int = p.nb_erb
         self.erb_comp = MagCompression(p.nb_erb)
         if p.conv_lookahead > 0:
             pad = (0, 0, p.conv_lookahead, -p.conv_lookahead)
-            self.erb_comp = nn.Sequential(self.erb_comp, nn.ConstantPad2d(pad, 0.0))
-        self.cplx_comp = ComplexCompression(p.nb_df)
+            # self.erb_comp = nn.Sequential(self.erb_comp, nn.ConstantPad2d(pad, 0.0))
+            self.pad = nn.ConstantPad2d(pad, 0.0)
+        else:
+            self.pad = nn.Identity()
+        # self.cplx_comp = ComplexCompression(p.nb_df)
         self.register_buffer("erb_fb", erb_fb, persistent=False)
         erb_widths = [32, 64, 64, 64]
-        self.erb_stage = FreqStage(
-            1,
-            1,
-            out_act=nn.Sigmoid,
-            widths=erb_widths,
-            fstrides=[2, 2, 2],
-            num_freqs=p.nb_erb,
-            gru_dim=256,
-            separable_conv=True,
-            kernel=(1, 3),
-        )
-        # self.enc = Encoder()
-        # self.erb_dec = ErbDecoder()
+        # self.erb_stage = torch.jit.script(
+        #     FreqStage(
+        #         1,
+        #         1,
+        #         kernel=(1, 3),
+        #         initial_kernel=(1, 3),
+        #         out_act=nn.Sigmoid,
+        #         widths=erb_widths,
+        #         fstrides=[2, 2, 2],
+        #         num_freqs=p.nb_erb,
+        #         gru_dim=256,
+        #         num_gru_layers=3,
+        #         num_gru_groups=1,
+        #         separable_conv=True,
+        #         pathway_convs=True,
+        #     )
+        # )
+        # ic(self.erb_stage)
+        self.enc = Encoder()
+        self.erb_dec = ErbDecoder()
+        ic(self.erb_dec)
         # ic(self.enc, self.erb_dec, self.erb_stage)
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
-        self.df_stage = FreqStage(
-            2,
-            2 * p.df_order,
-            out_act=nn.Tanh,
-            widths=[64, 64, 64],
-            fstrides=[2, 1],
-            gru_dim=256,
-            num_freqs=p.nb_df,
-            separable_conv=True,
-            global_pathway=True,
-            decoder_out_layer=partial(GroupedLinear, n_freqs=p.nb_df, n_groups=8),
-        )
+        # self.df_stage = FreqStage(
+        #     2,
+        #     2 * p.df_order,
+        #     out_act=nn.Tanh,
+        #     widths=[64, 64, 64],
+        #     fstrides=[2, 1],
+        #     gru_dim=256,
+        #     num_freqs=p.nb_df,
+        #     num_gru_layers=3,
+        #     num_gru_groups=1,
+        #     separable_conv=True,
+        #     pathway_convs=True,
+        #     # decoder_out_layer=partial(GroupedLinearMS, n_freqs=p.nb_df, n_groups=8),
+        # )
 
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
-        # self.df_dec = DfDecoder()
+        self.df_dec = DfDecoder()
         # ic(self.df_dec, self.df_stage)
         self.df_op = torch.jit.script(
             DfOp(
@@ -330,27 +341,33 @@ class DfNet(nn.Module):
         spec: Tensor,
         feat_erb: Tensor,
         feat_spec: Tensor,  # Not used, take spec modified by mask instead
-        atten_lim: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        # feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
+        # ic(feat_erb.shape)
+        feat_spec = feat_spec.squeeze(1).permute(0, 3, 1, 2)
+
         # ic(self.erb_comp.c, self.erb_comp.mn)
-        # ic(self.cplx_comp.c)
-        feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
-        feat_erb = self.erb_comp(feat_erb)
+        # feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
+        # feat_erb = self.erb_comp(feat_erb)
+
+        feat_erb = self.pad(feat_erb)
+        feat_spec = self.pad(feat_spec)
+        e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
+        m = self.erb_dec(emb, e3, e2, e1, e0)
+
+        # m, emb, _ = self.erb_stage(feat_erb)
+        # emb = emb.permute(0, 2, 3, 1).flatten(2)
+        # lsnr = emb.mean(-1)
+        # lsnr, _ = self.lsnr_net(emb)
+
+        spec = self.mask(spec, m)
         # feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
-        # e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
-        # m = self.erb_dec(emb, e3, e2, e1, e0)
-        m, emb, _ = self.erb_stage(feat_erb)
-        lsnr, _ = self.lsnr_net(emb)
-        emb = emb.permute(0, 2, 3, 1).flatten(2)
-        spec = self.mask(spec, m, atten_lim)
-        feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
-        df_alpha = None
-        if self.run_df:
-            # df_coefs, df_alpha = self.df_dec(feat_spec, emb)
-            # spec = self.df_op(spec, df_coefs, df_alpha)
-            # ic(df_coefs.shape, spec.shape)
-            df_coefs, _, _ = self.df_stage(feat_spec)
-            df_coefs = df_coefs.unflatten(1, (self.df_order, 2)).permute(0, 3, 1, 4, 2)
-            spec = self.df_op(spec, df_coefs, df_alpha)
+        # ic(feat_spec.shape)
+        df_coefs, df_alpha = self.df_dec(feat_spec, emb)
+        spec = self.df_op(spec, df_coefs, df_alpha)
+        # ic(df_coefs.shape, spec.shape)
+
+        # df_coefs, _, _ = self.df_stage(feat_spec)
+        # df_coefs = df_coefs.unflatten(1, (self.df_order, 2)).permute(0, 3, 1, 4, 2)
+
+        spec = self.df_op(spec, df_coefs, df_alpha)
         return spec, m, lsnr, df_alpha
