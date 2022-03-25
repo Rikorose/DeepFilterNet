@@ -94,7 +94,7 @@ class PytorchDataLoader:
         self.fft_size = fft_size
         self.batch_size = batch_size
         self.batch_size_eval = batch_size_eval
-        prefetch_loader = prefetch * batch_size * num_workers
+        prefetch_loader = batch_size * num_workers
         logger.info(f"Initializing dataloader with data directory {ds_dir}")
         assert self.fft_size is not None, "No fft_size provided"
         self.loader = _FdDataLoader(

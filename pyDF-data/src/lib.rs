@@ -162,7 +162,6 @@ impl _FdDataLoader {
         let train_ds = train_handle.join().expect(msg).to_py_err()?;
         update_keys(ds_dir, &mut cfg.train, &train_ds);
         write_cache(config_path, &cfg);
-        println!("Finished openning datasets");
         py.check_signals()?;
         let ds = Datasets {
             train: train_ds,

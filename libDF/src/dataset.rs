@@ -482,9 +482,14 @@ impl DatasetBuilder {
         let mut ds_keys = Vec::new();
         let mut has_rirs = false;
         let mut i = 0;
+        let mut ds_len: usize = 0;
         while let Some((cfg, ds)) = receiver.try_recv().unwrap() {
             has_rirs = has_rirs || ds.dstype == DsType::RIR;
-            ds_keys.push((ds.dstype, i, cfg.keys_unchecked().unwrap().keys.clone()));
+            let keys = cfg.keys_unchecked().unwrap().keys.clone();
+            if ds.dstype == DsType::Speech {
+                ds_len += (keys.len() as f32 * cfg.sampling_factor()).round() as usize;
+            }
+            ds_keys.push((ds.dstype, i, keys));
             config.push(cfg);
             hdf5_handles.push(ds);
             i += 1;
@@ -510,7 +515,7 @@ impl DatasetBuilder {
         }
         let reverb = RandReverbSim::new(p_reverb, self.sr);
         let seed = self.seed.unwrap_or(0);
-        let mut ds = TdDataset {
+        Ok(TdDataset {
             config,
             hdf5_handles,
             max_samples,
@@ -529,11 +534,8 @@ impl DatasetBuilder {
             ns_transforms,
             reverb,
             seed,
-        };
-        // Generate initial speech/noise/rir dataset keys. May be changed at the start of each epoch.
-        seed_from_u64(seed);
-        ds.generate_keys()?;
-        Ok(ds)
+            ds_len,
+        })
     }
     pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
         let has_ds = self.datasets.is_some();
@@ -659,7 +661,7 @@ impl Dataset<Complex32> for FftDataset {
     }
 
     fn len(&self) -> usize {
-        self.ds.sp_keys.len()
+        self.ds.len()
     }
 
     fn sr(&self) -> usize {
@@ -702,6 +704,7 @@ pub struct TdDataset {
     ns_transforms: Compose, // Transforms to augment noise samples
     reverb: RandReverbSim, // Separate reverb transform that may be applied to both speech and noise
     seed: u64,
+    ds_len: usize,
 }
 
 impl TdDataset {
@@ -910,7 +913,7 @@ impl Dataset<f32> for TdDataset {
     }
 
     fn len(&self) -> usize {
-        self.sp_keys.len()
+        self.ds_len
     }
 
     fn sr(&self) -> usize {
@@ -948,12 +951,12 @@ impl Dataset<f32> for TdDataset {
 
         for (dstype, hdf5_idx, keys) in self.ds_keys.iter() {
             debug_assert_eq!(&self.hdf5_handles[*hdf5_idx].keys().unwrap(), keys);
-            let len = self.hdf5_handles[*hdf5_idx].len();
+            let len = keys.len();
             let n_samples =
                 (self.config[*hdf5_idx].sampling_factor() * len as f32).round() as usize;
             let mut keys = keys.clone();
             if self.ds_split == Split::Train {
-                keys.shuffle(&mut thread_rng()?)
+                keys.shuffle(&mut thread_rng()?);
             }
             let keys: Vec<(usize, String)> =
                 keys.iter().cycle().take(n_samples).map(|k| (*hdf5_idx, k.clone())).collect();
