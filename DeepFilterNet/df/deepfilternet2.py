@@ -7,7 +7,7 @@ from loguru import logger
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from df.config import DfParams, config, Csv
+from df.config import Csv, DfParams, config
 from df.modules import (
     Conv2dNormAct,
     ConvTranspose2dNormAct,
@@ -109,8 +109,8 @@ class Encoder(nn.Module):
         self.emb_gru = GroupedGRU(
             self.emb_dim,
             self.emb_out_dim,
-            num_layers=p.emb_num_layers,
-            batch_first=False,
+            num_layers=1,
+            batch_first=True,
             groups=p.gru_groups,
             shuffle=p.group_shuffle,
             add_outputs=True,
@@ -132,12 +132,11 @@ class Encoder(nn.Module):
         e3 = self.erb_conv3(e2)  # [B, C*4, T, F/4]
         c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
         c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
-        cemb = c1.permute(2, 0, 1, 3).reshape(t, b, -1)  # [T, B, C * Fc/4]
+        cemb = c1.permute(0, 2, 3, 1).flatten(2)  # [B, T, -1]
         cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
-        emb = e3.permute(2, 0, 1, 3).reshape(t, b, -1)  # [T, B, C * F/4]
+        emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F/4]
         emb = emb + cemb
-        emb, _ = self.emb_gru(emb)
-        emb = emb.transpose(0, 1)  # [B, T, C * F/4]
+        emb, _ = self.emb_gru(emb)  # [B, T, -1]
         lsnr = self.lsnr_fc(emb) * self.lsnr_scale + self.lsnr_offset
         return e0, e1, e2, e3, emb, c0, lsnr
 
@@ -151,6 +150,16 @@ class ErbDecoder(nn.Module):
 
         self.emb_width = layer_width
         self.emb_dim = self.emb_width * (p.nb_erb // 4)
+        self.emb_out_dim = p.emb_hidden_dim
+        self.emb_gru = GroupedGRU(
+            self.emb_dim,
+            self.emb_out_dim,
+            num_layers=p.emb_num_layers - 1,
+            batch_first=True,
+            groups=p.gru_groups,
+            shuffle=p.group_shuffle,
+            add_outputs=True,
+        )
         self.fc_emb = nn.Sequential(
             GroupedLinear(
                 p.emb_hidden_dim, self.emb_dim, groups=p.lin_groups, shuffle=p.group_shuffle
@@ -183,8 +192,9 @@ class ErbDecoder(nn.Module):
     def forward(self, emb, e3, e2, e1, e0) -> Tensor:
         # Estimates erb mask
         b, _, t, f8 = e3.shape
+        emb, _ = self.emb_gru(emb)
         emb = self.fc_emb(emb)
-        emb = emb.view(b, t, -1, f8).transpose(1, 2)  # [B, C*8, T, F/8]
+        emb = emb.view(b, t, f8, -1).permute(0, 3, 1, 2)  # [B, C*8, T, F/8]
         e3 = self.convt3(self.conv3p(e3) + emb)  # [B, C*4, T, F/4]
         e2 = self.convt2(self.conv2p(e2) + e3)  # [B, C*2, T, F/2]
         e1 = self.convt1(self.conv1p(e1) + e2)  # [B, C, T, F]
