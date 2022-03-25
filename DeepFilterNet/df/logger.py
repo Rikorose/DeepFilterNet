@@ -9,7 +9,7 @@ import torch
 from loguru import logger
 from torch.types import Number
 
-from df.multistagenet import GroupedGRULayer, GroupedLinear, LocalLinear
+from df.multistagenet import GroupedGRULayerMS, GroupedLinearMS, LocalLinearMS
 from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 
 _logger_initialized = False
@@ -149,15 +149,15 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
         print_per_layer_stat=verbose,
         verbose=verbose,
         custom_modules_hooks={
-            GroupedLinear: grouped_linear_flops_counter_hook,
-            LocalLinear: local_linear_flops_counter_hook,
-            GroupedGRULayer: grouped_gru_flops_counter_hook,
+            GroupedLinearMS: grouped_linear_flops_counter_hook,
+            LocalLinearMS: local_linear_flops_counter_hook,
+            GroupedGRULayerMS: grouped_gru_flops_counter_hook,
         },
     )
     logger.info(f"Model complexity: {params/1e6:.3f}M #Params, {macs/1e6:.1f}M MACS")
 
 
-def grouped_linear_flops_counter_hook(module: GroupedLinear, input, output):
+def grouped_linear_flops_counter_hook(module: GroupedLinearMS, input, output):
     # input: ([B, Ci, T, F],)
     # output: [B, Co, T, F]
     input = input[0]  # [B, C, T, F]
@@ -170,7 +170,7 @@ def grouped_linear_flops_counter_hook(module: GroupedLinear, input, output):
     module.__flops__ += int(weight_flops + bias_flops)  # type: ignore
 
 
-def local_linear_flops_counter_hook(module: LocalLinear, input, output):
+def local_linear_flops_counter_hook(module: LocalLinearMS, input, output):
     # input: ([B, Ci, T, F],)
     # output: [B, Co, T, F]
     input = input[0]  # [B, Ci, T, F]
@@ -181,7 +181,7 @@ def local_linear_flops_counter_hook(module: LocalLinear, input, output):
     module.__flops__ += int(weight_flops + bias_flops)  # type: ignore
 
 
-def grouped_gru_flops_counter_hook(module: GroupedGRULayer, input, output):
+def grouped_gru_flops_counter_hook(module: GroupedGRULayerMS, input, output):
     # input: ([B, Ci, T, F],)
     # output: ([B, Co, T, F],)
     input = input[0]  # [B, Ci, T, F]
