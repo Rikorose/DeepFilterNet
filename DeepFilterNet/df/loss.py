@@ -547,28 +547,30 @@ class Loss(nn.Module):
         if lsnrl != 0:
             self.summaries["LocalSnrLoss"].append(lsnrl.detach())
         sdr = SiSdr()
-        enh_td = enh_td.squeeze(1)
-        clean_td = clean_td.squeeze(1)
-        sdr_vals: Tensor = sdr(enh_td.detach(), target=clean_td.detach())
-        stoi_vals: Tensor = stoi(y=enh_td.detach(), x=clean_td.detach(), fs_source=self.sr)
+        enh_td = enh_td.squeeze(1).detach()
+        clean_td = clean_td.squeeze(1).detach()
+        sdr_vals: Tensor = sdr(enh_td, target=clean_td)
+        stoi_vals: Tensor = stoi(y=enh_td, x=clean_td, fs_source=self.sr)
         sdr_vals_ms, stoi_vals_ms = [], []
         if multi_stage_td is not None:
             for i in range(multi_stage_td.shape[1]):
-                sdr_vals_ms.append(sdr(multi_stage_td[:, i], clean_td))
-                stoi_vals_ms.append(stoi(y=multi_stage_td[:, i], x=clean_td, fs_source=self.sr))
+                sdr_vals_ms.append(sdr(multi_stage_td[:, i].detach(), clean_td))
+                stoi_vals_ms.append(
+                    stoi(y=multi_stage_td[:, i].detach(), x=clean_td, fs_source=self.sr)
+                )
         for snr in torch.unique(snrs, sorted=False):
             self.summaries[f"sdr_snr_{snr.item()}"].extend(
-                sdr_vals.masked_select(snr == snrs).split(1)
+                sdr_vals.masked_select(snr == snrs).detach().split(1)
             )
             self.summaries[f"stoi_snr_{snr.item()}"].extend(
-                stoi_vals.masked_select(snr == snrs).split(1)
+                stoi_vals.masked_select(snr == snrs).detach().split(1)
             )
             for i, (sdr_i, stoi_i) in enumerate(zip(sdr_vals_ms, stoi_vals_ms)):
                 self.summaries[f"sdr_stage_{i}_snr_{snr.item()}"].extend(
-                    sdr_i.masked_select(snr == snrs).split(1)
+                    sdr_i.masked_select(snr == snrs).detach().split(1)
                 )
                 self.summaries[f"stoi_stage_{i}_snr_{snr.item()}"].extend(
-                    stoi_i.masked_select(snr == snrs).split(1)
+                    stoi_i.masked_select(snr == snrs).detach().split(1)
                 )
 
 
