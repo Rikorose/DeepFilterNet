@@ -124,27 +124,9 @@ impl DataLoaderBuilder {
         self._drop_last = Some(drop_last);
         self
     }
-    fn check_dataset_size(&self, bs_train: usize) -> Result<()> {
-        for split in [Split::Train, Split::Valid, Split::Test] {
-            let batch_size = match split {
-                Split::Train => bs_train,
-                _ => self._batch_size_eval.unwrap_or(bs_train),
-            };
-            let dataset_size = self._ds.as_ref().unwrap().get(split).len();
-            if dataset_size < batch_size {
-                return Err(DfDataloaderError::DatasetTooSmall {
-                    split,
-                    dataset_size,
-                    batch_size,
-                });
-            }
-        }
-        Ok(())
-    }
     pub fn build(self) -> Result<DataLoader> {
         let bs_train = self._batch_size.unwrap_or(1);
-        self.check_dataset_size(bs_train)?;
-        let prefetch = self._prefetch.unwrap_or(bs_train * self._num_threads.unwrap_or(4) * 2);
+        let prefetch = self._prefetch.unwrap_or(bs_train * self._num_threads.unwrap_or(4));
         let mut loader = DataLoader::new(
             self._ds.unwrap(),
             bs_train,
