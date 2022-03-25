@@ -40,7 +40,7 @@ class Conv2dNormAct(nn.Sequential):
             fpad_ = kernel_size[1] // 2 + dilation - 1
         else:
             fpad_ = 0
-        pad = (0, 0, lookahead, kernel_size[0] - 1 - lookahead)
+        pad = (0, 0, kernel_size[0] - 1 - lookahead, lookahead)
         layers = []
         if any(x > 0 for x in pad):
             layers.append(nn.ConstantPad2d(pad, 0.0))
@@ -89,12 +89,13 @@ class ConvTranspose2dNormAct(nn.Sequential):
         Expected input format: [B, C, T, F]
         """
         # Padding on time axis, with lookahead = 0
+        lookahead = 0  # This needs to be handled on the input feature side
         kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
         if fpad:
             fpad_ = kernel_size[1] // 2
         else:
             fpad_ = 0
-        pad = (0, 0, 0, kernel_size[0] - 1)
+        pad = (0, 0, kernel_size[0] - 1 - lookahead, lookahead)
         layers = []
         if any(x > 0 for x in pad):
             layers.append(nn.ConstantPad2d(pad, 0.0))
