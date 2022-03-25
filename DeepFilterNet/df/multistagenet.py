@@ -10,7 +10,7 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 
 from df.config import Csv, DfParams, config
-from df.modules import GroupedGRU, Mask, erb_fb
+from df.modules import Conv2dNormAct, ConvTranspose2dNormAct, GroupedGRU, Mask, erb_fb
 from df.utils import angle_re_im, get_device
 from libdf import DF
 
@@ -50,112 +50,6 @@ class ModelParams(DfParams):
             "REFINEMENT_OUTPUT_LAYER", default="LocallyConnected", section=self.section
         )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
-
-
-class Conv2dNormAct(nn.Sequential):
-    def __init__(
-        self,
-        in_ch: int,
-        out_ch: int,
-        kernel_size: Union[int, Iterable[int]],
-        fstride: int = 1,
-        dilation: int = 1,
-        fpad: bool = True,
-        bias: bool = True,
-        separable: bool = False,
-        norm_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.BatchNorm2d,
-        activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
-    ):
-        """Causal Conv2d by delaying the signal for any lookahead.
-
-        Expected input format: [B, C, T, F]
-        """
-        super().__init__()
-        lookahead = 0  # This needs to be handled on the input feature side
-        # Padding on time axis
-        kernel_size = (
-            (kernel_size, kernel_size) if isinstance(kernel_size, int) else tuple(kernel_size)
-        )
-        if fpad:
-            fpad_ = kernel_size[1] // 2 + dilation - 1
-        else:
-            fpad_ = 0
-        pad = (0, 0, lookahead, kernel_size[0] - 1 - lookahead)
-        layers = []
-        if any(x > 0 for x in pad):
-            layers.append(nn.ConstantPad2d(pad, 0.0))
-        groups = math.gcd(in_ch, out_ch) if separable else 1
-        layers.append(
-            nn.Conv2d(
-                in_ch,
-                out_ch,
-                kernel_size=kernel_size,
-                padding=(0, fpad_),
-                stride=(1, fstride),  # Stride over time is always 1
-                dilation=(1, dilation),  # Same for dilation
-                groups=groups,
-                bias=bias,
-            )
-        )
-        if separable:
-            layers.append(nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False))
-        if norm_layer is not None:
-            layers.append(norm_layer(out_ch))
-        if activation_layer is not None:
-            layers.append(activation_layer())
-        super().__init__(*layers)
-
-
-class ConvTranspose2dNormAct(nn.Sequential):
-    def __init__(
-        self,
-        in_ch: int,
-        out_ch: int,
-        kernel_size: Union[int, Tuple[int, int]],
-        fstride: int = 1,
-        dilation: int = 1,
-        fpad: bool = True,
-        bias: bool = True,
-        separable: bool = False,
-        norm_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.BatchNorm2d,
-        activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
-    ):
-        """Causal ConvTranspose2d.
-
-        Expected input format: [B, C, T, F]
-        """
-        super().__init__()
-        # Padding on time axis, with lookahead = 0
-        kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
-        if fpad:
-            fpad_ = kernel_size[1] // 2
-        else:
-            fpad_ = 0
-        pad = (0, 0, 0, kernel_size[0] - 1)
-        layers = []
-        if any(x > 0 for x in pad):
-            layers.append(nn.ConstantPad2d(pad, 0.0))
-        groups = math.gcd(in_ch, out_ch) if separable else 1
-        layers.append(
-            nn.ConvTranspose2d(
-                in_ch,
-                out_ch,
-                kernel_size=kernel_size,
-                padding=(kernel_size[0] - 1, fpad_ + dilation - 1),
-                output_padding=(0, fpad_),
-                stride=(1, fstride),  # Stride over time is always 1
-                dilation=(1, dilation),
-                groups=groups,
-                bias=bias,
-            )
-        )
-        if separable:
-            layers.append(nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False))
-        if norm_layer is not None:
-            layers.append(norm_layer(out_ch))
-        if activation_layer is not None:
-            layers.append(activation_layer())
-        super().__init__(*layers)
 
 
 # class GruSE(nn.Module):
@@ -208,50 +102,10 @@ class ConvTranspose2dNormAct(nn.Sequential):
 #         return x, h
 
 
-# class EncLayer(nn.Module):
-#     def __init__(
-#         self,
-#         in_ch,
-#         out_ch,
-#         kernel,
-#         fstride: int,
-#         gru_dim: int,
-#         gru_groups=1,
-#         gru_mode: str = "skip",
-#         gru_reduce: str = "frequencies",
-#         in_freqs: Optional[int] = None,
-#     ):
-#         super().__init__()
-#         assert gru_mode in ("skip", "scale")
-#         self.conv = Conv2dNormAct(in_ch, out_ch, kernel_size=kernel, fstride=fstride)
-#         if gru_reduce == "channels":
-#             assert in_freqs is not None
-#             gru_in_dim = in_freqs
-#         else:
-#             gru_in_dim = out_ch
-#         if gru_mode == "skip":
-#             skip = nn.Identity
-#             scale = None
-#         else:
-#             skip = None
-#             scale = nn.Sigmoid
-#         self.gru = GruSE(
-#             gru_in_dim,
-#             gru_dim,
-#             groups=gru_groups,
-#             reduce_=gru_reduce,
-#             skip=skip,
-#             scale_activation=scale,
-#         )
-
-#     def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
-#         # x: [B, C, T, F]
-#         x = self.conv(input)
-#         x, h = self.gru(x, h)
-#         return x, h
-
-
 class LSNRNet(nn.Module):
+    lsnr_scale: Final[int]
+    lsnr_offset: Final[int]
+
     def __init__(
         self, in_ch: int, hidden_dim: int = 16, fstride=2, lsnr_min: int = -15, lsnr_max: int = 40
     ):
@@ -269,15 +123,18 @@ class LSNRNet(nn.Module):
         return x, h
 
 
-class LocalLinear(nn.Module):
+class LocalLinearMS(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, bias: bool = True):
         super().__init__()
         self.n_freqs = n_freqs
-        self.weight: Tensor
-        self.register_parameter("weight", Parameter(torch.zeros(in_ch, out_ch, n_freqs)))
+        self.register_parameter(
+            "weight", Parameter(torch.zeros(in_ch, out_ch, n_freqs), requires_grad=True)
+        )
         if bias:
             self.bias: Optional[Tensor]
-            self.register_parameter("bias", Parameter(torch.zeros(out_ch, 1, n_freqs)))
+            self.register_parameter(
+                "bias", Parameter(torch.zeros(out_ch, 1, n_freqs), requires_grad=True)
+            )
         else:
             self.bias = None
         self.reset_parameters()
@@ -297,10 +154,10 @@ class LocalLinear(nn.Module):
         return x
 
 
-class GroupedLinear(nn.Module):
+class GroupedLinearMS(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, n_groups: int, bias: bool = True):
         super().__init__()
-        self.weight: Tensor
+        # self.weight: Tensor
         self.n_freqs = n_freqs
         n_groups = n_groups if n_groups > 0 else n_freqs
         if n_groups == n_freqs:
@@ -311,11 +168,16 @@ class GroupedLinear(nn.Module):
         self.n_groups = n_groups
         self.n_unfold = n_freqs // n_groups
         self.register_parameter(
-            "weight", Parameter(torch.zeros(n_groups, n_freqs // n_groups, in_ch, out_ch))
+            "weight",
+            Parameter(
+                torch.zeros(n_groups, n_freqs // n_groups, in_ch, out_ch), requires_grad=True
+            ),
         )
         if bias:
             self.bias: Optional[Tensor]
-            self.register_parameter("bias", Parameter(torch.zeros(out_ch, 1, n_freqs)))
+            self.register_parameter(
+                "bias", Parameter(torch.zeros(out_ch, 1, n_freqs), requires_grad=True)
+            )
         else:
             self.bias = None
         self.reset_parameters()
@@ -339,7 +201,7 @@ class GroupedLinear(nn.Module):
         return x
 
 
-class GroupedGRULayer(nn.Module):
+class GroupedGRULayerMS(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, n_groups: int, bias: bool = True):
         super().__init__()
         assert n_freqs % n_groups == 0
@@ -349,21 +211,25 @@ class GroupedGRULayer(nn.Module):
         self.out_ch = self.g_freqs * out_ch
         self._in_ch = in_ch
         self.input_size = self.g_freqs * in_ch
-        self.weight_ih_l: Tensor
+        # self.weight_ih_l: Tensor
         self.register_parameter(
             "weight_ih_l",
-            Parameter(torch.zeros(n_groups, 3 * self.out_ch, self.input_size)),
+            Parameter(torch.zeros(n_groups, 3 * self.out_ch, self.input_size), requires_grad=True),
         )
-        self.weight_hh_l: Tensor
+        # self.weight_hh_l: Tensor
         self.register_parameter(
             "weight_hh_l",
-            Parameter(torch.zeros(n_groups, 3 * self.out_ch, self.out_ch)),
+            Parameter(torch.zeros(n_groups, 3 * self.out_ch, self.out_ch), requires_grad=True),
         )
         if bias:
-            self.bias_ih_l: Tensor
-            self.register_parameter("bias_ih_l", Parameter(torch.zeros(n_groups, 3 * self.out_ch)))
-            self.bias_hh_l: Tensor
-            self.register_parameter("bias_hh_l", Parameter(torch.zeros(n_groups, 3 * self.out_ch)))
+            # self.bias_ih_l: Tensor
+            self.register_parameter(
+                "bias_ih_l", Parameter(torch.zeros(n_groups, 3 * self.out_ch), requires_grad=True)
+            )
+            # self.bias_hh_l: Tensor
+            self.register_parameter(
+                "bias_hh_l", Parameter(torch.zeros(n_groups, 3 * self.out_ch), requires_grad=True)
+            )
         else:
             self.bias_ih_l = None  # type: ignore
             self.bias_hh_l = None  # type: ignore
@@ -399,7 +265,7 @@ class GroupedGRULayer(nn.Module):
         return out, h
 
 
-class GroupedGRU(nn.Module):
+class GroupedGRUMS(nn.Module):
     def __init__(
         self,
         in_ch: int,
@@ -411,37 +277,44 @@ class GroupedGRU(nn.Module):
         add_outputs: bool = False,
     ):
         super().__init__()
-        self.grus: List[GroupedGRULayer] = nn.ModuleList()  # type: ignore
+        self.n_layers = n_layers
+        self.grus: List[GroupedGRULayerMS] = nn.ModuleList()  # type: ignore
         gru_layer = partial(
-            GroupedGRULayer, out_ch=out_ch, n_freqs=n_freqs, n_groups=n_groups, bias=bias
+            GroupedGRULayerMS, out_ch=out_ch, n_freqs=n_freqs, n_groups=n_groups, bias=bias
         )
-        self.grus.append(gru_layer(in_ch=in_ch))
+        self.gru0 = gru_layer(in_ch=in_ch)
         for _ in range(1, n_layers):
             self.grus.append(gru_layer(in_ch=out_ch))
         self.add_outputs = add_outputs
 
     def init_hidden(self, batch_size: int, device: torch.device = torch.device("cpu")) -> Tensor:
-        return torch.stack(tuple(g.init_hidden(batch_size, device) for g in self.grus))
+        return torch.stack(
+            tuple(self.gru0.init_hidden(batch_size, device) for _ in range(self.n_layers))
+        )
 
     def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
         if h is None:
             h = self.init_hidden(input.shape[0], input.device)
         h_out = []
-        output = None
-        for i, gru in enumerate(self.grus):
+        # First layer
+        input, hl = self.gru0(input, h[0])
+        h_out.append(hl)
+        output = input
+        for i, gru in enumerate(self.grus, 1):
             input, hl = gru(input, h[i])
             h_out.append(hl)
             if self.add_outputs:
-                if output is None:
-                    output = input
-                else:
-                    output = output + input
+                output = output + input
         if not self.add_outputs:
             output = input
         return output, torch.stack(h_out)  # type: ignore
 
 
 class FreqStage(nn.Module):
+    in_ch: Final[int]
+    out_ch: Final[int]
+    depth: Final[int]
+
     def __init__(
         self,
         in_ch: int,
@@ -456,11 +329,10 @@ class FreqStage(nn.Module):
         separable_conv: bool = False,
         num_gru_layers: int = 3,
         num_gru_groups: int = 8,
-        global_pathway: bool = False,
+        pathway_convs: bool = False,
         decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None,
     ):
         super().__init__()
-        self.fe = num_freqs  # Number of frequency bins in embedding
         self.in_ch = in_ch
         self.out_ch = out_ch
         self.depth = len(widths) - 1
@@ -470,12 +342,10 @@ class FreqStage(nn.Module):
         else:
             fstrides = [2] * self.depth
             overall_stride = 2 ** (len(widths) - 1)
-        # if squeeze_exitation_factors is not None:
-        #     assert len(squeeze_exitation_factors) == self.depth
         assert num_freqs % overall_stride == 0, f"num_freqs ({num_freqs}) must correspond to depth"
-        self.hd = gru_dim
         norm_layer = nn.BatchNorm2d
 
+        # Encoder
         self.enc0 = Conv2dNormAct(
             in_ch,
             widths[0],
@@ -591,7 +461,6 @@ class CFGRU(nn.Module):
 class ComplexCompression(nn.Module):
     def __init__(self, n_freqs: int, init_value: float = 0.3):
         super().__init__()
-        self.c: Tensor
         self.register_parameter(
             "c", Parameter(torch.full((n_freqs,), init_value), requires_grad=True)
         )
@@ -663,7 +532,7 @@ class MSNet(nn.Module):
         refinement_out_layer = (
             partial(Conv2dNormAct, kernel_size=(3, 1), norm_layer=None, activation_layer=None)
             if p.refinement_out_layer.lower() == "conv2d"
-            else partial(GroupedLinear, n_freqs=p.nb_df, n_groups=8)
+            else partial(GroupedLinearMS, n_freqs=p.nb_df, n_groups=8)
         )
         self.refinement_stage = FreqStage(
             in_ch=2,
@@ -679,7 +548,7 @@ class MSNet(nn.Module):
         self.lsnr_net = LSNRNet(p.erb_widths[-1], lsnr_min=p.lsnr_min, lsnr_max=p.lsnr_max)
 
     def forward(
-        self, spec: Tensor, atten_lim: Optional[Tensor] = None, **kwargs  # type: ignore
+        self, spec: Tensor, atten_lim: Optional[Tensor] = None
     ) -> Tuple[Tensor, Tensor, Tensor, None]:
         # Spec shape: [B, 1, T, F, 2]
         feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
