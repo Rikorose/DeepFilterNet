@@ -592,6 +592,7 @@ class GroupedGRU(nn.Module):
         }
         assert input_size % groups == 0
         assert hidden_size % groups == 0
+        assert num_layers > 0
         self.groups = groups
         self.num_layers = num_layers
         self.batch_first = batch_first
