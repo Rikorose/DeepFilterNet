@@ -47,6 +47,8 @@ class Conv2dNormAct(nn.Sequential):
         groups = math.gcd(in_ch, out_ch) if separable else 1
         if groups == 1:
             separable = False
+        if max(kernel_size) == 1:
+            separable = False
         layers.append(
             nn.Conv2d(
                 in_ch,
@@ -523,6 +525,10 @@ class GroupedGRULayer(nn.Module):
             (nn.GRU(self.input_size, self.hidden_size, **kwargs) for _ in range(groups))
         )
 
+    def flatten_parameters(self):
+        for layer in self.layers:
+            layer.flatten_parameters()
+
     def get_h0(self, batch_size: int = 1, device: torch.device = torch.device("cpu")):
         return torch.zeros(
             self.groups * self.num_directions,
@@ -600,6 +606,11 @@ class GroupedGRU(nn.Module):
         self.grus.append(GroupedGRULayer(input_size, hidden_size, **kwargs))
         for _ in range(1, num_layers):
             self.grus.append(GroupedGRULayer(hidden_size, hidden_size, **kwargs))
+        self.flatten_parameters()
+
+    def flatten_parameters(self):
+        for gru in self.grus:
+            gru.flatten_parameters()
 
     def get_h0(self, batch_size: int, device: torch.device = torch.device("cpu")) -> Tensor:
         return torch.zeros(
