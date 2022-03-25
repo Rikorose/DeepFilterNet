@@ -193,7 +193,7 @@ def stoi(x, y, fs_source):
     for i in range(B):
         # To spectral domain
         if x_[i].numel() < N_fft:
-            logger.warning("Could not calculate STOI (not enough frames left)")
+            logger.warning("Could not calculate STOI (not enough frames left). Skipping.")
             continue
         x = _stft(x_[i], win_size=N_frame, fft_size=N_fft, hop_size=N_frame // 2)
         y = _stft(y_[i], win_size=N_frame, fft_size=N_fft, hop_size=N_frame // 2)

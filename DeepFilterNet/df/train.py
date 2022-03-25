@@ -356,10 +356,10 @@ def run_epoch(
                 )
             log_metrics(f"[{epoch}] [{i}/{max_steps}]", l_dict)
             summary_write(
-                clean,
-                noisy,
-                enh,
-                batch.snr,
+                clean.detach(),
+                noisy.detach(),
+                enh.detach(),
+                batch.snr.detach(),
                 lsnr,
                 df_alpha,
                 summary_dir,
