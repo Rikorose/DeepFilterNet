@@ -8,7 +8,7 @@
 #SBATCH -e /cluster/%u/logs/%j.out
 #SBATCH --mail-type=ALL
 # Time limit format: "hours:minutes:seconds"
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 
 set -e
 
