@@ -4,6 +4,7 @@ import os
 import random
 import subprocess
 from socket import gethostname
+from icecream import ic
 from typing import Any, Set, Tuple, Union, Dict
 
 import numpy as np
@@ -46,7 +47,7 @@ def get_resample_params(method: str) -> Dict[str, Any]:
 
 def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
     params = get_resample_params(method)
-    return ta_resample(audio, orig_sr, new_sr, **params[method])
+    return ta_resample(audio, orig_sr, new_sr, **params)
 
 
 def get_device():
