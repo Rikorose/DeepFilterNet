@@ -4,7 +4,7 @@ import os
 import random
 import subprocess
 from socket import gethostname
-from typing import Any, Set, Tuple, Union
+from typing import Any, Set, Tuple, Union, Dict
 
 import numpy as np
 import torch
@@ -23,7 +23,7 @@ except ImportError:
     from torchaudio.compliance.kaldi import resample_waveform as ta_resample  # type: ignore
 
 
-def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
+def get_resample_params(method: str) -> Dict[str, Any]:
     params = {
         "sinc_fast": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 16},
         "sinc_best": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 64},
@@ -41,6 +41,11 @@ def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
         },
     }
     assert method in params.keys(), f"method must be one of {list(params.keys())}"
+    return params[method]
+
+
+def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
+    params = get_resample_params(method)
     return ta_resample(audio, orig_sr, new_sr, **params[method])
 
 
