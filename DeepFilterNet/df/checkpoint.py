@@ -25,7 +25,7 @@ def load_model(
     mask_only: bool = False,
     train_df_only: bool = False,
     extension: str = "ckpt",
-    best: bool = False,
+    epoch: Union[str, int] = "latest",
 ) -> Tuple[nn.Module, int]:
     if mask_only and train_df_only:
         raise ValueError("Only one of `mask_only` `train_df_only` can be enabled")
@@ -33,10 +33,13 @@ def load_model(
     if jit:
         model = torch.jit.script(model)
     blacklist: List[str] = config("CP_BLACKLIST", [], Csv(), save=False, section="train")  # type: ignore
-    epoch = 0
     if cp_dir is not None:
-        epoch = read_cp(model, "model", cp_dir, blacklist=blacklist, extension=extension, best=best)
+        epoch = read_cp(
+            model, "model", cp_dir, blacklist=blacklist, extension=extension, epoch=epoch
+        )
         epoch = 0 if epoch is None else epoch
+    else:
+        epoch = 0
     return model, epoch
 
 
@@ -47,10 +50,11 @@ def read_cp(
     epoch="latest",
     extension="ckpt",
     blacklist=[],
-    best: bool = False,
 ):
     checkpoints = []
-    if best:
+    if isinstance(epoch, str):
+        assert epoch in ("best", "latest")
+    if epoch == "best":
         checkpoints = glob.glob(os.path.join(dirname, f"{name}*.{extension}.best"))
         if len(checkpoints) == 0:
             logger.warning("Could not find `best` checkpoint. Checking for default...")
@@ -58,8 +62,14 @@ def read_cp(
         checkpoints = glob.glob(os.path.join(dirname, f"{name}*.{extension}"))
     if len(checkpoints) == 0:
         return None
-    latest = max(checkpoints, key=get_epoch)
-    epoch = get_epoch(latest)
+    if isinstance(epoch, int):
+        latest = next((x for x in checkpoints if get_epoch(x) == epoch), [None])
+        if latest is None:
+            logger.error(f"Could not find checkpoint of epoch {epoch}")
+            exit(1)
+    else:
+        latest = max(checkpoints, key=get_epoch)
+        epoch = get_epoch(latest)
     logger.info("Found checkpoint {} with epoch {}".format(latest, epoch))
     latest = torch.load(latest, map_location="cpu")
     latest = {k.replace("clc", "df"): v for k, v in latest.items()}
