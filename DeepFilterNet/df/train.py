@@ -65,7 +65,7 @@ def main():
     os.makedirs(summary_dir, exist_ok=True)
     debug = args.debug
     log_level = "DEBUG" if debug else "INFO"
-    init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level)
+    init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level, model=args.base_dir)
     config.load(os.path.join(args.base_dir, "config.ini"))
     seed = config("SEED", 42, int, section="train")
     check_manual_seed(seed)
@@ -217,7 +217,7 @@ def main():
             checkpoint_dir, max_patience=patience, new_metric=val_criteria, cmp=val_criteria_rule
         )
         if should_stop:
-            logger.info("Stopping training")
+            logger.info("Stopping training due to timeout")
             exit(0)
         losses.reset_summaries()
     test_loss = run_epoch(
