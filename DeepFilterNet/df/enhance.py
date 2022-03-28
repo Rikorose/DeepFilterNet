@@ -74,7 +74,9 @@ def init_df(
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
-    init_logger(file=os.path.join(model_base_dir, "enhance.log"), level=log_level)
+    init_logger(
+        file=os.path.join(model_base_dir, "enhance.log"), level=log_level, model=model_base_dir
+    )
     if use_default_model:
         logger.info(f"Using default model at {model_base_dir}")
     config.load(

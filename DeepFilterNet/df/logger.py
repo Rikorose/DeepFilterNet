@@ -16,7 +16,7 @@ _logger_initialized = False
 WARN_ONCE_NO = logger.level("WARNING").no + 1
 
 
-def init_logger(file: Optional[str] = None, level: str = "INFO"):
+def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional[str] = None):
     global _logger_initialized, _duplicate_filter
     if _logger_initialized:
         logger.debug("Logger already initialized.")
@@ -36,6 +36,8 @@ def init_logger(file: Optional[str] = None, level: str = "INFO"):
                 file, level=level, format=log_format, filter=lambda r: r["level"].no != WARN_ONCE_NO
             )
 
+        if model is not None:
+            logger.info("Loading model settings of {}", os.path.basename(model))
         logger.info(f"Running on torch {torch.__version__}")
         logger.info(f"Running on host {get_host()}")
         commit = get_commit_hash()
