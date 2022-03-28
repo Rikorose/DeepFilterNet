@@ -1,7 +1,7 @@
 import glob
 import os
-import sys
 import tempfile
+from typing import Optional
 
 import numpy as np
 import pystoi
@@ -24,27 +24,24 @@ try:
     from tqdm import tqdm
 except ImportError:
 
-    def tqdm(iterable, desc="Progress", total=None, fallback_estimate=1000):
+    def tqdm(iterable, total: Optional[int] = None, log_freq_percent=10, desc="Progress"):
+        assert 0 < log_freq_percent < 100
         # tqdm not available using fallback
-        e = ""
+        logged = set()
         try:
             L = iterable.__len__()
         except AttributeError:
-            L = total or None
+            assert total is not None
+            L = total
 
-        print("{}:  {: >2d}".format(desc, 0), end="")
         for k, i in enumerate(iterable):
             yield i
-            if L is not None:
-                p = (k + 1) / L
-                e = "" if k < (L - 1) else "\n"
-            else:
-                # Use an exponentially decaying function
-                p = 1 - np.exp(-k / fallback_estimate)
-            print("\b\b\b\b {: >2d}%".format(int(100 * p)), end=e)
-            sys.stdout.flush()
-        if L is None:
-            print()
+            p = (k + 1) / L
+            progress = int(100 * p)
+            if progress % log_freq_percent == 0:
+                if progress not in logged:
+                    logger.info("{}: {: >2d}%".format(desc, progress))
+                    logged.add(progress)
 
 
 __resample_method = "sinc_fast"
