@@ -4,8 +4,7 @@ import os
 import random
 import subprocess
 from socket import gethostname
-from icecream import ic
-from typing import Any, Set, Tuple, Union, Dict
+from typing import Any, Dict, Set, Tuple, Union
 
 import numpy as np
 import torch
