@@ -89,6 +89,7 @@ def main(args):
                 )
         del model, noisy, clean, enh
         torch.cuda.empty_cache()
+        logger.info("Waiting for metrics computation completion. This could take a few minutes.")
         for m in metrics:
             for k, v in m.mean().items():
                 logger.info(f"{k}: {v}")
