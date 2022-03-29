@@ -1,8 +1,8 @@
 import glob
 import os
 from abc import ABC, abstractmethod
-from tempfile import NamedTemporaryFile
 from collections import deque
+from tempfile import NamedTemporaryFile
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -67,7 +67,7 @@ def main(args):
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
     with mp.Pool(processes=args.metric_workers) as pool:
-        metrics: List[Metric] = [StoiMetric(sr, pool), SiSDRMetric(pool), CompositeMetric(sr, pool)]
+        metrics: List[Metric] = [StoiMetric(sr, pool), SiSDRMetric(pool), CompositeMetric(sr, pool)]  # type: ignore
         noisy_files = glob.glob(noisy_dir + "/*wav")
         clean_files = glob.glob(clean_dir + "/*wav")
         for noisyfn, cleanfn in tqdm(zip(noisy_files, clean_files), total=len(noisy_files)):
@@ -315,25 +315,10 @@ if __name__ == "__main__":
         help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'.",
     )
     parser.add_argument(
-        "--epoch",
-        "-e",
-        default="latest",
-        type=str,
-        help="Epoch for checkpoint loading. Can be one of ['best', 'latest', <int>].",
-    )
-    parser.add_argument(
         "--metric-workers",
         type=int,
         default=4,
         help="Number of worker processes for metric calculation.",
     )
     args = parser.parse_args()
-    if args.epoch not in ("best", "latest"):
-        try:
-            args.epoch = int(args.epoch)
-        except ValueError:
-            print(
-                "`epoch` must be one of ['best', 'latest', <int>], where int is the epoch number."
-            )
-            exit(1)
     main(args)

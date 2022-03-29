@@ -210,6 +210,14 @@ def enhance(
     return audio
 
 
+def parse_epoch_type(value: str) -> Union[int, str]:
+    try:
+        return int(value)
+    except:
+        assert value in ("best", "latest")
+        return value
+
+
 def setup_df_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -242,6 +250,13 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
+    )
+    parser.add_argument(
+        "--epoch",
+        "-e",
+        default="best",
+        type=parse_epoch_type,
+        help="Epoch for checkpoint loading. Can be one of ['best', 'latest', <int>].",
     )
     return parser
 
