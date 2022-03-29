@@ -124,6 +124,7 @@ def write_cp(
                 prev_best = float(lines[-1].strip().split(" ")[1])
             cmp = "__lt__" if cmp == "min" else "__gt__"
             if getattr(metric, cmp)(prev_best):
+                logger.info(f"Saving new best checkpoint at epoch {epoch} with metric: {metric}")
                 prev_best_f.seek(0, os.SEEK_END)
                 np.savetxt(prev_best_f, np.array([[float(epoch), metric]]))
                 cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}.best")
