@@ -34,7 +34,9 @@ def main(args):
     for file in args.noisy_audio_files:
         audio, meta = load_audio(file, df_sr)
         t0 = time.time()
-        audio = enhance(model, df_state, audio, pad=args.compensate_delay)
+        audio = enhance(
+            model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
+        )
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
@@ -178,7 +180,9 @@ def save_audio(
 
 
 @torch.no_grad()
-def enhance(model: nn.Module, df_state: DF, audio: Tensor, pad=False):
+def enhance(
+    model: nn.Module, df_state: DF, audio: Tensor, pad=False, atten_lim_db: Optional[float] = None
+):
     p = ModelParams()
     model.eval()
     bs = audio.shape[0]
@@ -189,8 +193,12 @@ def enhance(model: nn.Module, df_state: DF, audio: Tensor, pad=False):
         # Pad audio to compensate for the delay due to the real-time STFT implementation
         audio = F.pad(audio, (0, p.fft_size))
     spec, erb_feat, spec_feat = df_features(audio, df_state, device=get_device())
-    spec = model(spec, erb_feat, spec_feat)[0].cpu()
-    audio = torch.as_tensor(df_state.synthesis(as_complex(spec.squeeze(1)).numpy()))
+    enhanced = model(spec, erb_feat, spec_feat)[0].cpu()
+    enhanced = as_complex(enhanced.squeeze(1))
+    if atten_lim_db is not None:
+        lim = 10 ** (-abs(atten_lim_db) / 20)
+        enhanced = as_complex(spec.squeeze(1)) * lim + enhanced * (1 - lim)
+    audio = torch.as_tensor(df_state.synthesis(enhanced.numpy()))
     if pad:
         # The frame size is equal to p.hop_size. Given a new frame, the STFT loop requires e.g.
         # ceil((p.fft_size-p.hop_size)/p.hop_size). I.e. for 50% overlap, then p.hop_size=p.fft_size//2
@@ -228,6 +236,12 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
         type=str,
         default="info",
         help="Logger verbosity. Can be one of (debug, info, error, none)",
+    )
+    parser.add_argument(
+        "--atten-lim",
+        type=int,
+        default=None,
+        help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
     )
     return parser
 
