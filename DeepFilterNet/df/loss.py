@@ -10,7 +10,7 @@ from df.config import Csv, config
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
-from df.utils import angle, as_complex
+from df.utils import angle, as_complex, get_device
 from libdf import DF
 
 
@@ -432,6 +432,7 @@ class Loss(nn.Module):
                 self.sdrl = SdrLoss(self.sdrl_f)
         self.lsnr_f = config("factor", 0.0005, float, section="LocalSnrLoss")
         self.lsnrl = LocalSnrLoss(self.lsnr_f) if self.lsnr_f > 0 else None
+        self.dev_str = str(get_device())
 
     def forward(
         self,
@@ -497,7 +498,8 @@ class Loss(nn.Module):
         if self.store_losses and self.istft is not None:
             assert enhanced_td is not None
             assert clean_td is not None
-            self.store_summaries(
+            with torch.autocast(self.dev_str, enabled=False):
+                self.store_summaries(
                 enhanced_td,
                 clean_td,
                 snrs,
