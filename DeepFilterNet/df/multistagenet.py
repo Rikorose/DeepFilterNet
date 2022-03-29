@@ -3,7 +3,6 @@ from functools import partial, reduce
 from typing import Callable, Final, Iterable, List, Optional, Tuple, Union
 
 import torch
-from icecream import ic  # noqa
 from loguru import logger
 from torch import Tensor, nn
 from torch.nn import init
