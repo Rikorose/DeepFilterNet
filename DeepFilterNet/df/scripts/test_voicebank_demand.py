@@ -1,6 +1,8 @@
 import glob
 import os
 from abc import ABC, abstractmethod
+from tempfile import NamedTemporaryFile
+from collections import deque
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -55,6 +57,7 @@ def main(args):
         post_filter=args.pf,
         log_level=args.log_level,
         config_allow_defaults=True,
+        epoch="best",
     )
     assert os.path.isdir(args.dataset_dir)
     if not HAS_OCTAVE:
@@ -84,6 +87,8 @@ def main(args):
                     output_dir=args.output_dir,
                     suffix=f"{suffix}",
                 )
+        del model, noisy, clean, enh
+        torch.cuda.empty_cache()
         for m in metrics:
             for k, v in m.mean().items():
                 logger.info(f"{k}: {v}")
@@ -108,7 +113,10 @@ def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
     clean = as_numpy(clean)
     degraded = as_numpy(degraded)
     if HAS_OCTAVE:
-        c = semetrics.composite(clean, degraded, sr=sr, mp=True)
+        with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:
+            save_audio(cf.name, clean, sr)
+            save_audio(nf.name, degraded, sr)
+            c = semetrics.composite(cf.name, nf.name)
     else:
         c = [pesq(sr, clean, degraded, "wb"), 0, 0, 0, 0]
     return np.asarray(c)
@@ -231,6 +239,7 @@ class MPMetric(Metric):
     ):
         super().__init__(name, source_sr=source_sr, target_sr=target_sr)
         self.pool = pool
+        self.worker_results = deque()
 
     def add(self, clean, enhanced, noisy):
         clean = self.maybe_resample(torch.as_tensor(clean))
@@ -238,11 +247,15 @@ class MPMetric(Metric):
         self.pool.apply_async(self.compute_metric, (clean, enhanced), callback=self._add_values_enh)
         if noisy is not None:
             noisy = self.maybe_resample(torch.as_tensor(noisy))
-            self.pool.apply_async(
+            h = self.pool.apply_async(
                 self.compute_metric, (clean, noisy), callback=self._add_values_noisy
             )
+            self.worker_results.append(h)
 
     def mean(self) -> Dict[str, float]:
+        while len(self.worker_results) > 0:
+            h = self.worker_results.popleft()
+            h.get()
         self.pool.close()
         self.pool.join()
         return super().mean()
@@ -250,6 +263,7 @@ class MPMetric(Metric):
     def __getstate__(self):
         self_dict = self.__dict__.copy()
         del self_dict["pool"]
+        del self_dict["worker_results"]
         return self_dict
 
     def __setstate__(self, state):

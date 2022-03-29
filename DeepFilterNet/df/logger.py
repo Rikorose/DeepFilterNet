@@ -1,7 +1,7 @@
-from copy import deepcopy
 import os
 import sys
 from collections import defaultdict
+from copy import deepcopy
 from typing import Dict, Optional
 
 import numpy as np
