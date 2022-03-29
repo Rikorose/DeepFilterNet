@@ -57,7 +57,7 @@ def main(args):
         post_filter=args.pf,
         log_level=args.log_level,
         config_allow_defaults=True,
-        epoch="best",
+        epoch=args.epoch,
     )
     assert os.path.isdir(args.dataset_dir)
     if not HAS_OCTAVE:
@@ -311,8 +311,28 @@ if __name__ == "__main__":
     parser.add_argument(
         "dataset_dir",
         type=str,
-        help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'",
+        help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'.",
     )
-    parser.add_argument("--metric-workers", type=int, default=4)
+    parser.add_argument(
+        "--epoch",
+        "-e",
+        default="latest",
+        type=str,
+        help="Epoch for checkpoint loading. Can be one of ['best', 'latest', <int>].",
+    )
+    parser.add_argument(
+        "--metric-workers",
+        type=int,
+        default=4,
+        help="Number of worker processes for metric calculation.",
+    )
     args = parser.parse_args()
+    if args.epoch not in ("best", "latest"):
+        try:
+            args.epoch = int(args.epoch)
+        except ValueError:
+            print(
+                "`epoch` must be one of ['best', 'latest', <int>], where int is the epoch number."
+            )
+            exit(1)
     main(args)
