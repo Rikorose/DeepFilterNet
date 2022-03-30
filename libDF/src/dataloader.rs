@@ -226,11 +226,18 @@ impl DataLoader {
     }
 
     pub fn batch_size<S: Into<Split>>(&self, split: S) -> usize {
-        let split = split.into();
-        if split == Split::Train {
+        if split.into() == Split::Train {
             self.batch_size_train
         } else {
             self.batch_size_eval
+        }
+    }
+
+    pub fn set_batch_size<S: Into<Split>>(&mut self, batch_size: usize, split: S) {
+        if split.into() == Split::Train {
+            self.batch_size_train = batch_size;
+        } else {
+            self.batch_size_eval = batch_size;
         }
     }
 

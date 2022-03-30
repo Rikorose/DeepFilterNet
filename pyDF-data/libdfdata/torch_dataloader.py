@@ -56,10 +56,10 @@ class Batch:
     def __repr__(self):
         bs = len(self.lengths)
         s = f"Batch of size {bs}:\n"
-        for i in range(bs):
-            s += f"    length: {self.lengths[i]}\n"
-            s += f"    snr: {self.snr[i]}\n"
-            s += f"    gain: {self.gain[i]}\n"
+        snrs = "".join(f"{s}," for s in self.snr)[:-1]
+        gains = "".join(f"{g}," for g in self.gain)[:-1]
+        s += f"    SNRs: {snrs}\n"
+        s += f"    Gains: {gains}\n"
         return s
 
 
@@ -132,6 +132,9 @@ class PytorchDataLoader:
         self.timings_py: List[float] = []
         self.timings_rs: List[torch.Tensor] = []
         atexit.register(self.loader.cleanup)
+
+    def set_batch_size(self, batch_size: int, split: str):
+        self.loader.set_batch_size(batch_size, split)
 
     def cleanup_pin_memory_thread(self):
         if self.pin_memory:
