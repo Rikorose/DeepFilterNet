@@ -147,6 +147,19 @@ def main():
         snrs=config("DATALOADER_SNRS", [-5, 0, 5, 10, 20, 40], Csv(int), section="train"),  # type: ignore
     )
 
+    # Batch size scheduling limits the batch size for the first epochs. It will increase the batch
+    # size during training as specified. Used format is a comma separated list containing
+    # epoch/batch size tuples where each tuple is sparated via '/':
+    # '<epoch>/<batch_size>,<epoch>/<batch_size>,<epoch>/<batch_size>'
+    # The first epoch has to be 0, later epoch may modify the batch size as specified.
+    batch_size_scheduling = config("BATCH_SIZE_SCHEDULING", [], type=Csv(str), section="train")
+    if len(batch_size_scheduling) > 0:
+        ic(batch_size_scheduling)
+        batch_size_scheduling = [bs.split("/") for bs in batch_size_scheduling]
+        ic(batch_size_scheduling)
+        batch_size_scheduling = [(int(bs[0]), int(bs[1])) for bs in batch_size_scheduling]
+        ic(batch_size_scheduling)
+
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
     opt = load_opt(
