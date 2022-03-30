@@ -30,6 +30,7 @@ from df.utils import (
     detach_hidden,
     get_norm_alpha,
     make_np,
+    get_host,
 )
 from libdf import DF
 from libdfdata import PytorchDataLoader as DataLoader
@@ -55,6 +56,7 @@ def main():
     )
     parser.add_argument(
         "--host-batchsize-config",
+        "-b",
         type=str,
         default=None,
         help="Path to a host specific batch size config.",
@@ -74,20 +76,24 @@ def main():
     log_level = "DEBUG" if debug else "INFO"
     init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level, model=args.base_dir)
     config_file = os.path.join(args.base_dir, "config.ini")
+    config.load(config_file)
+    seed = config("SEED", 42, int, section="train")
+    check_manual_seed(seed)
+    logger.info("Running on device {}".format(get_device()))
+
+    # Maybe update batch size
     if args.host_batchsize_config is not None:
         try:
             sys.path.append(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             )
-            from scripts.set_batch_size import main as set_batch_size # type: ignore
+            from scripts.set_batch_size import main as set_batch_size  # type: ignore
 
-            set_batch_size(config_file, args.host_batchsize_config)
+            key = get_host() + "_" + config.get("model")
+            set_batch_size(config_file, args.host_batchsize_config, host_key=key)
+            config.load(config_file)  # Load again
         except Exception as e:
             logger.error(f"Could not apply host specific batch size config: {e}")
-    config.load(config_file)
-    seed = config("SEED", 42, int, section="train")
-    check_manual_seed(seed)
-    logger.info("Running on device {}".format(get_device()))
 
     signal.signal(signal.SIGUSR1, get_sigusr1_handler(args.base_dir))
 
@@ -129,7 +135,7 @@ def main():
         hop_size=p.hop_size,
         nb_erb=p.nb_erb,
         nb_spec=p.nb_df,
-        norm_alpha=get_norm_alpha(),
+        norm_alpha=get_norm_alpha(log=False),
         p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
         prefetch=config("NUM_PREFETCH_BATCHES", 32, int, section="train"),

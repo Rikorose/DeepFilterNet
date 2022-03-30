@@ -167,6 +167,7 @@ cd "$PROJECT_HOME"/DeepFilterNet/df/
 printf "\n***Starting training***\n\n"
 
 PYTHONPATH="$PROJECT_HOME/DeepFilterNet/" python train.py \
+  --host-batchsize-config $CLUSTER/host_batchsize.ini \
   "$DATA_CFG" \
   "$DATA_DIR" \
   "$BASE_DIR" \
