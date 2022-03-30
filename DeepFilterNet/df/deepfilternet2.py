@@ -273,7 +273,6 @@ class DfNet(nn.Module):
         erb_widths = [32, 64, 64, 64]
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
-        ic(self.erb_dec)
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
         self.df_order = p.df_order
