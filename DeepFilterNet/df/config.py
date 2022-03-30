@@ -33,9 +33,11 @@ class Config:
         self.modified = False
         self.allow_defaults = True
 
-    def load(self, path: Optional[str], config_must_exist=False, allow_defaults=True):
+    def load(
+        self, path: Optional[str], config_must_exist=False, allow_defaults=True, allow_reload=False
+    ):
         self.allow_defaults = allow_defaults
-        if self.parser is not None:
+        if self.parser is not None and not allow_reload:
             raise ValueError("Config already loaded")
         self.parser = ConfigParser()
         self.path = path
