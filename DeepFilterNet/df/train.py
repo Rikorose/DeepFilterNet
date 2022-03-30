@@ -28,9 +28,9 @@ from df.utils import (
     check_finite_module,
     check_manual_seed,
     detach_hidden,
+    get_host,
     get_norm_alpha,
     make_np,
-    get_host,
 )
 from libdf import DF
 from libdfdata import PytorchDataLoader as DataLoader
@@ -89,11 +89,11 @@ def main():
             )
             from scripts.set_batch_size import main as set_batch_size  # type: ignore
 
-            key = get_host() + "_" + config.get("model")
+            key = get_host() + "_" + config.get("model", section="train")
             set_batch_size(config_file, args.host_batchsize_config, host_key=key)
-            config.load(config_file)  # Load again
+            config.load(config_file, allow_reload=True)  # Load again
         except Exception as e:
-            logger.error(f"Could not apply host specific batch size config: {e}")
+            logger.error(f"Could not apply host specific batch size config: {str(e)}")
 
     signal.signal(signal.SIGUSR1, get_sigusr1_handler(args.base_dir))
 
@@ -149,16 +149,17 @@ def main():
 
     # Batch size scheduling limits the batch size for the first epochs. It will increase the batch
     # size during training as specified. Used format is a comma separated list containing
-    # epoch/batch size tuples where each tuple is sparated via '/':
+    # epoch/batch size tuples where each tuple is separated via '/':
     # '<epoch>/<batch_size>,<epoch>/<batch_size>,<epoch>/<batch_size>'
     # The first epoch has to be 0, later epoch may modify the batch size as specified.
-    batch_size_scheduling = config("BATCH_SIZE_SCHEDULING", [], type=Csv(str), section="train")
+    # This only applies to training batch size.
+    batch_size_scheduling: List[str] = config("BATCH_SIZE_SCHEDULING", [], Csv(str), section="train")  # type: ignore
     if len(batch_size_scheduling) > 0:
-        ic(batch_size_scheduling)
-        batch_size_scheduling = [bs.split("/") for bs in batch_size_scheduling]
-        ic(batch_size_scheduling)
-        batch_size_scheduling = [(int(bs[0]), int(bs[1])) for bs in batch_size_scheduling]
-        ic(batch_size_scheduling)
+        batch_size_scheduling = [
+            (int(bs[0]), int(bs[1])) for bs in (bs.split("/") for bs in batch_size_scheduling)
+        ]
+        assert batch_size_scheduling[0][0] == 0  # First epoch must be 0
+        logger.info("Running with learning rate scheduling")
 
     max_epochs = config("MAX_EPOCHS", 10, int, section="train")
     assert epoch >= 0
@@ -209,6 +210,14 @@ def main():
     # Save default values to disk
     config.save(os.path.join(args.base_dir, "config.ini"))
     for epoch in range(epoch, max_epochs):
+        if len(batch_size_scheduling) > 0:
+            # Get current batch size
+            scheduling_bs = bs
+            for (e, b) in batch_size_scheduling:
+                if e <= epoch:
+                    # Update bs, but don't go higher than the batch size specified in the config
+                    scheduling_bs = min(b, bs)
+            dataloader.set_batch_size(scheduling_bs, "train")
         train_loss = run_epoch(
             model=model,
             epoch=epoch,
