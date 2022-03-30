@@ -248,6 +248,10 @@ impl _FdDataLoader {
     fn dataset_len(&self, split: &str) -> usize {
         self.loader.dataset_len(split)
     }
+
+    fn set_batch_size(&mut self, batch_size: usize, split: &str) {
+        self.loader.set_batch_size(batch_size, split)
+    }
 }
 fn cache_path(cfg_path: &str) -> PathBuf {
     let mut p = Path::new(cfg_path).to_path_buf();
