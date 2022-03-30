@@ -22,7 +22,7 @@ def update_batch_size(
         # Overwrite training config
         if current_bs is not None and batchconfig_bs != current_bs:
             print(
-                f"Found host specific {batchconfig_key} ({batchconfig_bs}) for host {host}. "
+                f"Found host specific {batchconfig_key} ({batchconfig_bs}) for host {host_key}. "
                 "Updating config."
             )
             if not config_parser.has_section("train"):
@@ -32,7 +32,7 @@ def update_batch_size(
     elif current_bs is not None:
         # No host_key specific batch config found. Store current batch size for current host
         print(
-            f"Host specific {batchconfig_key} not found for host {host}. "
+            f"Host specific {batchconfig_key} not found for host {host_key}. "
             "Updating host batch size config."
         )
         if not host_bs_parser.has_section(host_key):
