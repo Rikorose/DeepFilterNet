@@ -410,7 +410,8 @@ def run_epoch(
                         for n, vals in losses.get_summaries()
                     }
                 )
-            log_metrics(f"[{epoch}] [{i}/{max_steps}]", l_dict)
+            step = str(i).rjust(len(str(max_steps)))
+            log_metrics(f"[{epoch}] [{step}/{max_steps}]", l_dict)
             if df_alpha is not None:
                 df_alpha.detach().float()
             summary_write(
