@@ -111,6 +111,8 @@ def write_cp(
     cmp="min",
 ):
     check_finite_module(obj)
+    n_keep = config("n_checkpoint_history", default=3, cast=int, section="train")
+    n_keep_best = config("n_best_checkpoint_history", default=5, cast=int, section="train")
     if metric is not None:
         assert cmp in ("min", "max")
         metric = float(metric)  # Make sure it is not an integer
@@ -129,12 +131,11 @@ def write_cp(
                 np.savetxt(prev_best_f, np.array([[float(epoch), metric]]))
                 cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}.best")
                 torch.save(obj.state_dict(), cp_name)
-                cleanup(name, dirname, extension + ".best", nkeep=1)
+                cleanup(name, dirname, extension + ".best", nkeep=n_keep_best)
     cp_name = os.path.join(dirname, f"{name}_{epoch}.{extension}")
     logger.info(f"Writing checkpoint {cp_name} with epoch {epoch}")
     torch.save(obj.state_dict(), cp_name)
-    n_old_cps = config("n_checkpoint_history", default=3, cast=int, section="train")
-    cleanup(name, dirname, extension, nkeep=n_old_cps)
+    cleanup(name, dirname, extension, nkeep=n_keep)
 
 
 def cleanup(name: str, dirname: str, extension: str, nkeep=5):
