@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import signal
+import sys
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -52,6 +53,12 @@ def main():
     parser.add_argument(
         "base_dir", type=str, help="Directory to store logs, summaries, checkpoints, etc."
     )
+    parser.add_argument(
+        "--host-batchsize-config",
+        type=str,
+        default=None,
+        help="Path to a host specific batch size config.",
+    )
     parser.add_argument("--no-resume", action="store_false", dest="resume")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-debug", action="store_false", dest="debug")
@@ -66,7 +73,18 @@ def main():
     debug = args.debug
     log_level = "DEBUG" if debug else "INFO"
     init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level, model=args.base_dir)
-    config.load(os.path.join(args.base_dir, "config.ini"))
+    config_file = os.path.join(args.base_dir, "config.ini")
+    if args.host_batchsize_config is not None:
+        try:
+            sys.path.append(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            )
+            from scripts.set_batch_size import main as set_batch_size # type: ignore
+
+            set_batch_size(config_file, args.host_batchsize_config)
+        except Exception as e:
+            logger.error(f"Could not apply host specific batch size config: {e}")
+    config.load(config_file)
     seed = config("SEED", 42, int, section="train")
     check_manual_seed(seed)
     logger.info("Running on device {}".format(get_device()))
