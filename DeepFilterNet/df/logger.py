@@ -2,7 +2,7 @@ import os
 import sys
 from collections import defaultdict
 from copy import deepcopy
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -83,11 +83,28 @@ class Formatter:
         return self.fmt
 
 
+def _metrics_key(k_: Tuple[str, float]):
+    k0 = k_[0]
+    ks = k0.split("_")
+    if len(ks) >= 2:
+        return int(ks[-1])
+    elif k0 == "loss":
+        return -999
+    elif "loss" in k0.lower():
+        return -998
+    elif k0 == "lr":
+        return 998
+    elif k0 == "wd":
+        return 999
+    else:
+        return -101
+
+
 def log_metrics(prefix: str, metrics: Dict[str, Number]):
     msg = ""
     stages = defaultdict(str)
     loss_msg = ""
-    for n, v in sorted(metrics.items()):
+    for n, v in sorted(metrics.items(), key=_metrics_key):
         if abs(v) > 1e-3:
             m = f" | {n}: {v:.5f}"
         else:
@@ -95,7 +112,7 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
         if "stage" in n:
             s = n.split("stage_")[1].split("_snr")[0]
             stages[s] += m.replace(f"stage_{s}_", "")
-        elif "valid" in prefix and "loss" in n.lower():
+        elif ("valid" in prefix or "test" in prefix) and "loss" in n.lower():
             loss_msg += m
         else:
             msg += m
