@@ -154,6 +154,8 @@ def main():
     # The first epoch has to be 0, later epoch may modify the batch size as specified.
     # This only applies to training batch size.
     batch_size_scheduling: List[str] = config("BATCH_SIZE_SCHEDULING", [], Csv(str), section="train")  # type: ignore
+    scheduling_bs = bs
+    prev_scheduling_bs = bs
     if len(batch_size_scheduling) > 0:
         batch_size_scheduling = [
             (int(bs[0]), int(bs[1])) for bs in (bs.split("/") for bs in batch_size_scheduling)
@@ -212,12 +214,17 @@ def main():
     for epoch in range(epoch, max_epochs):
         if len(batch_size_scheduling) > 0:
             # Get current batch size
-            scheduling_bs = bs
             for (e, b) in batch_size_scheduling:
                 if e <= epoch:
                     # Update bs, but don't go higher than the batch size specified in the config
                     scheduling_bs = min(b, bs)
-            dataloader.set_batch_size(scheduling_bs, "train")
+            if prev_scheduling_bs != scheduling_bs:
+                logger.info(f"Batch scheduling | Setting batch size to {scheduling_bs}")
+                dataloader.set_batch_size(scheduling_bs, "train")
+                # Update lr/wd scheduling since dataloader len changed
+                lrs = setup_lrs(len(dataloader))
+                wds = setup_wds(len(dataloader))
+                prev_scheduling_bs = scheduling_bs
         train_loss = run_epoch(
             model=model,
             epoch=epoch,
