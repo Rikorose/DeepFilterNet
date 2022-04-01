@@ -1,11 +1,10 @@
 from functools import partial
-from typing import Final, Optional, Tuple
+from typing import Final, List, Optional, Tuple
 
 import torch
 from icecream import ic  # noqa
 from loguru import logger
 from torch import Tensor, nn
-from torch.nn import functional as F
 
 from df.config import Csv, DfParams, config
 from df.modules import (
@@ -14,11 +13,12 @@ from df.modules import (
     DfOp,
     GroupedGRU,
     GroupedLinear,
+    GroupedLinearEinsum,
     Mask,
     erb_fb,
     get_device,
 )
-from df.multistagenet import ComplexCompression, FreqStage, GroupedLinearMS, LSNRNet, MagCompression
+from df.multistagenet import MagCompression
 from libdf import DF
 
 
@@ -40,16 +40,23 @@ class ModelParams(DfParams):
             "CONVT_DEPTHWISE", cast=bool, default=True, section=self.section
         )
         self.conv_kernel: List[int] = config(
-            "CONV_KERNEL", cast=Csv(int), default=(1, 3), section=self.section
+            "CONV_KERNEL", cast=Csv(int), default=(1, 3), section=self.section  # type: ignore
         )
         self.emb_hidden_dim: int = config(
             "EMB_HIDDEN_DIM", cast=int, default=256, section=self.section
         )
         self.emb_num_layers: int = config(
-            "EMB_NUM_LAYERS", cast=int, default=1, section=self.section
+            "EMB_NUM_LAYERS", cast=int, default=2, section=self.section
         )
         self.df_hidden_dim: int = config(
             "DF_HIDDEN_DIM", cast=int, default=256, section=self.section
+        )
+        self.df_gru_skip: str = config("DF_GRU_SKIP", default="none", section=self.section)
+        self.df_output_layer: str = config(
+            "DF_OUTPUT_LAYER", default="linear", section=self.section
+        )
+        self.df_pathway_kernel_size_t: int = config(
+            "DF_PATHWAY_KERNEL_SIZE_T", cast=int, default=1, section=self.section
         )
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
@@ -217,16 +224,81 @@ class DfDecoder(nn.Module):
         self.gru_groups = p.gru_groups
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
-        self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=1)
+        kt = p.df_pathway_kernel_size_t
+        self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=(kt, 1))
         self.df_gru = GroupedGRU(
             p.emb_hidden_dim,
-            self.df_n_hidden,
+            p.df_hidden_dim,
             num_layers=self.df_n_layers,
-            batch_first=False,
+            batch_first=True,
             groups=p.gru_groups,
             shuffle=p.group_shuffle,
             add_outputs=True,
         )
+        p.df_gru_skip = p.df_gru_skip.lower()
+        assert p.df_gru_skip in ("none", "identity", "groupedlinear")
+        self.df_skip: Optional[nn.Module]
+        if p.df_gru_skip == "none":
+            self.df_skip = None
+        elif p.df_gru_skip == "identity":
+            assert p.emb_hidden_dim == p.df_hidden_dim, "Dimensions do not match"
+            self.df_skip = nn.Identity()
+        elif p.df_gru_skip == "groupedlinear":
+            self.df_skip = GroupedLinearEinsum(p.emb_hidden_dim, p.df_hidden_dim, groups=8)
+        else:
+            raise NotImplementedError()
+        assert p.df_output_layer in ("linear", "groupedlinear")
+        self.df_out: nn.Module
+        out_dim = self.df_bins * self.df_order * 2
+        if p.df_output_layer == "linear":
+            df_out = nn.Linear(self.df_n_hidden, out_dim)
+        elif p.df_output_layer == "groupedlinear":
+            df_out = GroupedLinearEinsum(self.df_n_hidden, out_dim, groups=8)
+        else:
+            raise NotImplementedError
+        self.df_out = nn.Sequential(df_out, nn.Tanh())
+        self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
+
+    def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
+        b, t, _ = emb.shape
+        c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
+        if self.df_skip is not None:
+            c += self.df_skip(emb)
+        c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
+        alpha = self.df_fc_a(c)  # [B, T, 1]
+        c = self.df_out(c)  # [B, T, F*O*2], O: df_order
+        c = c.view(b, t, self.df_bins, self.df_order * 2)  # [B, T, F, O*2]
+        c = c.add(c0).view(b, t, self.df_order, 2, self.df_bins).transpose(3, 4)  # [B, T, O, F, 2]
+        return c, alpha
+
+
+class DfDecoderLinear(nn.Module):
+    def __init__(self):
+        super().__init__()
+        p = ModelParams()
+        layer_width = p.conv_ch
+        self.emb_dim = p.emb_hidden_dim
+
+        self.df_n_hidden = p.df_hidden_dim
+        self.df_n_layers = p.df_num_layers
+        self.df_order = p.df_order
+        self.df_bins = p.nb_df
+        self.df_lookahead = p.df_lookahead
+        self.gru_groups = p.gru_groups
+
+        conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
+        kt = p.df_pathway_kernel_size_t
+        self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=(kt, 1))
+        self.df_gru = GroupedGRU(
+            p.emb_hidden_dim,
+            self.df_n_hidden,
+            num_layers=self.df_n_layers,
+            batch_first=True,
+            groups=p.gru_groups,
+            shuffle=p.group_shuffle,
+            add_outputs=True,
+        )
+        assert p.df_output_layer == "linear"
         self.df_fc_out = nn.Sequential(
             nn.Linear(self.df_n_hidden, self.df_bins * self.df_order * 2), nn.Tanh()
         )
@@ -234,9 +306,8 @@ class DfDecoder(nn.Module):
 
     def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
-        c, _ = self.df_gru(emb.transpose(0, 1))  # [T, B, H], H: df_n_hidden
-        c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F]
-        c = c.transpose(0, 1)  # [B, T, H]
+        c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
+        c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F], channels_last
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_fc_out(c)  # [B, T, F*O*2], O: df_order
         c = c.view(b, t, self.df_order * 2, self.df_bins)  # [B, T, O*2, F]
@@ -270,7 +341,6 @@ class DfNet(nn.Module):
         else:
             self.pad = nn.Identity()
         self.register_buffer("erb_fb", erb_fb, persistent=False)
-        erb_widths = [32, 64, 64, 64]
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
@@ -278,7 +348,10 @@ class DfNet(nn.Module):
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
-        self.df_dec = DfDecoder()
+        if p.df_output_layer == "linear":
+            self.df_dec = DfDecoderLinear()
+        else:
+            self.df_dec = DfDecoder()
         self.df_op = torch.jit.script(
             DfOp(
                 p.nb_df,
@@ -321,8 +394,6 @@ class DfNet(nn.Module):
         # feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
         # ic(feat_spec.shape)
         df_coefs, df_alpha = self.df_dec(emb, c0)
-        spec = self.df_op(spec, df_coefs, df_alpha)
-        # ic(df_coefs.shape, spec.shape)
 
         # df_coefs, _, _ = self.df_stage(feat_spec)
         # df_coefs = df_coefs.unflatten(1, (self.df_order, 2)).permute(0, 3, 1, 4, 2)
