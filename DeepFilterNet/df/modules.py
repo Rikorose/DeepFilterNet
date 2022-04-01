@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torch.nn import init
+from torch.nn.parameter import Parameter
 from typing_extensions import Final
 
 from df.model import ModelParams
@@ -643,6 +645,38 @@ class GroupedGRU(nn.Module):
                 output = input
         outstate = torch.cat(outstates, dim=0)
         return output, outstate
+
+
+class GroupedLinearEinsum(nn.Module):
+    input_size: Final[int]
+    hidden_size: Final[int]
+    groups: Final[int]
+
+    def __init__(self, input_size: int, hidden_size: int, groups: int = 1):
+        super().__init__()
+        # self.weight: Tensor
+        ic(input_size, hidden_size, groups)
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.groups = groups
+        self.ws = input_size // groups
+        self.register_parameter(
+            "weight",
+            Parameter(
+                torch.zeros(groups, input_size // groups, hidden_size // groups), requires_grad=True
+            ),
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))  # type: ignore
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [..., I]
+        x = x.unflatten(-1, (self.groups, self.ws))  # [..., G, I/G]
+        x = torch.einsum("...gi,...gih->...gh", x, self.weight)  # [..., G, H/G]
+        x = x.flatten(2, 3)  # [B, T, H]
+        return x
 
 
 class GroupedLinear(nn.Module):
