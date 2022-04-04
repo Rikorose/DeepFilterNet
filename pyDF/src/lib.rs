@@ -108,6 +108,10 @@ impl DF {
         Ok(self.state.window.clone().into_pyarray(py))
     }
 
+    fn sr(&self) -> usize {
+        self.state.sr
+    }
+
     fn reset(&mut self) {
         self.state.reset();
     }
