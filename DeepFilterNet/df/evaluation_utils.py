@@ -76,6 +76,7 @@ def evaluation_loop(
         "stoi": partial(StoiMetric, sr=sr),
         "sisdr": SiSDRMetric,
         "composite": partial(CompositeMetric, sr=sr),
+        "pesq": partial(PesqMetric, sr=sr),
     }
     if n_workers >= 1:
         pool_fn = mp.Pool
@@ -283,6 +284,15 @@ class StoiMetric(MPMetric):
     def compute_metric(self, clean, degraded) -> float:
         assert self.sr is not None
         return stoi(clean=as_numpy(clean), degraded=as_numpy(degraded), sr=self.sr)
+
+
+class PesqMetric(MPMetric):
+    def __init__(self, sr: int, pool: Pool):
+        super().__init__(name="PESQ", pool=pool, source_sr=sr, target_sr=16000)
+
+    def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
+        assert self.sr is not None
+        return pesq(self.sr, as_numpy(clean), as_numpy(degraded), "wb")
 
 
 class CompositeMetric(MPMetric):
