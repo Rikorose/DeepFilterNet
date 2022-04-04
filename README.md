@@ -183,13 +183,12 @@ python df/train.py path/to/dataset.cfg path/to/data_dir/ path/to/base_dir/
 This code accompanies the paper 'DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering'.
 
 ```bibtex
-@misc{schröter2021deepfilternet,
+@inproceedings{schroeter2022deepfilternet,
       title={DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering}, 
       author={Hendrik Schröter and Alberto N. Escalante-B. and Tobias Rosenkranz and Andreas Maier},
-      year={2021},
-      eprint={2110.05588},
-      archivePrefix={arXiv},
-      primaryClass={eess.AS}
+      booktitle={ICASSP 2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+      year={2022},
+      organization={IEEE}
 }
 ```
 
