@@ -24,7 +24,10 @@ from libdf import DF, erb, erb_norm, unit_norm
 
 def main(args):
     model, df_state, suffix = init_df(
-        args.model_base_dir, post_filter=args.pf, log_level=args.log_level
+        args.model_base_dir,
+        post_filter=args.pf,
+        log_level=args.log_level,
+        config_allow_defaults=True,
     )
     if args.output_dir is None:
         args.output_dir = "."
@@ -52,6 +55,7 @@ def init_df(
     model_base_dir: Optional[str] = None,
     post_filter: bool = False,
     log_level: str = "INFO",
+    log_file: str = "enhance.log",
     config_allow_defaults: bool = False,
     epoch: str = "best",
 ) -> Tuple[nn.Module, DF, str]:
@@ -78,7 +82,7 @@ def init_df(
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
     init_logger(
-        file=os.path.join(model_base_dir, "enhance.log"), level=log_level, model=model_base_dir
+        file=os.path.join(model_base_dir, log_file), level=log_level, model=model_base_dir
     )
     if use_default_model:
         logger.info(f"Using default model at {model_base_dir}")
@@ -195,7 +199,7 @@ def enhance(
     spec, erb_feat, spec_feat = df_features(audio, df_state, device=get_device())
     enhanced = model(spec, erb_feat, spec_feat)[0].cpu()
     enhanced = as_complex(enhanced.squeeze(1))
-    if atten_lim_db is not None:
+    if atten_lim_db is not None and abs(atten_lim_db) > 0:
         lim = 10 ** (-abs(atten_lim_db) / 20)
         enhanced = as_complex(spec.squeeze(1)) * lim + enhanced * (1 - lim)
     audio = torch.as_tensor(df_state.synthesis(enhanced.numpy()))
@@ -247,6 +251,7 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--atten-lim",
+        "-a",
         type=int,
         default=None,
         help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
