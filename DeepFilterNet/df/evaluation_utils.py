@@ -1,18 +1,24 @@
+import os
 from abc import ABC, abstractmethod
 from collections import deque
+from functools import partial
+from multiprocessing.dummy import Pool as DummyPool
 from tempfile import NamedTemporaryFile
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import pystoi
 import torch
+import torch.multiprocessing as mp
 from loguru import logger
 from pesq import pesq
+from torch import Tensor
 from torch.multiprocessing.pool import Pool
 from torchaudio.transforms import Resample
 
-from df.enhance import save_audio
-from df.utils import get_resample_params, resample
+from df.enhance import df_features, load_audio, save_audio
+from df.utils import as_complex, get_device, get_resample_params, resample
+from libdf import DF
 
 RESAMPLE_METHOD = "sinc_fast"
 
@@ -46,31 +52,84 @@ except ImportError:
                     logged.add(progress)
 
 
+@torch.no_grad()
+def enhance(model, df_state, audio):
+    model.eval()
+    if hasattr(model, "reset_h0"):
+        model.reset_h0(batch_size=1, device=get_device())
+    spec, erb_feat, spec_feat = df_features(audio, df_state, get_device())
+    spec = model(spec, erb_feat, spec_feat)[0]
+    return df_state.synthesis(as_complex(spec.squeeze(0)).cpu().numpy())
+
+
+def evaluation_loop(
+    df_state: DF,
+    model,
+    clean_files: List[str],
+    noisy_files: List[str],
+    metric_list: List[str] = ["stoi", "sisdr", "composite"],
+    save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
+    n_workers: int = 4,
+) -> Dict[str, float]:
+    sr = df_state.sr()
+    metrics_dict = {
+        "stoi": partial(StoiMetric, sr=sr),
+        "sisdr": SiSDRMetric,
+        "composite": partial(CompositeMetric, sr=sr),
+    }
+    if n_workers >= 1:
+        pool_fn = mp.Pool
+    else:
+        pool_fn = DummyPool
+    with pool_fn(processes=max(1, n_workers)) as pool:
+        metrics: List[Metric] = [metrics_dict[m.lower()](pool=pool) for m in metric_list]
+        for noisyfn, cleanfn in tqdm(zip(noisy_files, clean_files), total=len(noisy_files)):
+            noisy, _ = load_audio(noisyfn, sr)
+            clean, _ = load_audio(cleanfn, sr)
+            logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
+            enh = enhance(model, df_state, noisy)[0]
+            clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
+            noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
+            for m in metrics:
+                m.add(clean=clean, enhanced=enh, noisy=noisy)
+            if save_audio_callback is not None:
+                enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
+                save_audio_callback(cleanfn, enh)
+            break
+        logger.info("Waiting for metrics computation completion. This could take a few minutes.")
+        out_dict = {}
+        for m in metrics:
+            for k, v in m.mean().items():
+                out_dict[k] = v
+        return out_dict
+
+
 def stoi(clean, degraded, sr, extended=False):
     assert len(clean.shape) == 1
     if sr != 10000:
         clean = resample(torch.as_tensor(clean), sr, 10000, method=RESAMPLE_METHOD).numpy()
         degraded = resample(torch.as_tensor(degraded), sr, 10000, method=RESAMPLE_METHOD).numpy()
         sr = 10000
-    return pystoi.stoi(x=clean, y=degraded, fs_sig=sr, extended=extended)
+    stoi = pystoi.stoi(x=clean, y=degraded, fs_sig=sr, extended=extended)
+    return stoi
 
 
-def composite(clean: np.ndarray, degraded: np.ndarray, sr: int) -> np.ndarray:
+def composite(
+    clean: Union[np.ndarray, Tensor], degraded: Union[np.ndarray, Tensor], sr: int
+) -> np.ndarray:
     """Compute pesq, csig, cbak, covl, ssnr"""
-    assert len(clean.shape) == 1
+    assert len(clean.shape) == 1, f"Input must be 1D array, but got input shape {clean.shape}"
     if sr != 16000:
         clean = resample(torch.as_tensor(clean), sr, 16000, method=RESAMPLE_METHOD).numpy()
         degraded = resample(torch.as_tensor(degraded), sr, 16000, method=RESAMPLE_METHOD).numpy()
         sr = 16000
-    clean = as_numpy(clean)
-    degraded = as_numpy(degraded)
     if HAS_OCTAVE:
         with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:
-            save_audio(cf.name, clean, sr)
-            save_audio(nf.name, degraded, sr)
+            save_audio(cf.name, clean, sr, dtype=torch.float32)
+            save_audio(nf.name, degraded, sr, dtype=torch.float32)
             c = semetrics.composite(cf.name, nf.name)
     else:
-        c = [pesq(sr, clean, degraded, "wb"), 0, 0, 0, 0]
+        c = [pesq(sr, as_numpy(clean), as_numpy(degraded), "wb"), 0, 0, 0, 0]
     return np.asarray(c)
 
 
@@ -122,18 +181,6 @@ class Metric(ABC):
     def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
         pass
 
-    def resample_and_compute(
-        self, clean, enhanced, noisy
-    ) -> Tuple[Union[float, np.ndarray, None], ...]:
-        clean = self.maybe_resample(clean)
-        enhanced = self.maybe_resample(enhanced)
-        m_enh = self.compute_metric(clean=clean, degraded=enhanced)
-        m_noisy = None
-        if noisy is not None:
-            noisy = self.maybe_resample(noisy)
-            m_noisy = self.compute_metric(clean=clean, degraded=noisy)
-        return m_enh, m_noisy
-
     def _add_values_enh(self, values_enh: Union[float, np.ndarray]):
         if isinstance(values_enh, float):
             values_enh = np.asarray([values_enh])
@@ -146,18 +193,18 @@ class Metric(ABC):
         for k, v in zip(self.noisy_values.keys(), values_noisy):
             self.noisy_values[k].append(v)
 
-    def maybe_resample(self, x):
+    def maybe_resample(self, x) -> Tensor:
         if self.resampler is not None:
             x = self.resampler.forward(torch.as_tensor(x))
         return x
 
     def add(self, clean, enhanced, noisy):
-        clean = self.maybe_resample(clean)
-        enhanced = self.maybe_resample(enhanced)
+        clean = self.maybe_resample(clean).squeeze(0)
+        enhanced = self.maybe_resample(enhanced).squeeze(0)
         values_enh = self.compute_metric(clean=clean, degraded=enhanced)
         self._add_values_enh(values_enh)
         if noisy is not None:
-            noisy = self.maybe_resample(noisy)
+            noisy = self.maybe_resample(noisy).squeeze(0)
             values_noisy = self.compute_metric(clean=clean, degraded=enhanced)
             self._add_values_noisy(values_noisy)
 
@@ -184,13 +231,22 @@ class MPMetric(Metric):
         self.worker_results = deque()
 
     def add(self, clean, enhanced, noisy):
-        clean = self.maybe_resample(torch.as_tensor(clean))
-        enhanced = self.maybe_resample(torch.as_tensor(enhanced))
-        self.pool.apply_async(self.compute_metric, (clean, enhanced), callback=self._add_values_enh)
+        clean = self.maybe_resample(torch.as_tensor(clean)).squeeze(0)
+        enhanced = self.maybe_resample(torch.as_tensor(enhanced)).squeeze(0)
+        h = self.pool.apply_async(
+            self.compute_metric,
+            (clean, enhanced),
+            callback=self._add_values_enh,
+            error_callback=logger.error,
+        )
+        h.get()
         if noisy is not None:
-            noisy = self.maybe_resample(torch.as_tensor(noisy))
+            noisy = self.maybe_resample(torch.as_tensor(noisy)).squeeze(0)
             h = self.pool.apply_async(
-                self.compute_metric, (clean, noisy), callback=self._add_values_noisy
+                self.compute_metric,
+                (clean, noisy),
+                callback=self._add_values_noisy,
+                error_callback=logger.error,
             )
             self.worker_results.append(h)
 
@@ -236,10 +292,12 @@ class CompositeMetric(MPMetric):
 
     def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
+        ic(clean.shape, self.sr, HAS_OCTAVE)
+        c = composite(clean=clean.squeeze(0), degraded=degraded.squeeze(0), sr=self.sr)
         if HAS_OCTAVE:
-            return composite(clean=clean, degraded=degraded, sr=self.sr)
+            return c
         else:
-            return composite(clean=clean, degraded=degraded, sr=self.sr)[0]
+            return c[0]
 
 
 def as_numpy(x) -> np.ndarray:
