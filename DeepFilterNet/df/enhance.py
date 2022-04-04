@@ -81,9 +81,7 @@ def init_df(
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
-    init_logger(
-        file=os.path.join(model_base_dir, log_file), level=log_level, model=model_base_dir
-    )
+    init_logger(file=os.path.join(model_base_dir, log_file), level=log_level, model=model_base_dir)
     if use_default_model:
         logger.info(f"Using default model at {model_base_dir}")
     config.load(
@@ -164,8 +162,9 @@ def save_audio(
     audio: Union[Tensor, ndarray],
     sr: int,
     output_dir: Optional[str] = None,
-    suffix: str = None,
+    suffix: Optional[str] = None,
     log: bool = False,
+    dtype=torch.int16,
 ):
     outpath = file
     if suffix is not None:
@@ -178,7 +177,7 @@ def save_audio(
     audio = torch.as_tensor(audio)
     if audio.ndim == 1:
         audio.unsqueeze_(0)
-    if audio.dtype != torch.int16:
+    if dtype == torch.int16 and audio.dtype != torch.int16:
         audio = (audio * (1 << 15)).to(torch.int16)
     ta.save(outpath, audio, sr)
 
@@ -249,6 +248,7 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
         default="info",
         help="Logger verbosity. Can be one of (debug, info, error, none)",
     )
+    parser.add_argument("--debug", "-d", action="store_const", const="DEBUG", dest="log_level")
     parser.add_argument(
         "--atten-lim",
         "-a",
