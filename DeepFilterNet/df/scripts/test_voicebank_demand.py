@@ -37,6 +37,7 @@ def main(args):
         noisy_files,
         n_workers=args.metric_workers,
         save_audio_callback=save_audio_callback if args.output_dir is not None else None,
+        metric_list=["stoi", "sisdr", "pesq"],
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
