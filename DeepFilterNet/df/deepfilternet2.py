@@ -15,6 +15,7 @@ from df.modules import (
     GroupedLinear,
     GroupedLinearEinsum,
     Mask,
+    SqueezedGRU,
     erb_fb,
     get_device,
 )
@@ -60,6 +61,7 @@ class ModelParams(DfParams):
         )
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.df_n_iter: int = config("DF_N_ITER", cast=int, default=2, section=self.section)
+        self.gru_type: str = config("GRU_TYPE", default="grouped", section=self.section)
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
         self.group_shuffle: bool = config(
@@ -85,16 +87,13 @@ class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
         p = ModelParams()
-        layer_width = p.conv_ch
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
-        self.erb_conv0 = Conv2dNormAct(
-            1, layer_width, kernel_size=(3, 3), bias=False, separable=True
-        )
+        self.erb_conv0 = Conv2dNormAct(1, p.conv_ch, kernel_size=(3, 3), bias=False, separable=True)
         conv_layer = partial(
             Conv2dNormAct,
-            in_ch=layer_width,
-            out_ch=layer_width,
+            in_ch=p.conv_ch,
+            out_ch=p.conv_ch,
             kernel_size=p.conv_kernel,
             bias=False,
             separable=True,
@@ -102,27 +101,37 @@ class Encoder(nn.Module):
         self.erb_conv1 = conv_layer(fstride=2)
         self.erb_conv2 = conv_layer(fstride=2)
         self.erb_conv3 = conv_layer(fstride=1)
-        self.df_conv0 = Conv2dNormAct(
-            2, layer_width, kernel_size=(3, 3), bias=False, separable=True
-        )
+        self.df_conv0 = Conv2dNormAct(2, p.conv_ch, kernel_size=(3, 3), bias=False, separable=True)
         self.df_conv1 = conv_layer(fstride=2)
         self.erb_bins = p.nb_erb
-        self.emb_dim = layer_width * p.nb_erb // 4
-        self.df_fc_emb = GroupedLinear(
-            layer_width * p.nb_df // 2, self.emb_dim, groups=p.lin_groups
-        )
+        self.emb_in_dim = p.conv_ch * p.nb_erb // 4
+        self.emb_out_dim = p.emb_hidden_dim
+        if p.gru_type == "grouped":
+            self.df_fc_emb = GroupedLinear(
+                p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
+            )
+        else:
+            self.emb_dim = p.emb_hidden_dim
+            self.df_fc_emb = GroupedLinearEinsum(
+                p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
+            )
         self.emb_out_dim = p.emb_hidden_dim
         self.emb_n_layers = p.emb_num_layers
-        self.gru_groups = p.gru_groups
-        self.emb_gru = GroupedGRU(
-            self.emb_dim,
-            self.emb_out_dim,
-            num_layers=1,
-            batch_first=True,
-            groups=p.gru_groups,
-            shuffle=p.group_shuffle,
-            add_outputs=True,
-        )
+        assert p.gru_type in ("grouped", "squeeze"), f"But got {p.gru_type}"
+        if p.gru_type == "grouped":
+            self.emb_gru = GroupedGRU(
+                self.emb_in_dim,
+                self.emb_out_dim,
+                num_layers=1,
+                batch_first=True,
+                groups=p.gru_groups,
+                shuffle=p.group_shuffle,
+                add_outputs=True,
+            )
+        else:
+            self.emb_gru = SqueezedGRU(
+                self.emb_in_dim, self.emb_out_dim, num_layers=1, batch_first=True
+            )
         self.lsnr_fc = nn.Sequential(nn.Linear(self.emb_out_dim, 1), nn.Sigmoid())
         self.lsnr_scale = p.lsnr_max - p.lsnr_min
         self.lsnr_offset = p.lsnr_min
@@ -153,27 +162,41 @@ class ErbDecoder(nn.Module):
     def __init__(self):
         super().__init__()
         p = ModelParams()
-        layer_width = p.conv_ch
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
 
-        self.emb_width = layer_width
-        self.emb_dim = self.emb_width * (p.nb_erb // 4)
         self.emb_out_dim = p.emb_hidden_dim
-        self.emb_gru = GroupedGRU(
-            self.emb_dim,
-            self.emb_out_dim,
-            num_layers=p.emb_num_layers - 1,
-            batch_first=True,
-            groups=p.gru_groups,
-            shuffle=p.group_shuffle,
-            add_outputs=True,
-        )
-        self.fc_emb = nn.Sequential(
-            GroupedLinear(
-                p.emb_hidden_dim, self.emb_dim, groups=p.lin_groups, shuffle=p.group_shuffle
-            ),
-            nn.ReLU(inplace=True),
-        )
+
+        if p.gru_type == "grouped":
+            self.emb_gru = GroupedGRU(
+                p.conv_ch * p.nb_erb // 4,  # For compat
+                self.emb_out_dim,
+                num_layers=p.emb_num_layers - 1,
+                batch_first=True,
+                groups=p.gru_groups,
+                shuffle=p.group_shuffle,
+                add_outputs=True,
+            )
+        else:
+            self.emb_gru = SqueezedGRU(
+                self.emb_out_dim,
+                self.emb_out_dim,
+                num_layers=p.emb_num_layers - 1,
+                batch_first=True,
+                gru_skip_op=nn.Identity,
+            )
+        # SqueezedGRU uses GroupedLinearEinsum, so let's use it here as well
+        if p.gru_type:
+            fc_emb = GroupedLinear(
+                p.emb_hidden_dim,
+                p.conv_ch * p.nb_erb // 4,
+                groups=p.lin_groups,
+                shuffle=p.group_shuffle,
+            )
+        else:
+            fc_emb = GroupedLinearEinsum(
+                p.emb_hidden_dim, p.conv_ch * p.nb_erb // 4, groups=p.lin_groups
+            )
+        self.fc_emb = nn.Sequential(fc_emb, nn.ReLU(inplace=True))
         tconv_layer = partial(
             ConvTranspose2dNormAct,
             kernel_size=p.conv_kernel,
@@ -186,15 +209,15 @@ class ErbDecoder(nn.Module):
             separable=True,
         )
         # convt: TransposedConvolution, convp: Pathway (encoder to decoder) convolutions
-        self.conv3p = conv_layer(layer_width, self.emb_width, kernel_size=1)
-        self.convt3 = conv_layer(self.emb_width, layer_width, kernel_size=p.conv_kernel)
-        self.conv2p = conv_layer(layer_width, self.emb_width, kernel_size=1)
-        self.convt2 = tconv_layer(layer_width, layer_width, fstride=2)
-        self.conv1p = conv_layer(layer_width, self.emb_width, kernel_size=1)
-        self.convt1 = tconv_layer(layer_width, layer_width, fstride=2)
-        self.conv0p = conv_layer(layer_width, self.emb_width, kernel_size=1)
+        self.conv3p = conv_layer(p.conv_ch, p.conv_ch, kernel_size=1)
+        self.convt3 = conv_layer(p.conv_ch, p.conv_ch, kernel_size=p.conv_kernel)
+        self.conv2p = conv_layer(p.conv_ch, p.conv_ch, kernel_size=1)
+        self.convt2 = tconv_layer(p.conv_ch, p.conv_ch, fstride=2)
+        self.conv1p = conv_layer(p.conv_ch, p.conv_ch, kernel_size=1)
+        self.convt1 = tconv_layer(p.conv_ch, p.conv_ch, fstride=2)
+        self.conv0p = conv_layer(p.conv_ch, p.conv_ch, kernel_size=1)
         self.conv0_out = conv_layer(
-            layer_width, 1, kernel_size=p.conv_kernel, activation_layer=nn.Sigmoid
+            p.conv_ch, 1, kernel_size=p.conv_kernel, activation_layer=nn.Sigmoid
         )
 
     def forward(self, emb, e3, e2, e1, e0) -> Tensor:
@@ -227,15 +250,24 @@ class DfDecoder(nn.Module):
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
         self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=(kt, 1))
-        self.df_gru = GroupedGRU(
-            p.emb_hidden_dim,
-            p.df_hidden_dim,
-            num_layers=self.df_n_layers,
-            batch_first=True,
-            groups=p.gru_groups,
-            shuffle=p.group_shuffle,
-            add_outputs=True,
-        )
+        if p.gru_type == "grouped":
+            self.df_gru = GroupedGRU(
+                p.emb_hidden_dim,
+                p.df_hidden_dim,
+                num_layers=self.df_n_layers,
+                batch_first=True,
+                groups=p.gru_groups,
+                shuffle=p.group_shuffle,
+                add_outputs=True,
+            )
+        else:
+            self.df_gru = SqueezedGRU(
+                p.emb_hidden_dim,
+                p.df_hidden_dim,
+                num_layers=self.df_n_layers,
+                batch_first=True,
+                gru_skip_op=nn.Identity,
+            )
         p.df_gru_skip = p.df_gru_skip.lower()
         assert p.df_gru_skip in ("none", "identity", "groupedlinear")
         self.df_skip: Optional[nn.Module]
@@ -245,7 +277,7 @@ class DfDecoder(nn.Module):
             assert p.emb_hidden_dim == p.df_hidden_dim, "Dimensions do not match"
             self.df_skip = nn.Identity()
         elif p.df_gru_skip == "groupedlinear":
-            self.df_skip = GroupedLinearEinsum(p.emb_hidden_dim, p.df_hidden_dim, groups=8)
+            self.df_skip = GroupedLinearEinsum(p.emb_hidden_dim, p.df_hidden_dim, groups=p.lin_groups)
         else:
             raise NotImplementedError()
         assert p.df_output_layer in ("linear", "groupedlinear")
@@ -254,7 +286,7 @@ class DfDecoder(nn.Module):
         if p.df_output_layer == "linear":
             df_out = nn.Linear(self.df_n_hidden, out_dim)
         elif p.df_output_layer == "groupedlinear":
-            df_out = GroupedLinearEinsum(self.df_n_hidden, out_dim, groups=8)
+            df_out = GroupedLinearEinsum(self.df_n_hidden, out_dim, groups=p.lin_groups)
         else:
             raise NotImplementedError
         self.df_out = nn.Sequential(df_out, nn.Tanh())
@@ -274,6 +306,7 @@ class DfDecoder(nn.Module):
 
 
 class DfDecoderLinear(nn.Module):
+    # For compat
     def __init__(self):
         super().__init__()
         p = ModelParams()
@@ -338,7 +371,6 @@ class DfNet(nn.Module):
         if p.conv_lookahead > 0:
             pad = (0, 0, -p.conv_lookahead, p.conv_lookahead)
             self.pad = nn.ConstantPad2d(pad, 0.0)
-            # self.pad = nn.ConstantPad2d(pad, 0.0)
         else:
             self.pad = nn.Identity()
         self.register_buffer("erb_fb", erb_fb, persistent=False)
