@@ -277,7 +277,9 @@ class DfDecoder(nn.Module):
             assert p.emb_hidden_dim == p.df_hidden_dim, "Dimensions do not match"
             self.df_skip = nn.Identity()
         elif p.df_gru_skip == "groupedlinear":
-            self.df_skip = GroupedLinearEinsum(p.emb_hidden_dim, p.df_hidden_dim, groups=p.lin_groups)
+            self.df_skip = GroupedLinearEinsum(
+                p.emb_hidden_dim, p.df_hidden_dim, groups=p.lin_groups
+            )
         else:
             raise NotImplementedError()
         assert p.df_output_layer in ("linear", "groupedlinear")
