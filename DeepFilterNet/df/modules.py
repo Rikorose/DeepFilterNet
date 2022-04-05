@@ -647,6 +647,42 @@ class GroupedGRU(nn.Module):
         return output, outstate
 
 
+class SqueezedGRU(nn.Module):
+    input_size: Final[int]
+    hidden_size: Final[int]
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        output_size: Optional[int] = None,
+        num_layers: int = 1,
+        linear_groups: int = 8,
+        batch_first: bool = True,
+        gru_skip_op: Optional[Callable[..., torch.nn.Module]] = None,
+    ):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.linear_in = GroupedLinearEinsum(input_size, hidden_size, linear_groups)
+        self.gru = nn.GRU(hidden_size, hidden_size, num_layers=num_layers, batch_first=batch_first)
+        self.gru_skip = gru_skip_op() if gru_skip_op is not None else None
+        if output_size is not None:
+            self.linear_out = GroupedLinearEinsum(hidden_size, output_size, linear_groups)
+        else:
+            self.linear_out = nn.Identity()
+
+    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        ic(input.shape, self.linear_in)
+        input = self.linear_in(input)
+        ic(input.shape)
+        x, h = self.gru(input, h)
+        if self.gru_skip is not None:
+            x += self.gru_skip(input)
+        x = self.linear_out(x)
+        return x, h
+
+
 class GroupedLinearEinsum(nn.Module):
     input_size: Final[int]
     hidden_size: Final[int]
@@ -658,6 +694,7 @@ class GroupedLinearEinsum(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.groups = groups
+        assert input_size % groups == 0
         self.ws = input_size // groups
         self.register_parameter(
             "weight",
