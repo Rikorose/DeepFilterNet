@@ -60,10 +60,11 @@ def read_cp(
             logger.warning("Could not find `best` checkpoint. Checking for default...")
     if len(checkpoints) == 0:
         checkpoints = glob.glob(os.path.join(dirname, f"{name}*.{extension}"))
+        checkpoints += glob.glob(os.path.join(dirname, f"{name}*.{extension}.best"))
     if len(checkpoints) == 0:
         return None
     if isinstance(epoch, int):
-        latest = next((x for x in checkpoints if get_epoch(x) == epoch), [None])
+        latest = next((x for x in checkpoints if get_epoch(x) == epoch), None)
         if latest is None:
             logger.error(f"Could not find checkpoint of epoch {epoch}")
             exit(1)
