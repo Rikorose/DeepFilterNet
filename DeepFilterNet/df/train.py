@@ -189,7 +189,6 @@ def main():
     val_criteria_rule = config("VALIDATION_CRITERIA_RULE", "min", section="train")
     val_criteria_rule = val_criteria_rule.replace("less", "min").replace("more", "max")
     patience = config("EARLY_STOPPING_PATIENCE", 5, int, section="train")
-    autocast = config("TRAIN_AUTOCAST", False, bool, section="train")
 
     losses = setup_losses()
 
@@ -235,7 +234,6 @@ def main():
             summary_dir=summary_dir,
             lr_scheduler_values=lrs,
             wd_scheduler_values=wds,
-            autocast=autocast,
         )
         metrics = {"loss": train_loss}
         try:
@@ -300,7 +298,6 @@ def run_epoch(
     summary_dir: str,
     lr_scheduler_values: Optional[np.ndarray] = None,
     wd_scheduler_values: Optional[np.ndarray] = None,
-    autocast: bool = False,
 ) -> float:
     global debug
 
@@ -323,8 +320,6 @@ def run_epoch(
     seed = epoch if is_train else 42
     n_nans = 0
     start_steps = epoch * loader.len(split)
-    autocast = autocast and is_train and dev.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=autocast)
 
     for i, batch in enumerate(loader.iter_epoch(split, seed)):
         opt.zero_grad()
@@ -343,44 +338,40 @@ def run_epoch(
         clean = batch.speech.to(dev, non_blocking=True)
         snrs = batch.snr.to(dev, non_blocking=True)
         with set_detect_anomaly(detect_anomaly and is_train), set_grad_enabled(is_train):
-            with torch.cuda.amp.autocast(enabled=autocast):
-                enh, m, lsnr, other = model.forward(
-                    spec=as_real(noisy),
-                    feat_erb=feat_erb,
-                    feat_spec=feat_spec,
+            enh, m, lsnr, other = model.forward(
+                spec=as_real(noisy),
+                feat_erb=feat_erb,
+                feat_spec=feat_spec,
+            )
+            df_alpha, multi_stage_specs = None, []
+            if isinstance(other, Tensor):
+                df_alpha = other
+            elif isinstance(other, (list, tuple)):
+                multi_stage_specs = other
+            try:
+                err = losses.forward(
+                    clean,
+                    noisy,
+                    enh,
+                    m,
+                    lsnr,
+                    df_alpha=df_alpha,
+                    max_freq=batch.max_freq,
+                    snrs=snrs,
+                    multi_stage_specs=multi_stage_specs,
                 )
-                df_alpha, multi_stage_specs = None, []
-                if isinstance(other, Tensor):
-                    df_alpha = other
-                elif isinstance(other, (list, tuple)):
-                    multi_stage_specs = other
-                try:
-                    err = losses.forward(
-                        clean,
-                        noisy,
-                        enh,
-                        m,
-                        lsnr,
-                        df_alpha=df_alpha,
-                        max_freq=batch.max_freq,
-                        snrs=snrs,
-                        multi_stage_specs=multi_stage_specs,
-                    )
-                except Exception as e:
-                    if "nan" in str(e).lower() or "finite" in str(e).lower():
-                        logger.warning(
-                            "NaN in loss computation: {}. Skipping backward.".format(str(e))
-                        )
-                        check_finite_module(model)
-                        n_nans += 1
-                        if n_nans > 10:
-                            raise e
-                        continue
-                    raise e
+            except Exception as e:
+                if "nan" in str(e).lower() or "finite" in str(e).lower():
+                    logger.warning("NaN in loss computation: {}. Skipping backward.".format(str(e)))
+                    check_finite_module(model)
+                    n_nans += 1
+                    if n_nans > 10:
+                        raise e
+                    continue
+                raise e
             if is_train:
                 try:
-                    scaler.scale(err).backward()
-                    scaler.unscale_(opt)
+                    err.backward()
                     clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
                 except RuntimeError as e:
                     e_str = str(e)
@@ -394,8 +385,7 @@ def run_epoch(
                         continue
                     else:
                         raise e
-                scaler.step(opt)
-                scaler.update()
+                opt.step()
             detach_hidden(model)
         l_mem.append(err.detach())
         if i % log_freq == 0:
