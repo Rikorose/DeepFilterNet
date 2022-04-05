@@ -277,7 +277,7 @@ if __name__ == "__main__":
     parser = setup_df_argument_parser()
     parser.add_argument(
         "--compensate-delay",
-        "-d",
+        "-D",
         action="store_true",
         help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
     )
