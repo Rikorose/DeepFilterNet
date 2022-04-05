@@ -123,6 +123,7 @@ def composite(
         import semetrics
 
         with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:
+            # Note: Quantizing to int16 results in slightly modified metrics. Thus, keep f32 prec.
             save_audio(cf.name, clean, sr, dtype=torch.float32)
             save_audio(nf.name, degraded, sr, dtype=torch.float32)
             c = semetrics.composite(cf.name, nf.name)
