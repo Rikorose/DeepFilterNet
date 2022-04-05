@@ -23,7 +23,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
         return
     logger.remove()
     level = level.upper()
-    if level != "NONE":
+    if level.lower() != "none":
         log_format = Formatter(debug=level == "DEBUG").format
         logger.add(
             sys.stdout,
@@ -37,7 +37,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
             )
 
         if model is not None:
-            logger.info("Loading model settings of {}", os.path.basename(model))
+            logger.info("Loading model settings of {}", os.path.basename(model.rstrip("/")))
         logger.info(f"Running on torch {torch.__version__}")
         logger.info(f"Running on host {get_host()}")
         commit = get_commit_hash()
