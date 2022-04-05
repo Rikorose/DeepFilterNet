@@ -14,13 +14,13 @@ from df.evaluation_utils import composite, si_sdr_speechmetrics, stoi
 __a_tol = 1e-4
 
 
-def try_eval_composite(clean, enhanced, sr):
+def eval_composite(clean, enhanced, sr):
     logger.info("Computing composite metrics")
     try:
         m_enh_octave = torch.as_tensor(
             composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr, use_octave=True)
         ).to(torch.float32)
-    except OSError or ImportError:
+    except (OSError, ImportError, ModuleNotFoundError):
         m_enh_octave = None
         logger.warning("No octave available")
     m_enh = torch.as_tensor(
@@ -73,6 +73,6 @@ if __name__ == "__main__":
     )
     logger.info("Running model")
     enhanced = enhance(model, df_state, noisy, pad=True)
-    try_eval_composite(clean, enhanced, sr)
+    eval_composite(clean, enhanced, sr)
     eval_pystoi(clean, enhanced, sr)
     eval_sdr(clean, enhanced)
