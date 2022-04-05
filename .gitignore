@@ -2,6 +2,7 @@
 *.wav
 *.png
 *.pdf
+assets/hostbs.ini
 .cache*
 out/
 export/
