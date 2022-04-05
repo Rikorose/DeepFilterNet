@@ -70,7 +70,9 @@ jobs:
           poetry run poe install-torch-cpu
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends octave
+        run: |
+          poetry install --no-interaction -E semetrics ${{matrix.extra}}
+          sudo apt-get update && sudo apt-get install --no-install-recommends octave
       - name: Run DF Test
         working-directory: DeepFilterNet
         run: |
