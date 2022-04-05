@@ -367,7 +367,7 @@ class DfNet(nn.Module):
         if not run_df:
             logger.warning("Runing without DF")
         self.train_mask = train_mask
-        self.df_iter=p.df_n_iter
+        self.df_iter = p.df_n_iter
 
     def forward(
         self,
@@ -375,28 +375,16 @@ class DfNet(nn.Module):
         feat_erb: Tensor,
         feat_spec: Tensor,  # Not used, take spec modified by mask instead
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        # ic(feat_erb.shape)
         feat_spec = feat_spec.squeeze(1).permute(0, 3, 1, 2)
-
-        # ic(self.erb_comp.c, self.erb_comp.mn)
-        # feat_erb = torch.view_as_complex(spec).abs().matmul(self.erb_fb)
-        # feat_erb = self.erb_comp(feat_erb)
 
         feat_erb = self.pad(feat_erb)
         feat_spec = self.pad(feat_spec)
         e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
         m = self.erb_dec(emb, e3, e2, e1, e0)
 
-        # m, emb, _ = self.erb_stage(feat_erb)
-        # emb = emb.permute(0, 2, 3, 1).flatten(2)
-        # lsnr = emb.mean(-1)
-        # lsnr, _ = self.lsnr_net(emb)
-
         spec = self.mask(spec, m)
-        # feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
-        # ic(feat_spec.shape)
         df_coefs, df_alpha = self.df_dec(emb, c0)
-        
+
         for _ in range(self.df_iter):
             spec = self.df_op(spec, df_coefs, df_alpha)
         return spec, m, lsnr, df_alpha
