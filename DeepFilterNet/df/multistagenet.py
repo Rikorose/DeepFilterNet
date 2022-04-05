@@ -1,6 +1,6 @@
 import math
 from functools import partial, reduce
-from typing import Callable, Final, Iterable, List, Optional, Tuple, Union
+from typing import Callable, Final, List, Optional, Tuple
 
 import torch
 from loguru import logger
@@ -122,7 +122,7 @@ class LSNRNet(nn.Module):
         return x, h
 
 
-class LocalLinearMS(nn.Module):
+class LocalLinearCF(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, bias: bool = True):
         super().__init__()
         self.n_freqs = n_freqs
@@ -153,7 +153,7 @@ class LocalLinearMS(nn.Module):
         return x
 
 
-class GroupedLinearMS(nn.Module):
+class GroupedLinearCF(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, n_freqs: int, n_groups: int, bias: bool = True):
         super().__init__()
         # self.weight: Tensor
@@ -328,7 +328,7 @@ class FreqStage(nn.Module):
         separable_conv: bool = False,
         num_gru_layers: int = 3,
         num_gru_groups: int = 8,
-        pathway_convs: bool = False,
+        global_pathway: bool = False,
         decoder_out_layer: Optional[Callable[[int, int], torch.nn.Module]] = None,
     ):
         super().__init__()
@@ -368,7 +368,7 @@ class FreqStage(nn.Module):
                 )
             )
         self.inner_freqs = freqs
-        self.lin_emb_in = LocalLinear(out_ch, gru_dim // freqs, n_freqs=freqs)
+        self.lin_emb_in = LocalLinearCF(out_ch, gru_dim // freqs, n_freqs=freqs)
         if num_gru_groups == 1:
             self.gru = CFGRU(
                 freqs=self.inner_freqs,
@@ -384,7 +384,7 @@ class FreqStage(nn.Module):
                 n_groups=min(freqs, num_gru_groups),
                 n_layers=num_gru_layers,
             )
-        self.lin_emb_out = LocalLinear(gru_dim // freqs, out_ch, n_freqs=freqs)
+        self.lin_emb_out = LocalLinearCF(gru_dim // freqs, out_ch, n_freqs=freqs)
         self.gru_skip = nn.Conv2d(out_ch, out_ch, 1)
 
         self.dec = nn.ModuleList()
@@ -531,7 +531,7 @@ class MSNet(nn.Module):
         refinement_out_layer = (
             partial(Conv2dNormAct, kernel_size=(3, 1), norm_layer=None, activation_layer=None)
             if p.refinement_out_layer.lower() == "conv2d"
-            else partial(GroupedLinearMS, n_freqs=p.nb_df, n_groups=8)
+            else partial(GroupedLinearCF, n_freqs=p.nb_df, n_groups=8)
         )
         self.refinement_stage = FreqStage(
             in_ch=2,
