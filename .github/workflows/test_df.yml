@@ -66,6 +66,7 @@ jobs:
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
+          poetry update
           poetry install --no-interaction -E eval ${{matrix.extra}}
           poetry run poe install-torch-cpu
       - name: Install Octave
