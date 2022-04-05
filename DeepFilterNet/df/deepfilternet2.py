@@ -59,6 +59,7 @@ class ModelParams(DfParams):
             "DF_PATHWAY_KERNEL_SIZE_T", cast=int, default=1, section=self.section
         )
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
+        self.df_n_iter: int = config("DF_N_ITER", cast=int, default=2, section=self.section)
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
         self.group_shuffle: bool = config(
@@ -366,6 +367,7 @@ class DfNet(nn.Module):
         if not run_df:
             logger.warning("Runing without DF")
         self.train_mask = train_mask
+        self.df_iter=p.df_n_iter
 
     def forward(
         self,
@@ -394,9 +396,7 @@ class DfNet(nn.Module):
         # feat_spec = self.cplx_comp(spec.squeeze(1)[:, :, : self.df_bins].permute(0, 3, 1, 2))
         # ic(feat_spec.shape)
         df_coefs, df_alpha = self.df_dec(emb, c0)
-
-        # df_coefs, _, _ = self.df_stage(feat_spec)
-        # df_coefs = df_coefs.unflatten(1, (self.df_order, 2)).permute(0, 3, 1, 4, 2)
-
-        spec = self.df_op(spec, df_coefs, df_alpha)
+        
+        for _ in range(self.df_iter):
+            spec = self.df_op(spec, df_coefs, df_alpha)
         return spec, m, lsnr, df_alpha
