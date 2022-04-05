@@ -4,7 +4,7 @@ import os
 from loguru import logger
 
 from df.enhance import init_df, save_audio, setup_df_argument_parser
-from df.evaluation_utils import HAS_OCTAVE, evaluation_loop
+from df.evaluation_utils import evaluation_loop
 from df.model import ModelParams
 
 
@@ -18,8 +18,6 @@ def main(args):
         epoch=args.epoch,
     )
     assert os.path.isdir(args.dataset_dir)
-    if not HAS_OCTAVE:
-        logger.warning("Running without octave. Skipping composite metrics")
     sr = ModelParams().sr
     datasets = [os.path.join(args.dataset_dir, "no_reverb")]
     if args.reverb:

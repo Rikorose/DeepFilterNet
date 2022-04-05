@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from collections import deque
 from functools import partial
 from multiprocessing.dummy import Pool as DummyPool
-from tempfile import NamedTemporaryFile
 from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
@@ -17,16 +16,11 @@ from torch.multiprocessing.pool import Pool
 from torchaudio.transforms import Resample
 
 from df.enhance import df_features, load_audio, save_audio
+from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
 from libdf import DF
 
 RESAMPLE_METHOD = "sinc_fast"
-
-HAS_OCTAVE = True
-try:
-    import semetrics
-except OSError or ImportError:
-    HAS_OCTAVE = False
 
 try:
     from tqdm import tqdm
@@ -96,7 +90,6 @@ def evaluation_loop(
             if save_audio_callback is not None:
                 enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
                 save_audio_callback(cleanfn, enh)
-            break
         logger.info("Waiting for metrics computation completion. This could take a few minutes.")
         out_dict = {}
         for m in metrics:
@@ -116,7 +109,7 @@ def stoi(clean, degraded, sr, extended=False):
 
 
 def composite(
-    clean: Union[np.ndarray, Tensor], degraded: Union[np.ndarray, Tensor], sr: int
+    clean: Union[np.ndarray, Tensor], degraded: Union[np.ndarray, Tensor], sr: int, use_octave=False
 ) -> np.ndarray:
     """Compute pesq, csig, cbak, covl, ssnr"""
     assert len(clean.shape) == 1, f"Input must be 1D array, but got input shape {clean.shape}"
@@ -124,13 +117,17 @@ def composite(
         clean = resample(torch.as_tensor(clean), sr, 16000, method=RESAMPLE_METHOD).numpy()
         degraded = resample(torch.as_tensor(degraded), sr, 16000, method=RESAMPLE_METHOD).numpy()
         sr = 16000
-    if HAS_OCTAVE:
+    if use_octave:
+        from tempfile import NamedTemporaryFile
+
+        import semetrics
+
         with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:
             save_audio(cf.name, clean, sr, dtype=torch.float32)
             save_audio(nf.name, degraded, sr, dtype=torch.float32)
             c = semetrics.composite(cf.name, nf.name)
     else:
-        c = [pesq(sr, as_numpy(clean), as_numpy(degraded), "wb"), 0, 0, 0, 0]
+        c = composite_py(as_numpy(clean), as_numpy(degraded), sr)
     return np.asarray(c)
 
 
@@ -297,17 +294,13 @@ class PesqMetric(MPMetric):
 
 class CompositeMetric(MPMetric):
     def __init__(self, sr: int, pool: Pool):
-        names = ["PESQ", "CSIG", "CBAK", "COVL", "SSNR"] if HAS_OCTAVE else "PESQ"
+        names = ["PESQ", "CSIG", "CBAK", "COVL", "SSNR"]
         super().__init__(names, pool=pool, source_sr=sr, target_sr=16000)
 
     def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        ic(clean.shape, self.sr, HAS_OCTAVE)
         c = composite(clean=clean.squeeze(0), degraded=degraded.squeeze(0), sr=self.sr)
-        if HAS_OCTAVE:
-            return c
-        else:
-            return c[0]
+        return c
 
 
 def as_numpy(x) -> np.ndarray:

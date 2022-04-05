@@ -4,7 +4,7 @@ import os
 from loguru import logger
 
 from df.enhance import init_df, save_audio, setup_df_argument_parser
-from df.evaluation_utils import HAS_OCTAVE, evaluation_loop
+from df.evaluation_utils import evaluation_loop
 from df.model import ModelParams
 
 
@@ -18,8 +18,6 @@ def main(args):
         epoch=args.epoch,
     )
     assert os.path.isdir(args.dataset_dir)
-    if not HAS_OCTAVE:
-        logger.warning("Running without octave. Skipping composite metrics")
     sr = ModelParams().sr
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
@@ -37,7 +35,7 @@ def main(args):
         noisy_files,
         n_workers=args.metric_workers,
         save_audio_callback=save_audio_callback if args.output_dir is not None else None,
-        metric_list=["stoi", "sisdr", "pesq"],
+        metric_list=["stoi", "sisdr", "composite"],
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
