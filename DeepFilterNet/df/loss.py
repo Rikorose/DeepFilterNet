@@ -498,8 +498,7 @@ class Loss(nn.Module):
         if self.store_losses and self.istft is not None:
             assert enhanced_td is not None
             assert clean_td is not None
-            with torch.autocast(self.dev_str, enabled=False):
-                self.store_summaries(
+            self.store_summaries(
                 enhanced_td,
                 clean_td,
                 snrs,
