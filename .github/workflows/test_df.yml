@@ -27,6 +27,8 @@ jobs:
         include:
           - os: "windows-latest"
             extra: "-E soundfile"  # Soundfile backend for torchaudio
+          - os: "ubuntu-latest"
+            extra: "-E semetrics"  # Aditionally test against original matlab composite metrics
     defaults:
       run:
         shell: bash
@@ -66,14 +68,11 @@ jobs:
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          poetry update
           poetry install --no-interaction -E eval ${{matrix.extra}}
           poetry run poe install-torch-cpu
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          poetry install --no-interaction -E semetrics ${{matrix.extra}}
-          sudo apt-get update && sudo apt-get install --no-install-recommends octave
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends octave
       - name: Run DF Test
         working-directory: DeepFilterNet
         run: |
