@@ -596,6 +596,7 @@ class GroupedGRU(nn.Module):
         assert input_size % groups == 0
         assert hidden_size % groups == 0
         assert num_layers > 0
+        self.input_size = input_size
         self.groups = groups
         self.num_layers = num_layers
         self.batch_first = batch_first
@@ -673,9 +674,7 @@ class SqueezedGRU(nn.Module):
             self.linear_out = nn.Identity()
 
     def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
-        ic(input.shape, self.linear_in)
         input = self.linear_in(input)
-        ic(input.shape)
         x, h = self.gru(input, h)
         if self.gru_skip is not None:
             x += self.gru_skip(input)
