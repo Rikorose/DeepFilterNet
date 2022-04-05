@@ -16,8 +16,14 @@ __a_tol = 1e-4
 
 def try_eval_composite(clean, enhanced, sr):
     logger.info("Computing composite metrics")
+    try:
+        m_enh_octave = torch.as_tensor(
+            composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr, use_octave=True)
+        ).to(torch.float32)
+    except OSError or ImportError:
+        m_enh_octave = None
+        logger.warning("No octave available")
     m_enh = torch.as_tensor(
-        # `use_octave=True` should not make a difference
         composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr)
     ).to(torch.float32)
     logger.info(f"Got {m_enh}")
@@ -27,6 +33,12 @@ def try_eval_composite(clean, enhanced, sr):
     assert torch.isclose(
         m_enh, m_target, atol=__a_tol
     ).all(), f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    if m_enh_octave is not None:
+        assert torch.isclose(
+            m_enh_octave, m_target, atol=__a_tol
+        ).all(), (
+            f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+        )
 
 
 def eval_pystoi(clean, enhanced, sr):

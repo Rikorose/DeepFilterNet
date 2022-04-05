@@ -119,36 +119,6 @@ def fwSNRseg(cleanSig, enhancedSig, fs, frameLen=0.03, overlap=0.75):
     cent_freq[24] = 3597.63
     bandwidth[24] = 346.136
 
-    W = np.array(
-        [
-            0.003,
-            0.003,
-            0.003,
-            0.007,
-            0.010,
-            0.016,
-            0.016,
-            0.017,
-            0.017,
-            0.022,
-            0.027,
-            0.028,
-            0.030,
-            0.032,
-            0.034,
-            0.035,
-            0.037,
-            0.036,
-            0.036,
-            0.033,
-            0.030,
-            0.029,
-            0.027,
-            0.026,
-            0.026,
-        ]
-    )
-
     bw_min = bandwidth[0]
     min_factor = np.exp(-30.0 / (2.0 * 2.303))  # % -30 dB point of filter
 
@@ -165,8 +135,6 @@ def fwSNRseg(cleanSig, enhancedSig, fs, frameLen=0.03, overlap=0.75):
         crit_filter[i, :] = crit_filter[i, :] * (crit_filter[i, :] > min_factor)
 
     num_frames = len(cleanSig) / skiprate - (winlength / skiprate)  # number of frames
-    start = 1  # starting sample
-    # window     = 0.5*(1 - cos(2*pi*(1:winlength).T/(winlength+1)));
 
     hannWin = 0.5 * (1 - np.cos(2 * np.pi * np.arange(1, winlength + 1) / (winlength + 1)))
     f, t, Zxx = stft(
@@ -271,7 +239,6 @@ def lpcoeff(speech_frame, model_order):
 
 
 def llr(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
-    eps = np.finfo(np.float64).eps
     alpha = 0.95
     winlength = round(frameLen * fs)  # window length in samples
     skiprate = int(np.floor((1 - overlap) * frameLen * fs))  # window skip in samples
@@ -444,7 +411,6 @@ def wss(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
         crit_filter[i, :] = crit_filter[i, :] * (crit_filter[i, :] > min_factor)
 
     num_frames = len(clean_speech) / skiprate - (winlength / skiprate)  # number of frames
-    start = 1  # starting sample
 
     hannWin = 0.5 * (1 - np.cos(2 * np.pi * np.arange(1, winlength + 1) / (winlength + 1)))
     scale = np.sqrt(1.0 / hannWin.sum() ** 2)
