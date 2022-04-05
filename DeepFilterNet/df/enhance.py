@@ -73,6 +73,13 @@ def init_df(
         suffix (str): Suffix based on the model name. This can be used for saving the enhanced
             audio.
     """
+    try:
+        from icecream import ic, install
+
+        ic.configureOutput(includeContext=True)
+        install()
+    except ImportError:
+        pass
     use_default_model = False
     if model_base_dir is None:
         use_default_model = True
@@ -216,7 +223,7 @@ def enhance(
 def parse_epoch_type(value: str) -> Union[int, str]:
     try:
         return int(value)
-    except:
+    except ValueError:
         assert value in ("best", "latest")
         return value
 
