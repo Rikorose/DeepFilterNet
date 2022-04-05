@@ -95,6 +95,7 @@ def init_df(
         os.path.join(model_base_dir, "config.ini"),
         config_must_exist=True,
         allow_defaults=config_allow_defaults,
+        allow_reload=True,
     )
     if post_filter:
         config.set("mask_pf", True, bool, ModelParams().section)
