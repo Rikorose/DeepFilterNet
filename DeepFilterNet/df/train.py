@@ -3,7 +3,7 @@ import os
 import random
 import signal
 import sys
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch

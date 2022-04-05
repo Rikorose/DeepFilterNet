@@ -655,7 +655,6 @@ class GroupedLinearEinsum(nn.Module):
     def __init__(self, input_size: int, hidden_size: int, groups: int = 1):
         super().__init__()
         # self.weight: Tensor
-        ic(input_size, hidden_size, groups)
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.groups = groups
@@ -807,7 +806,7 @@ def test_grouped_gru():
 
     # now grouped gru
     num = 2
-    m = GroupedGRUMS(i, h, num, g, batch_first=True, shuffle=True)
+    m = GroupedGRU(i, h, num, g, batch_first=True, shuffle=True)
     ic(m)
     h0 = m.get_h0(b)
     assert list(h0.shape) == [num * g, b, h // g]
