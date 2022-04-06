@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
 use claxon;
-use hdf5::{types::VarLenUnicode, File};
+use hdf5::{types::VarLenUnicode, File, Group, H5Type};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
@@ -94,6 +94,7 @@ pub struct Hdf5Cfg(
     #[serde(default = "Option::default")] pub Option<usize>,    // fallback sampling rate
     #[serde(default = "Option::default")] pub Option<usize>,    // fallback max freq
     #[serde(default = "Option::default")] pub Option<Hdf5Keys>, // cached key list
+    #[serde(default = "Option::default")] pub Option<u64>,      // modified hash
 );
 impl Hdf5Cfg {
     pub fn filename(&self) -> &str {
@@ -113,6 +114,12 @@ impl Hdf5Cfg {
     }
     pub fn keys_unchecked(&self) -> Option<&Hdf5Keys> {
         self.4.as_ref()
+    }
+    pub fn hash(&self) -> Option<u64> {
+        self.5
+    }
+    pub fn store_modified_hash(&mut self, hash: u64) {
+        self.5 = Some(hash);
     }
     pub fn hash_from_ds_path(&self, ds_path: &str) -> Result<u64> {
         Ok(calculate_hash(&DatasetModified::new(ds_path)?))
@@ -170,8 +177,8 @@ impl DatasetConfigJson {
             Split::Test => &mut self.test,
         };
         for cfg in s.iter_mut() {
-            if let Some(cache) = keys.iter().find(|c| c.filename == cfg.filename()) {
-                cfg.set_keys(cache.clone())?;
+            if let Some(key_cache) = keys.iter().find(|c| c.filename == cfg.filename()) {
+                cfg.set_keys(key_cache.clone())?;
             } else {
                 eprintln!("Could not find cached keys for {}", cfg.filename());
             }
@@ -393,6 +400,7 @@ pub struct DatasetBuilder {
     global_sampling_f: Option<f32>,
     snrs: Option<Vec<i8>>,
     gains: Option<Vec<i8>>,
+    cache_valid: bool,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -413,6 +421,7 @@ impl DatasetBuilder {
             global_sampling_f: None,
             snrs: None,
             gains: None,
+            cache_valid: false,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -433,6 +442,20 @@ impl DatasetBuilder {
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
+        let cache = if self.cache_valid && self.datasets.unwrap().split == Split::Valid {
+            let ds_path = Path::new(&self.ds_dir);
+            let hash = {
+                let mut hash_vec: Vec<u64> = ds.config.iter().map(|c| c.hash().unwrap()).collect();
+                hash_vec.push(fft_size as u64);
+                hash_vec.push(hop_size as u64);
+                hash_vec.push(nb_erb as u64);
+                calculate_hash(&hash_vec)
+            };
+            let cache_path = ds_path.join(format!("valid_cache_{}.hdf5", hash));
+            Some(Hdf5Cache::new(cache_path.to_str().unwrap(), hash)?)
+        } else {
+            None
+        };
         Ok(FftDataset {
             ds,
             fft_size,
@@ -441,6 +464,7 @@ impl DatasetBuilder {
             nb_spec: self.nb_spec,
             norm_alpha: self.norm_alpha,
             min_nb_freqs: self.min_nb_freqs,
+            cache,
         })
     }
     pub fn build_td_dataset(self) -> Result<TdDataset> {
@@ -462,6 +486,7 @@ impl DatasetBuilder {
             let mut cfg = cfg.clone();
             let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
             let modified_hash = cfg.hash_from_ds_path(path.to_str().unwrap())?;
+            cfg.store_modified_hash(modified_hash);
             let keys = cfg.load_keys(modified_hash)?.cloned();
             match keys {
                 Some(keys) => cfg.set_keys(keys)?,
@@ -587,6 +612,10 @@ impl DatasetBuilder {
         self.gains = Some(gains);
         self
     }
+    pub fn cache_valid_dataset(mut self) -> Self {
+        self.cache_valid = true;
+        self
+    }
 }
 
 pub struct FftDataset {
@@ -597,6 +626,7 @@ pub struct FftDataset {
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
     min_nb_freqs: Option<usize>,
+    cache: Option<Hdf5Cache>,
 }
 impl FftDataset {
     pub fn get_hdf5cfg(&self, filename: &str) -> Option<&Hdf5Cfg> {
@@ -610,6 +640,15 @@ impl FftDataset {
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
+        let hash = if let Some(cache) = self.cache.as_ref() {
+            let hash = calculate_hash(&(idx, seed));
+            if let Some(s) = cache.load_sample(hash)? {
+                return Ok(s);
+            }
+            hash
+        } else {
+            0
+        };
         let sample: Sample<f32> = self.ds.get_sample(idx, seed)?;
         let nb_erb = self.nb_erb.unwrap_or(1);
         let mut state = DFState::new(self.sr(), self.fft_size, self.hop_size, nb_erb, 1);
@@ -634,7 +673,7 @@ impl Dataset<Complex32> for FftDataset {
         } else {
             None
         };
-        Ok(Sample {
+        let sample = Sample {
             speech: speech.into_dyn(),
             noise: noise.into_dyn(),
             noisy: noisy.into_dyn(),
@@ -644,7 +683,11 @@ impl Dataset<Complex32> for FftDataset {
             gain: sample.gain,
             snr: sample.snr,
             idx: sample.idx,
-        })
+        };
+        if let Some(cache) = self.cache.as_ref() {
+            cache.cache_sample(hash, &sample)?;
+        }
+        Ok(sample)
     }
 
     fn len(&self) -> usize {
@@ -980,6 +1023,99 @@ pub enum DType {
     F32 = 1,
 }
 
+/// Cache for validation dataset
+#[derive(Debug)]
+struct Hdf5Cache {
+    file: File,
+    hash: u64,
+}
+
+impl Hdf5Cache {
+    fn new(path: &str, hash: u64) -> Result<Self> {
+        let file = File::append(path)?;
+        match file.attr("hash") {
+            Err(_e) => {
+                let attr = file.new_attr::<u64>().create("hash")?;
+                attr.write_scalar::<u64>(&hash)?;
+            }
+            Ok(attr) => assert_eq!(attr.read_scalar::<u64>().unwrap(), hash),
+        };
+        Ok(Hdf5Cache { file, hash })
+    }
+    fn store_cplx(&self, grp: &Group, name: &str, data: ArrayViewD<Complex32>) -> Result<()> {
+        let complex = data.split_complex();
+        let name_re = name.to_owned() + "_re";
+        let name_im = name.to_owned() + "_im";
+        grp.new_dataset_builder()
+            .with_data(complex.re.as_standard_layout().view())
+            .create(&*name_re)?;
+        grp.new_dataset_builder()
+            .with_data(complex.im.as_standard_layout().view())
+            .create(&*name_im)?;
+        Ok(())
+    }
+    fn load_cplx(&self, grp: &Group, name: &str) -> Result<ArrayD<Complex32>> {
+        let name_re = name.to_owned() + "_re";
+        let name_im = name.to_owned() + "_im";
+        let ds_re = grp.dataset(&*name_re)?;
+        let ds_im = grp.dataset(&*name_im)?;
+        let mut out = ArrayD::zeros(ds_re.shape());
+        let view = out.view_mut().split_complex();
+        ds_re.read_dyn()?.move_into(view.re);
+        ds_im.read_dyn()?.move_into(view.im);
+        Ok(out)
+    }
+    fn store_attr<T: H5Type>(&self, grp: &Group, name: &str, data: &T) -> Result<()> {
+        let attr = grp.new_attr::<T>().create(name)?;
+        attr.write_scalar(data)?;
+        Ok(())
+    }
+    fn load_attr<T: H5Type>(&self, grp: &Group, name: &str) -> Result<T> {
+        let attr = grp.attr(name)?;
+        Ok(attr.read_scalar()?)
+    }
+    fn cache_sample(&self, key: u64, sample: &Sample<Complex32>) -> Result<()> {
+        let grp = self.file.create_group(&key.to_string())?;
+        self.store_cplx(&grp, "speech", sample.speech.view())?;
+        self.store_cplx(&grp, "noise", sample.noise.view())?;
+        self.store_cplx(&grp, "noisy", sample.noisy.view())?;
+        if let Some(feat_erb) = sample.feat_erb.as_ref() {
+            grp.new_dataset_builder().with_data(feat_erb.view()).create("feat_erb")?;
+        }
+        if let Some(feat_spec) = sample.feat_spec.as_ref() {
+            self.store_cplx(&grp, "feat_spec", feat_spec.view())?;
+        }
+        self.store_attr(&grp, "max_freq", &sample.max_freq)?;
+        self.store_attr(&grp, "snr", &sample.snr)?;
+        self.store_attr(&grp, "gain", &sample.gain)?;
+        self.store_attr(&grp, "idx", &sample.idx)?;
+        Ok(())
+    }
+    fn load_sample(&self, key: u64) -> Result<Option<Sample<Complex32>>> {
+        let grp = match self.file.group(&key.to_string()) {
+            Ok(g) => g,
+            Err(_) => return Ok(None),
+        };
+        Ok(Some(Sample {
+            speech: self.load_cplx(&grp, "speech")?,
+            noise: self.load_cplx(&grp, "noise")?,
+            noisy: self.load_cplx(&grp, "noisy")?,
+            feat_erb: match grp.dataset("feat_erb") {
+                Ok(d) => Some(d.read_dyn()?),
+                Err(_) => None,
+            },
+            feat_spec: match self.load_cplx(&grp, "feat_erb") {
+                Ok(s) => Some(s),
+                Err(_) => None,
+            },
+            max_freq: self.load_attr(&grp, "max_freq")?,
+            snr: self.load_attr(&grp, "snr")?,
+            gain: self.load_attr(&grp, "gain")?,
+            idx: self.load_attr(&grp, "idx")?,
+        }))
+    }
+}
+
 #[derive(Debug)]
 pub struct Hdf5Dataset {
     file: File,
@@ -988,7 +1124,12 @@ pub struct Hdf5Dataset {
     pub codec: Option<Codec>,
     max_freq: Option<usize>,
     dtype: Option<DType>,
-    // modified_hash: u64,
+}
+
+#[derive(Hash, Debug, Clone)]
+pub struct Hdf5CacheHash {
+    seed: u64,
+    ds_hashes: Vec<(String, u64)>, // dataset filename, u64 hash via calculate_hash(&DatasetModified)
 }
 
 fn get_dstype(file: &File) -> Option<DsType> {
@@ -1722,55 +1863,90 @@ mod tests {
         let noise = arr1(rng_uniform(n, -0.1, 0.1)?.as_slice()).into_shape([1, n])?;
         let gains = [-6., 0., 6.];
         let snrs = [-10., -5., 0., 5., 10., 20., 40.];
-        let atten_limits = [None, Some(20.), Some(10.), Some(3.)];
         let atol = 1e-4;
         for clean_rev in [None, Some(clean.clone())] {
             for gain in gains {
                 for snr in snrs {
-                    for attn in atten_limits {
-                        let (c, n, m) = mix_audio_signal(
-                            clean.clone(),
-                            clean_rev.clone(),
-                            noise.clone(),
-                            snr,
-                            gain,
-                            attn,
-                            None,
-                        )?;
-                        if attn.is_none() {
-                            assert_eq!(&c + &n, m);
-                        }
-                        dbg!(clean_rev.is_some(), gain, snr, attn);
-                        // Input SNR of mixture
-                        let snr_inp_m = calc_snr_xv(m.iter(), n.iter());
-                        assert!(
-                            (snr_inp_m - snr).abs() < atol,
-                            "Input SNR does not match: {}, {}",
-                            snr_inp_m,
-                            snr
-                        );
-                        // Target SNR between noise and target (clean) speech. Clean speech may
-                        // contain noise due to the attenuation limit, effectively resulting in an
-                        // `attn` higher SNR.
-                        let snr_target_c = if attn.is_none() {
-                            calc_snr(c.iter(), n.iter())
-                        } else {
-                            // With enabled attenuation limiting, the target signal `c` contains
-                            // some noise so that its SNR is `attn` higher then the input mixture.
-                            calc_snr_xv(c.iter(), n.iter())
-                        };
-                        assert!(
-                            (snr_target_c - (snr + attn.unwrap_or(0.))).abs() < atol,
-                            "Target SNR does not match: {}, {}",
-                            snr_target_c,
-                            snr + attn.unwrap_or(0.),
-                        );
-                        // Test the SNR difference between input and target
-                        assert!((snr_inp_m + attn.unwrap_or(0.) - snr_target_c).abs() < atol);
-                    }
+                    let (c, n, m) = mix_audio_signal(
+                        clean.clone(),
+                        clean_rev.clone(),
+                        noise.clone(),
+                        snr,
+                        gain,
+                        None,
+                    )?;
+                    assert_eq!(&c + &n, m);
+                    dbg!(clean_rev.is_some(), gain, snr);
+                    // Input SNR of mixture
+                    let snr_inp_m = calc_snr_xv(m.iter(), n.iter());
+                    assert!(
+                        (snr_inp_m - snr).abs() < atol,
+                        "Input SNR does not match: {}, {}",
+                        snr_inp_m,
+                        snr
+                    );
+                    // Target SNR between noise and target (clean) speech.
+                    let snr_target_c = calc_snr(c.iter(), n.iter());
+                    assert!(
+                        (snr_target_c - snr).abs() < atol,
+                        "Target SNR does not match: {}, {}",
+                        snr_target_c,
+                        snr,
+                    );
+                    // Test the SNR difference between input and target
+                    assert!((snr_inp_m - snr_target_c).abs() < atol);
                 }
             }
         }
+        Ok(())
+    }
+    #[test]
+    pub fn test_cached_valid_dataset() -> Result<()> {
+        seed_from_u64(42);
+        let fft_size = 960;
+        let hop_size = Some(480);
+        let nb_erb = Some(32);
+        let nb_spec = None;
+        let norm_alpha = None;
+        let sr = 48000;
+        let ds_dir = "../assets/";
+        for file in fs::read_dir(Path::new("../assets/"))? {
+            let file = file?.path();
+            if file.is_file()
+                && file.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")
+            {
+                println!("Removing existing cache '{:?}'", file);
+                fs::remove_file(file)?
+            }
+        }
+        let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
+        for c in cfg.valid.iter_mut() {
+            c.1 = 3.0; // Set sampling factor
+        }
+        let builder = DatasetBuilder::new(ds_dir, sr)
+            .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
+            .max_len(1.);
+        let mut val_ds = builder
+            .cache_valid_dataset()
+            .dataset(cfg.split_config(Split::Valid))
+            .build_fft_dataset()?;
+        let ds_len = val_ds.len();
+        dbg!(ds_len);
+        for seed in [42, 43] {
+            dbg!(seed);
+            for _ in 0..2 {
+                val_ds.set_seed(seed);
+                if val_ds.need_generate_keys() {
+                    dbg!();
+                    val_ds.generate_keys()?
+                }
+                for idx in 0..ds_len {
+                    let sample = val_ds.get_sample(idx, Some(seed))?;
+                    dbg!(idx, sample);
+                }
+            }
+        }
+
         Ok(())
     }
 }

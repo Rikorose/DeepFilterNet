@@ -627,6 +627,7 @@ mod tests {
                         .build_fft_dataset()?,
                     valid: builder
                         .clone()
+                        .cache_valid_dataset()
                         .dataset(cfg.split_config(Split::Valid))
                         .build_fft_dataset()?,
                     test: builder

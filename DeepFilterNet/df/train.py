@@ -136,7 +136,6 @@ def main():
         nb_erb=p.nb_erb,
         nb_spec=p.nb_df,
         norm_alpha=get_norm_alpha(log=False),
-        p_atten_lim=config("p_atten_lim", 0.2, float, section="train"),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
         prefetch=config("NUM_PREFETCH_BATCHES", 32, int, section="train"),
         overfit=overfit,
@@ -145,6 +144,7 @@ def main():
         log_timings=log_timings,
         global_sampling_factor=config("GLOBAL_DS_SAMPLING_F", 1.0, float, section="train"),
         snrs=config("DATALOADER_SNRS", [-5, 0, 5, 10, 20, 40], Csv(int), section="train"),  # type: ignore
+        cache_valid=True,
     )
 
     # Batch size scheduling limits the batch size for the first epochs. It will increase the batch
