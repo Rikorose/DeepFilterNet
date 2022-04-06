@@ -91,6 +91,7 @@ impl _FdDataLoader {
         p_reverb: Option<f32>,
         drop_last: Option<bool>,
         overfit: Option<bool>,
+        cache_valid: Option<bool>,
         seed: Option<u64>,
         min_nb_erb_freqs: Option<usize>,
         global_sampling_factor: Option<f32>,
@@ -135,6 +136,11 @@ impl _FdDataLoader {
         let valid_handle = {
             let valid_cfg = cfg.split_config(Split::Valid);
             let valid_ds_builder = ds_builder.clone();
+            let valid_ds_builder = if cache_valid.unwrap_or(false) {
+                valid_ds_builder.cache_valid_dataset()
+            } else {
+                valid_ds_builder
+            };
             thread::spawn(|| valid_ds_builder.dataset(valid_cfg).build_fft_dataset())
         };
         let test_handle = {
@@ -286,10 +292,10 @@ fn update_keys(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
     for hdf5cfg in cfgs.iter_mut() {
         let ds_path = ds_dir.to_owned() + "/" + hdf5cfg.filename();
         let cfg = ds.get_hdf5cfg(hdf5cfg.filename()).expect("Could not get hdf5cfg");
-        if let Some(ds_keys) = cfg
-            .load_keys(cfg.hash_from_ds_path(&ds_path).expect("Could not calculate hash"))
-            .expect("Could not load Hdf5Keys.")
-        {
+        let hash = cfg
+            .hash()
+            .unwrap_or_else(|| cfg.hash_from_ds_path(&ds_path).expect("Could not calculate hash"));
+        if let Some(ds_keys) = cfg.load_keys(hash).expect("Could not load Hdf5Keys.") {
             hdf5cfg.set_keys(ds_keys.clone()).expect("Could not update keys");
         }
     }
