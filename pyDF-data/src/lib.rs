@@ -66,7 +66,6 @@ type FdBatch<'py> = (
     &'py PyArray1<usize>,     // max_freq
     &'py PyArray1<i8>,        // snr
     &'py PyArray1<i8>,        // gain
-    &'py PyArray1<u8>,        // attenuation limit
     &'py PyArray1<f32>,       // Timings until each sample and the overall batch was ready
 );
 
@@ -89,7 +88,6 @@ impl _FdDataLoader {
         norm_alpha: Option<f32>,
         num_threads: Option<usize>,
         prefetch: Option<usize>,
-        p_atten_lim: Option<f32>,
         p_reverb: Option<f32>,
         drop_last: Option<bool>,
         overfit: Option<bool>,
@@ -115,9 +113,6 @@ impl _FdDataLoader {
         py.check_signals()?;
         if let Some(max_len_s) = max_len_s {
             ds_builder = ds_builder.max_len(max_len_s)
-        }
-        if let Some(p_atten_lim) = p_atten_lim {
-            ds_builder = ds_builder.prob_atten_lim(p_atten_lim)
         }
         if let Some(seed) = seed {
             ds_builder = ds_builder.seed(seed)
@@ -178,11 +173,11 @@ impl _FdDataLoader {
         if let Some(bs_eval) = batch_size_eval {
             dl_builder = dl_builder.batch_size_eval(bs_eval);
         }
-        if let Some(drop_last) = drop_last {
-            dl_builder = dl_builder.drop_last(drop_last);
+        if drop_last.unwrap_or(false) {
+            dl_builder = dl_builder.drop_last();
         }
-        if let Some(overfit) = overfit {
-            dl_builder = dl_builder.overfit(overfit);
+        if overfit.unwrap_or(false) {
+            dl_builder = dl_builder.overfit();
         }
         py.check_signals()?;
         let loader = dl_builder.build().to_py_err()?;
@@ -225,7 +220,6 @@ impl _FdDataLoader {
                     batch.max_freq.into_pyarray(py),
                     batch.snr.into_pyarray(py),
                     batch.gain.into_pyarray(py),
-                    batch.atten.into_pyarray(py),
                     push_ret(batch.timings, (Instant::now() - t0).as_secs_f32()).into_pyarray(py),
                 ))
             }
