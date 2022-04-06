@@ -84,8 +84,8 @@ pub struct DataLoaderBuilder {
     _batch_size_eval: Option<usize>,
     _prefetch: Option<usize>,
     _num_threads: Option<usize>,
-    _drop_last: Option<bool>,
-    _overfit: Option<bool>,
+    _drop_last: bool,
+    _overfit: bool,
 }
 
 impl DataLoaderBuilder {
@@ -96,8 +96,8 @@ impl DataLoaderBuilder {
             _batch_size_eval: None,
             _prefetch: None,
             _num_threads: None,
-            _drop_last: None,
-            _overfit: None,
+            _drop_last: false,
+            _overfit: false,
         }
     }
     pub fn batch_size(mut self, batch_size: usize) -> Self {
@@ -116,12 +116,12 @@ impl DataLoaderBuilder {
         self._num_threads = Some(num_threads);
         self
     }
-    pub fn overfit(mut self, overfit: bool) -> Self {
-        self._overfit = Some(overfit);
+    pub fn overfit(mut self) -> Self {
+        self._overfit = true;
         self
     }
-    pub fn drop_last(mut self, drop_last: bool) -> Self {
-        self._drop_last = Some(drop_last);
+    pub fn drop_last(mut self) -> Self {
+        self._drop_last = true;
         self
     }
     pub fn build(self) -> Result<DataLoader> {
@@ -133,9 +133,9 @@ impl DataLoaderBuilder {
             self._batch_size_eval,
             prefetch,
             self._num_threads,
-            self._drop_last.unwrap_or(false),
+            self._drop_last,
         )?;
-        loader.overfit = self._overfit.unwrap_or(false);
+        loader.overfit = self._overfit;
         Ok(loader)
     }
 }
@@ -458,7 +458,6 @@ impl Collate<f32> for f32 {
         let max_freq = samples.iter().map(|s| s.max_freq).collect();
         let snr = samples.iter().map(|s| s.snr).collect();
         let gain = samples.iter().map(|s| s.gain).collect();
-        let atten = samples.iter().map(|s| s.attenuation.unwrap_or(0)).collect();
         Ok(DsBatch {
             speech,
             noise,
@@ -469,7 +468,6 @@ impl Collate<f32> for f32 {
             max_freq,
             snr,
             gain,
-            atten,
             ids: Vec::new(),
             timings: Vec::new(),
         })
@@ -502,7 +500,6 @@ impl Collate<Complex32> for Complex32 {
         let max_freq = samples.iter().map(|s| s.max_freq).collect();
         let snr = samples.iter().map(|s| s.snr).collect();
         let gain = samples.iter().map(|s| s.gain).collect();
-        let atten = samples.iter().map(|s| s.attenuation.unwrap_or(0)).collect();
         Ok(DsBatch {
             speech,
             noise,
@@ -513,7 +510,6 @@ impl Collate<Complex32> for Complex32 {
             max_freq,
             snr,
             gain,
-            atten,
             ids: Vec::new(),
             timings: Vec::new(),
         })
@@ -539,7 +535,6 @@ where
     pub max_freq: Array1<usize>,
     pub snr: Vec<i8>,
     pub gain: Vec<i8>,
-    pub atten: Vec<u8>, // attenuation limit in dB; 0 stands for no limit
     pub ids: Vec<usize>,
     pub timings: Vec<f32>,
 }
@@ -616,7 +611,6 @@ mod tests {
         let sr = 48000;
         let ds_dir = "../assets/";
         let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
-        let split = Split::Train;
         let builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
             .max_len(1.);
@@ -665,24 +659,26 @@ mod tests {
                         e => return Err(e),
                     },
                 };
-                for epoch in 0..2 {
-                    println!(
+                for split in Split::iter() {
+                    for epoch in 0..2 {
+                        println!(
                         "***** Test: Loader with dataset_size {}, batch_size {}, epoch {} ******",
                         dataset_size, batch_size, epoch
                     );
-                    loader.start_epoch(split, epoch)?;
-                    let mut n_samples = 0;
-                    loop {
-                        let batch = loader.get_batch::<Complex32>()?;
-                        if let Some(batch) = batch {
-                            n_samples += batch.batch_size();
-                            dbg!(n_samples);
-                        } else {
-                            break;
+                        loader.start_epoch(split, epoch)?;
+                        let mut n_samples = 0;
+                        loop {
+                            let batch = loader.get_batch::<Complex32>()?;
+                            if let Some(batch) = batch {
+                                n_samples += batch.batch_size();
+                                dbg!(n_samples);
+                            } else {
+                                break;
+                            }
                         }
+                        dbg!(n_samples, dataset_size);
+                        assert_eq!(n_samples, dataset_size);
                     }
-                    dbg!(n_samples, dataset_size);
-                    assert_eq!(n_samples, dataset_size);
                 }
             }
         }
