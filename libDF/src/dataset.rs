@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
 use claxon;
-use hdf5::{types::VarLenUnicode, File, Group, H5Type};
+use hdf5::{filters, types::VarLenUnicode, File, Group, H5Type};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
@@ -1028,6 +1028,7 @@ pub enum DType {
 struct Hdf5Cache {
     file: File,
     hash: u64,
+    filters: Option<Vec<filters::Filter>>,
 }
 
 impl Hdf5Cache {
@@ -1040,18 +1041,40 @@ impl Hdf5Cache {
             }
             Ok(attr) => assert_eq!(attr.read_scalar::<u64>().unwrap(), hash),
         };
-        Ok(Hdf5Cache { file, hash })
+        let filters = if filters::blosc_available() {
+            Some(vec![filters::Filter::blosc_lz4hc(9, true)])
+        } else if filters::deflate_available() {
+            Some(vec![filters::Filter::Deflate(4)])
+        } else {
+            None
+        };
+        Ok(Hdf5Cache {
+            file,
+            hash,
+            filters,
+        })
+    }
+    fn create_ds<'d, A, T, D>(&self, grp: &Group, name: &str, data: A) -> Result<()>
+    where
+        A: Into<ArrayView<'d, T, D>>,
+        T: H5Type,
+        D: ndarray::Dimension,
+    {
+        let builder = grp.new_dataset_builder();
+        let builder = if let Some(filters) = self.filters.as_ref() {
+            builder.set_filters(filters)
+        } else {
+            builder
+        };
+        builder.with_data(data).create(name)?;
+        Ok(())
     }
     fn store_cplx(&self, grp: &Group, name: &str, data: ArrayViewD<Complex32>) -> Result<()> {
         let complex = data.split_complex();
         let name_re = name.to_owned() + "_re";
         let name_im = name.to_owned() + "_im";
-        grp.new_dataset_builder()
-            .with_data(complex.re.as_standard_layout().view())
-            .create(&*name_re)?;
-        grp.new_dataset_builder()
-            .with_data(complex.im.as_standard_layout().view())
-            .create(&*name_im)?;
+        self.create_ds(grp, &name_re, complex.re.as_standard_layout().view())?;
+        self.create_ds(grp, &name_im, complex.im.as_standard_layout().view())?;
         Ok(())
     }
     fn load_cplx(&self, grp: &Group, name: &str) -> Result<ArrayD<Complex32>> {
@@ -1080,7 +1103,7 @@ impl Hdf5Cache {
         self.store_cplx(&grp, "noise", sample.noise.view())?;
         self.store_cplx(&grp, "noisy", sample.noisy.view())?;
         if let Some(feat_erb) = sample.feat_erb.as_ref() {
-            grp.new_dataset_builder().with_data(feat_erb.view()).create("feat_erb")?;
+            self.create_ds(&grp, "feat_erb", feat_erb.view())?;
         }
         if let Some(feat_spec) = sample.feat_spec.as_ref() {
             self.store_cplx(&grp, "feat_spec", feat_spec.view())?;
@@ -1916,7 +1939,7 @@ mod tests {
                 && file.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")
             {
                 println!("Removing existing cache '{:?}'", file);
-                fs::remove_file(file)?
+                fs::remove_file(file)?;
             }
         }
         let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
