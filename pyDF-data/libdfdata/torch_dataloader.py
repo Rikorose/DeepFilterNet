@@ -80,6 +80,7 @@ class PytorchDataLoader:
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
         overfit=False,  # Overfit on one epoch
+        cache_valid=False,  # Cache validiation dataset via a hdf5 dataset
         seed=0,
         min_nb_erb_freqs: int = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
@@ -110,6 +111,7 @@ class PytorchDataLoader:
             prefetch=prefetch_loader,
             drop_last=drop_last,
             overfit=overfit,
+            cache_valid=cache_valid,
             seed=seed,
             min_nb_erb_freqs=min_nb_erb_freqs,
             global_sampling_factor=global_sampling_factor,
