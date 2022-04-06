@@ -2,7 +2,6 @@ from functools import partial
 from typing import Final, List, Optional, Tuple
 
 import torch
-from icecream import ic  # noqa
 from loguru import logger
 from torch import Tensor, nn
 
