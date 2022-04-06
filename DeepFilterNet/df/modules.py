@@ -661,15 +661,20 @@ class SqueezedGRU(nn.Module):
         linear_groups: int = 8,
         batch_first: bool = True,
         gru_skip_op: Optional[Callable[..., torch.nn.Module]] = None,
+        linear_act_layer: Callable[..., torch.nn.Module] = nn.Identity,
     ):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.linear_in = GroupedLinearEinsum(input_size, hidden_size, linear_groups)
+        self.linear_in = nn.Sequential(
+            GroupedLinearEinsum(input_size, hidden_size, linear_groups), linear_act_layer()
+        )
         self.gru = nn.GRU(hidden_size, hidden_size, num_layers=num_layers, batch_first=batch_first)
         self.gru_skip = gru_skip_op() if gru_skip_op is not None else None
         if output_size is not None:
-            self.linear_out = GroupedLinearEinsum(hidden_size, output_size, linear_groups)
+            self.linear_out = nn.Sequential(
+                GroupedLinearEinsum(hidden_size, output_size, linear_groups), linear_act_layer()
+            )
         else:
             self.linear_out = nn.Identity()
 

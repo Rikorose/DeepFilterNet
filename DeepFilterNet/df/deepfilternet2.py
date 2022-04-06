@@ -59,6 +59,7 @@ class ModelParams(DfParams):
         self.df_pathway_kernel_size_t: int = config(
             "DF_PATHWAY_KERNEL_SIZE_T", cast=int, default=1, section=self.section
         )
+        self.enc_concat: bool = config("ENC_CONCAT", cast=bool, default=False, section=self.section)
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.df_n_iter: int = config("DF_N_ITER", cast=int, default=2, section=self.section)
         self.gru_type: str = config("GRU_TYPE", default="grouped", section=self.section)
@@ -81,6 +82,16 @@ def init_model(df_state: Optional[DF] = None, run_df: bool = True, train_mask: b
     erb_inverse = erb_fb(df_state.erb_widths(), p.sr, inverse=True)
     model = DfNet(erb, erb_inverse, run_df, train_mask)
     return model.to(device=get_device())
+
+
+class Add(nn.Module):
+    def forward(self, a, b):
+        return a + b
+
+
+class Concat(nn.Module):
+    def forward(self, a, b):
+        return torch.cat((a, b), dim=-1)
 
 
 class Encoder(nn.Module):
@@ -111,10 +122,15 @@ class Encoder(nn.Module):
                 p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
             )
         else:
-            self.emb_dim = p.emb_hidden_dim
-            self.df_fc_emb = GroupedLinearEinsum(
+            df_fc_emb = GroupedLinearEinsum(
                 p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
             )
+            self.df_fc_emb = nn.Sequential(df_fc_emb, nn.ReLU(inplace=True))
+        if p.enc_concat:
+            self.emb_in_dim *= 2
+            self.combine = Concat()
+        else:
+            self.combine = Add()
         self.emb_out_dim = p.emb_hidden_dim
         self.emb_n_layers = p.emb_num_layers
         assert p.gru_type in ("grouped", "squeeze"), f"But got {p.gru_type}"
@@ -130,7 +146,12 @@ class Encoder(nn.Module):
             )
         else:
             self.emb_gru = SqueezedGRU(
-                self.emb_in_dim, self.emb_out_dim, num_layers=1, batch_first=True
+                self.emb_in_dim,
+                self.emb_out_dim,
+                num_layers=1,
+                batch_first=True,
+                linear_groups=p.lin_groups,
+                linear_act_layer=partial(nn.ReLU, inplace=True),
             )
         self.lsnr_fc = nn.Sequential(nn.Linear(self.emb_out_dim, 1), nn.Sigmoid())
         self.lsnr_scale = p.lsnr_max - p.lsnr_min
@@ -142,7 +163,7 @@ class Encoder(nn.Module):
         # Encodes erb; erb should be in dB scale + normalized; Fe are number of erb bands.
         # erb: [B, 1, T, Fe]
         # spec: [B, 2, T, Fc]
-        b, _, t, _ = feat_erb.shape
+        # b, _, t, _ = feat_erb.shape
         e0 = self.erb_conv0(feat_erb)  # [B, C, T, F]
         e1 = self.erb_conv1(e0)  # [B, C*2, T, F/2]
         e2 = self.erb_conv2(e1)  # [B, C*4, T, F/4]
@@ -152,7 +173,7 @@ class Encoder(nn.Module):
         cemb = c1.permute(0, 2, 3, 1).flatten(2)  # [B, T, -1]
         cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
         emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F/4]
-        emb = emb + cemb
+        emb = self.combine(emb, cemb)
         emb, _ = self.emb_gru(emb)  # [B, T, -1]
         lsnr = self.lsnr_fc(emb) * self.lsnr_scale + self.lsnr_offset
         return e0, e1, e2, e3, emb, c0, lsnr
@@ -176,27 +197,26 @@ class ErbDecoder(nn.Module):
                 shuffle=p.group_shuffle,
                 add_outputs=True,
             )
-        else:
-            self.emb_gru = SqueezedGRU(
-                self.emb_out_dim,
-                self.emb_out_dim,
-                num_layers=p.emb_num_layers - 1,
-                batch_first=True,
-                gru_skip_op=nn.Identity,
-            )
-        # SqueezedGRU uses GroupedLinearEinsum, so let's use it here as well
-        if p.gru_type:
+            # SqueezedGRU uses GroupedLinearEinsum, so let's use it here as well
             fc_emb = GroupedLinear(
                 p.emb_hidden_dim,
                 p.conv_ch * p.nb_erb // 4,
                 groups=p.lin_groups,
                 shuffle=p.group_shuffle,
             )
+            self.fc_emb = nn.Sequential(fc_emb, nn.ReLU(inplace=True))
         else:
-            fc_emb = GroupedLinearEinsum(
-                p.emb_hidden_dim, p.conv_ch * p.nb_erb // 4, groups=p.lin_groups
+            self.emb_gru = SqueezedGRU(
+                self.emb_out_dim,
+                self.emb_out_dim,
+                output_size=p.conv_ch * p.nb_erb // 4,
+                num_layers=p.emb_num_layers - 1,
+                batch_first=True,
+                gru_skip_op=nn.Identity,
+                linear_groups=p.lin_groups,
+                linear_act_layer=partial(nn.ReLU, inplace=True),
             )
-        self.fc_emb = nn.Sequential(fc_emb, nn.ReLU(inplace=True))
+            self.fc_emb = nn.Identity()
         tconv_layer = partial(
             ConvTranspose2dNormAct,
             kernel_size=p.conv_kernel,
@@ -267,6 +287,7 @@ class DfDecoder(nn.Module):
                 num_layers=self.df_n_layers,
                 batch_first=True,
                 gru_skip_op=nn.Identity,
+                linear_act_layer=partial(nn.ReLU, inplace=True),
             )
         p.df_gru_skip = p.df_gru_skip.lower()
         assert p.df_gru_skip in ("none", "identity", "groupedlinear")
@@ -375,7 +396,7 @@ class DfNet(nn.Module):
             self.pad = nn.ConstantPad2d(pad, 0.0)
         else:
             self.pad = nn.Identity()
-        self.register_buffer("erb_fb", erb_fb, persistent=False)
+        self.register_buffer("erb_fb", erb_fb)
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
