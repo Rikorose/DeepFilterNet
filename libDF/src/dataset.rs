@@ -307,7 +307,6 @@ where
     pub max_freq: usize,
     pub snr: i8,
     pub gain: i8,
-    pub attenuation: Option<u8>,
     pub idx: usize,
 }
 impl Sample<f32> {
@@ -387,7 +386,6 @@ pub struct DatasetBuilder {
     nb_erb: Option<usize>,
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
-    p_atten_lim: Option<f32>,
     p_reverb: Option<f32>,
     p_fill_speech: Option<f32>,
     seed: Option<u64>,
@@ -408,7 +406,6 @@ impl DatasetBuilder {
             nb_erb: None,
             nb_spec: None,
             norm_alpha: None,
-            p_atten_lim: None,
             p_reverb: None,
             p_fill_speech: None,
             seed: None,
@@ -499,8 +496,6 @@ impl DatasetBuilder {
         }
         let snrs = self.snrs.unwrap_or_else(|| vec![-5, 0, 5, 10, 20, 40]);
         let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
-        let attenuation_range = (6, 40);
-        let p_atten_lim = self.p_atten_lim.unwrap_or(0.);
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
         let sp_transforms = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
@@ -527,9 +522,7 @@ impl DatasetBuilder {
             rir_keys: Vec::new(),
             snrs,
             gains,
-            attenuation_range,
             p_fill_speech,
-            p_atten_lim,
             sp_transforms,
             ns_transforms,
             reverb,
@@ -567,11 +560,6 @@ impl DatasetBuilder {
     }
     pub fn global_sample_factor(mut self, f: f32) -> Self {
         self.global_sampling_f = Some(f);
-        self
-    }
-    pub fn prob_atten_lim(mut self, p_atten_lim: f32) -> Self {
-        assert!((0. ..=1.).contains(&p_atten_lim));
-        self.p_atten_lim = Some(p_atten_lim);
         self
     }
     pub fn prob_reverberation(mut self, p_reverb: f32) -> Self {
@@ -655,7 +643,6 @@ impl Dataset<Complex32> for FftDataset {
             max_freq: sample.max_freq,
             gain: sample.gain,
             snr: sample.snr,
-            attenuation: sample.attenuation,
             idx: sample.idx,
         })
     }
@@ -695,10 +682,8 @@ pub struct TdDataset {
     sp_keys: Vec<(usize, String)>, // Pair of hdf5 index and dataset keys. Will be generated at each epoch start
     ns_keys: Vec<(usize, String)>,
     rir_keys: Vec<(usize, String)>,
-    snrs: Vec<i8>,               // in dB; SNR to sample from
-    gains: Vec<i8>,              // in dB; Speech (loudness) to sample from
-    attenuation_range: (u8, u8), // in dB; Return a target sample containing noise for attenuation limited algorithm
-    p_atten_lim: f32,            // Probability for containing noise in target
+    snrs: Vec<i8>,          // in dB; SNR to sample from
+    gains: Vec<i8>,         // in dB; Speech (loudness) to sample from
     p_fill_speech: f32, // Probability to completely fill the speech signal to `max_samples` with a different speech sample
     sp_transforms: Compose, // Transforms to augment speech samples
     ns_transforms: Compose, // Transforms to augment noise samples
@@ -871,12 +856,6 @@ impl Dataset<f32> for TdDataset {
         // Sample SNR and gain
         let &snr = self.snrs.choose(&mut rng).unwrap();
         let &gain = self.gains.choose(&mut rng).unwrap();
-        // Sample attenuation limiting during training
-        let atten = if self.p_atten_lim > 0. && self.p_atten_lim > rng.gen_range(0f32..1f32) {
-            Some(rng.gen_range(self.attenuation_range.0..self.attenuation_range.1))
-        } else {
-            None
-        };
         // Truncate to speech len, combine noises and mix to noisy
         let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains_f32.as_slice()))?;
         // Apply reverberation using a randomly sampled RIR
@@ -895,7 +874,6 @@ impl Dataset<f32> for TdDataset {
             noise,
             snr as f32,
             gain as f32,
-            atten.map(|a| a as f32),
             noise_low_pass,
         )?;
         Ok(Sample {
@@ -907,7 +885,6 @@ impl Dataset<f32> for TdDataset {
             max_freq,
             snr,
             gain,
-            attenuation: atten,
             idx,
         })
     }
@@ -1486,8 +1463,6 @@ fn combine_noises(
 /// * `noise` - A noise signal of shape `[C, N]`. Will be modified in place.
 /// * `snr_db` - Signal to noise ratio in decibel used for mixing.
 /// * `gain_db` - Gain to apply to the clean signal in decibel before mixing.
-/// * `atten_db` - Target attenuation limit in decibel. The resulting clean target will contain
-///                `atten_db` less noise compared to the noisy output.
 /// * `noise_resample`: Optional resample parameters which will be used to apply a low-pass via
 ///                     resampling to the noise signal. This may be used to make sure a speech
 ///                     signal with a lower sampling rate will also be mixed with noise having the
@@ -1498,7 +1473,6 @@ fn mix_audio_signal(
     mut noise: Array2<f32>,
     snr_db: f32,
     gain_db: f32,
-    atten_db: Option<f32>,
     noise_resample: Option<LpParam>,
 ) -> Result<(Signal, Signal, Signal)> {
     let len = clean.len_of(Axis(1));
@@ -1514,13 +1488,6 @@ fn mix_audio_signal(
     let clean_mix = clean_rev.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
     // For energy calculation use clean speech to also consider direct-to-reverberant ratio
     noise *= mix_f(clean_out.view(), noise.view(), snr_db);
-    if let Some(atten_db) = atten_db {
-        // Create a mixture with a higher SNR as target signal
-        let k_target = 1. / mix_f(clean_out.view(), noise.view(), snr_db + atten_db);
-        clean_out *= k_target;
-        // clean_mix *= k_target;
-        clean_out += &noise;
-    }
     let mut mixture = clean_mix + &noise;
     // Guard against clipping
     let max = &([&clean_out, &noise, &mixture].iter().map(|x| find_max_abs(x.iter())))

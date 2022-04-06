@@ -21,8 +21,8 @@ class Batch:
         # safe to assume writable.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            assert len(b) == 11
-            speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, atten, timings = b
+            assert len(b) == 10
+            speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
             if erb.size <= 1:
                 self.feat_erb = None
             if spec.size <= 1:
@@ -36,8 +36,6 @@ class Batch:
             self.lengths = torch.from_numpy(lengths.astype(np.int64)).long()
             self.snr = torch.from_numpy(snr)
             self.gain = torch.from_numpy(gain)
-            self.atten = torch.from_numpy(atten).long()
-            self.atten[self.atten == 0] = 1000
             self.max_freq = torch.from_numpy(max_freq.astype(np.int32)).long()
             self.timings = torch.from_numpy(timings.astype(np.float32))
 
@@ -50,7 +48,6 @@ class Batch:
             self.feat_spec = self.feat_spec.pin_memory()
         if self.max_freq is not None:
             self.max_freq = self.max_freq.pin_memory()
-        self.atten.pin_memory()
         return self
 
     def __repr__(self):
@@ -81,7 +78,6 @@ class PytorchDataLoader:
         nb_spec: int = None,  # Number of complex spectrogram bins
         norm_alpha: float = None,  # Exponential normalization decay for erb_feat and spec_feat
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
-        p_atten_lim: Optional[float] = None,  # Limit attenuation by providing a noisy target
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
         overfit=False,  # Overfit on one epoch
         seed=0,
@@ -94,7 +90,7 @@ class PytorchDataLoader:
         self.fft_size = fft_size
         self.batch_size = batch_size
         self.batch_size_eval = batch_size_eval
-        prefetch_loader = batch_size * num_workers
+        prefetch_loader = batch_size * (num_workers or 1)
         logger.info(f"Initializing dataloader with data directory {ds_dir}")
         assert self.fft_size is not None, "No fft_size provided"
         self.loader = _FdDataLoader(
@@ -110,7 +106,6 @@ class PytorchDataLoader:
             nb_erb=nb_erb,
             nb_spec=nb_spec,
             norm_alpha=norm_alpha,
-            p_atten_lim=p_atten_lim,
             p_reverb=p_reverb,
             prefetch=prefetch_loader,
             drop_last=drop_last,
