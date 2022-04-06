@@ -153,21 +153,15 @@ impl DataLoader {
         drop_last: bool,
     ) -> Result<Self> {
         // Register global rayon threadpool. It will only be used for data loader workers.
-        let mut poolbuilder = rayon::ThreadPoolBuilder::new();
+        hdf5::sync::sync(|| {});
         let num_workers = num_threads.unwrap_or_else(current_num_threads);
-        poolbuilder = poolbuilder.num_threads(num_workers);
-        match poolbuilder
+        hdf5::sync::sync(|| {});
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_workers)
             .thread_name(|idx| format!("DataLoader Worker {}", idx))
+            .start_handler(|_| hdf5::sync::sync(|| {}))
             .build_global()
-        {
-            Ok(()) => (),
-            Err(e) => {
-                if e.to_string() != "The global thread pool has already been initialized." {
-                    return Err(e.into());
-                }
-                // else: already initialized, do not complain.
-            }
-        };
+            .unwrap_or(());
         let batch_size_eval = batch_size_eval.unwrap_or(batch_size_train);
         Ok(DataLoader {
             ds_train: Some(Arc::new(datasets.train)),
