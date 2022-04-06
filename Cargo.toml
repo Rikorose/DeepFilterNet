@@ -5,3 +5,7 @@ members = [
   "pyDF",
   "pyDF-data"
 ]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
