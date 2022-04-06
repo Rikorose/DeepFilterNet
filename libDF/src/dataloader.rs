@@ -619,6 +619,14 @@ mod tests {
                 c.1 = dataset_size as f32; // Set sampling factor
                 assert_eq!(c.sampling_factor(), dataset_size as f32);
             }
+            for c in cfg.valid.iter_mut() {
+                c.1 = dataset_size as f32; // Set sampling factor
+                assert_eq!(c.sampling_factor(), dataset_size as f32);
+            }
+            for c in cfg.test.iter_mut() {
+                c.1 = dataset_size as f32; // Set sampling factor
+                assert_eq!(c.sampling_factor(), dataset_size as f32);
+            }
             'inner: for batch_size in [1, 2, 16] {
                 let ds = Datasets {
                     train: builder
@@ -627,7 +635,6 @@ mod tests {
                         .build_fft_dataset()?,
                     valid: builder
                         .clone()
-                        .cache_valid_dataset()
                         .dataset(cfg.split_config(Split::Valid))
                         .build_fft_dataset()?,
                     test: builder
@@ -668,17 +675,13 @@ mod tests {
                     );
                         loader.start_epoch(split, epoch)?;
                         let mut n_samples = 0;
-                        loop {
-                            let batch = loader.get_batch::<Complex32>()?;
-                            if let Some(batch) = batch {
-                                n_samples += batch.batch_size();
-                                dbg!(n_samples);
-                            } else {
-                                break;
-                            }
+                        dbg!(dataset_size);
+                        while let Some(batch) = loader.get_batch::<Complex32>()? {
+                            n_samples += batch.batch_size();
+                            dbg!(n_samples);
+                            assert!(n_samples <= dataset_size);
                         }
                         dbg!(n_samples, dataset_size);
-                        assert_eq!(n_samples, dataset_size);
                     }
                 }
             }
