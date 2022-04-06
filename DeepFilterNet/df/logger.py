@@ -9,8 +9,8 @@ import torch
 from loguru import logger
 from torch.types import Number
 
-from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 from df.modules import GroupedLinearEinsum
+from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 
 _logger_initialized = False
 WARN_ONCE_NO = logger.level("WARNING").no + 1
