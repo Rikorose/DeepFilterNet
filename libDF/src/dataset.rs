@@ -401,6 +401,7 @@ pub struct DatasetBuilder {
     snrs: Option<Vec<i8>>,
     gains: Option<Vec<i8>>,
     cache_valid: bool,
+    num_threads: Option<usize>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -422,6 +423,7 @@ impl DatasetBuilder {
             snrs: None,
             gains: None,
             cache_valid: false,
+            num_threads: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -442,17 +444,19 @@ impl DatasetBuilder {
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
-        let cache = if self.cache_valid && self.datasets.unwrap().split == Split::Valid {
+        let split = self.datasets.unwrap().split;
+        let cache = if self.cache_valid && split == Split::Valid {
             let ds_path = Path::new(&self.ds_dir);
             let hash = {
                 let mut hash_vec: Vec<u64> = ds.config.iter().map(|c| c.hash().unwrap()).collect();
                 hash_vec.push(fft_size as u64);
                 hash_vec.push(hop_size as u64);
                 hash_vec.push(nb_erb as u64);
-                calculate_hash(&hash_vec)
+                dbg!(&hash_vec);
+                dbg!(calculate_hash(&hash_vec))
             };
-            let cache_path = ds_path.join(format!("valid_cache_{}.hdf5", hash));
-            Some(Hdf5Cache::new(cache_path.to_str().unwrap(), hash)?)
+            let cache_path = ds_path.join(format!("{}_cache_{}.hdf5", split, hash));
+            Some(Hdf5Cache::new(&cache_path, hash)?)
         } else {
             None
         };
@@ -477,6 +481,15 @@ impl DatasetBuilder {
         // Get dataset handles and keys. Each key is a unique String.
         let ds_path = Path::new(&self.ds_dir);
         let (sender, receiver) = sync_channel(datasets.hdf5s.len() + 1);
+        if let Some(n) = self.num_threads {
+            hdf5::sync::sync(|| {});
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(n)
+                .thread_name(|idx| format!("DataLoader Worker {}", idx))
+                .start_handler(|_| hdf5::sync::sync(|| {}))
+                .build_global()
+                .unwrap_or(());
+        }
         datasets.hdf5s.par_iter().try_for_each(|cfg| -> Result<()> {
             let path = ds_path.join(cfg.filename());
             if (!path.is_file()) && path.read_link().is_err() {
@@ -612,6 +625,10 @@ impl DatasetBuilder {
         self.gains = Some(gains);
         self
     }
+    pub fn num_threads(mut self, n: usize) -> Self {
+        self.num_threads = Some(n);
+        self
+    }
     pub fn cache_valid_dataset(mut self) -> Self {
         self.cache_valid = true;
         self
@@ -636,6 +653,12 @@ impl FftDataset {
             }
         }
         None
+    }
+    pub fn close_cache(&mut self) -> Result<()> {
+        if let Some(mut c) = self.cache.take() {
+            c.close()?;
+        }
+        Ok(())
     }
 }
 impl Dataset<Complex32> for FftDataset {
@@ -1026,14 +1049,26 @@ pub enum DType {
 /// Cache for validation dataset
 #[derive(Debug)]
 struct Hdf5Cache {
-    file: File,
+    file: Option<File>,
     hash: u64,
     filters: Option<Vec<filters::Filter>>,
 }
 
+impl Drop for Hdf5Cache {
+    fn drop(&mut self) {
+        self.close().unwrap();
+    }
+}
 impl Hdf5Cache {
-    fn new(path: &str, hash: u64) -> Result<Self> {
-        let file = File::append(path)?;
+    fn new(path: &impl AsRef<Path>, hash: u64) -> Result<Self> {
+        let path = path.as_ref();
+        let file = if path.is_file() {
+            println!("Opening validation cache: {:?}", path);
+            File::open_rw(path)?
+        } else {
+            println!("Validation cache not found. Creating: {:?}", path);
+            File::create(path)?
+        };
         match file.attr("hash") {
             Err(_e) => {
                 let attr = file.new_attr::<u64>().create("hash")?;
@@ -1042,17 +1077,25 @@ impl Hdf5Cache {
             Ok(attr) => assert_eq!(attr.read_scalar::<u64>().unwrap(), hash),
         };
         let filters = if filters::blosc_available() {
-            Some(vec![filters::Filter::blosc_lz4hc(9, true)])
+            dbg!(filters::blosc_get_nthreads());
+            dbg!(filters::blosc_set_nthreads(8));
+            Some(vec![filters::Filter::blosc_lz4hc(5, true)])
         } else if filters::deflate_available() {
             Some(vec![filters::Filter::Deflate(4)])
         } else {
             None
         };
         Ok(Hdf5Cache {
-            file,
+            file: Some(file),
             hash,
             filters,
         })
+    }
+    fn close(&mut self) -> Result<()> {
+        if let Some(file) = self.file.take() {
+            file.close()?
+        }
+        Ok(())
     }
     fn create_ds<'d, A, T, D>(&self, grp: &Group, name: &str, data: A) -> Result<()>
     where
@@ -1098,7 +1141,7 @@ impl Hdf5Cache {
         Ok(attr.read_scalar()?)
     }
     fn cache_sample(&self, key: u64, sample: &Sample<Complex32>) -> Result<()> {
-        let grp = self.file.create_group(&key.to_string())?;
+        let grp = self.file.as_ref().unwrap().create_group(&key.to_string())?;
         self.store_cplx(&grp, "speech", sample.speech.view())?;
         self.store_cplx(&grp, "noise", sample.noise.view())?;
         self.store_cplx(&grp, "noisy", sample.noisy.view())?;
@@ -1115,7 +1158,7 @@ impl Hdf5Cache {
         Ok(())
     }
     fn load_sample(&self, key: u64) -> Result<Option<Sample<Complex32>>> {
-        let grp = match self.file.group(&key.to_string()) {
+        let grp = match self.file.as_ref().unwrap().group(&key.to_string()) {
             Ok(g) => g,
             Err(_) => return Ok(None),
         };
