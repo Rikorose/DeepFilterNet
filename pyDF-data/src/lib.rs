@@ -133,6 +133,9 @@ impl _FdDataLoader {
         if let Some(gains) = gains {
             ds_builder = ds_builder.gains(gains);
         }
+        if let Some(num_threads) = num_threads {
+            ds_builder = ds_builder.num_threads(num_threads);
+        }
         let valid_handle = {
             let valid_cfg = cfg.split_config(Split::Valid);
             let valid_ds_builder = ds_builder.clone();

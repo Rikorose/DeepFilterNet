@@ -519,6 +519,21 @@ impl Collate<Complex32> for Complex32 {
 impl Drop for DataLoader {
     fn drop(&mut self) {
         self.join_fill_thread().unwrap(); // Stop out_receiver and join fill thread
+        for split in Split::iter() {
+            let mut ds = match Arc::try_unwrap(
+                match split {
+                    Split::Train => self.ds_train.take(),
+                    Split::Valid => self.ds_valid.take(),
+                    Split::Test => self.ds_test.take(),
+                }
+                .unwrap(),
+            ) {
+                Ok(ds) => ds,
+                Err(_) => panic!("Could not regain ownership over dataset"),
+            };
+            ds.close_cache().unwrap();
+            self.set_ds(split, ds);
+        }
     }
 }
 
