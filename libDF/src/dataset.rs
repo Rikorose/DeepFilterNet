@@ -475,7 +475,7 @@ impl DatasetBuilder {
                 hash_vec.push(fft_size as u64);
                 hash_vec.push(hop_size as u64);
                 hash_vec.push(nb_erb as u64);
-                (calculate_hash(&hash_vec)
+                calculate_hash(&hash_vec)
             };
             let cache_path = ds_path.join(format!("{}_cache_{}.hdf5", split, hash));
             Some(Hdf5Cache::new(&cache_path, hash)?)
