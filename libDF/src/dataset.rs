@@ -5,6 +5,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::BufReader;
 use std::io::BufWriter;
+use std::ops::Deref;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{
@@ -12,10 +13,12 @@ use std::sync::{
     Arc,
 };
 use std::thread;
+use std::time::Instant;
 use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
 use claxon;
+use hdf5::Location;
 use hdf5::{filters, types::VarLenUnicode, File, Group, H5Type};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
@@ -478,7 +481,7 @@ impl DatasetBuilder {
                 calculate_hash(&hash_vec)
             };
             let cache_path = ds_path.join(format!("{}_cache_{}.hdf5", split, hash));
-            Some(Hdf5Cache::new(&cache_path, hash)?)
+            Some(Hdf5Cache::new(&cache_path, hash, ds.len())?)
         } else {
             None
         };
@@ -685,15 +688,18 @@ impl FftDataset {
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
+        let t0 = Instant::now();
         let hash = if let Some(cache) = self.cache.as_ref() {
             let hash = calculate_hash(&(idx, seed));
             if let Some(s) = cache.load_sample(hash)? {
+                dbg!((Instant::now() - t0).as_secs_f32());
                 return Ok(s);
             }
             hash
         } else {
             0
         };
+        let t1 = Instant::now();
         let sample: Sample<f32> = self.ds.get_sample(idx, seed)?;
         let nb_erb = self.nb_erb.unwrap_or(1);
         let mut state = DFState::new(self.sr(), self.fft_size, self.hop_size, nb_erb, 1);
@@ -729,9 +735,16 @@ impl Dataset<Complex32> for FftDataset {
             snr: sample.snr,
             idx: sample.idx,
         };
+        let t2 = Instant::now();
         if let Some(cache) = self.cache.as_ref() {
             cache.cache_sample(hash, &sample, true)?;
         }
+        let t3 = Instant::now();
+        dbg!(
+            (t1 - t0).as_secs_f32(),
+            (t2 - t1).as_secs_f32(),
+            (t3 - t2).as_secs_f32()
+        );
         Ok(sample)
     }
 
@@ -1073,11 +1086,11 @@ pub enum DType {
 struct Hdf5Cache {
     file: Option<Arc<File>>,
     hash: u64,
-    filters: Option<Arc<Vec<filters::Filter>>>,
+    filters: Arc<Vec<filters::Filter>>,
     cacher: Option<thread::JoinHandle<Result<()>>>,
     sender: SyncSender<Option<(u64, Sample<Complex32>)>>,
-    max_gb: f32,
-    expected_gb: f32,
+    n_samples: usize,
+    max_size: u64, // in bytes
 }
 
 impl Drop for Hdf5Cache {
@@ -1086,7 +1099,7 @@ impl Drop for Hdf5Cache {
     }
 }
 impl Hdf5Cache {
-    fn new(path: &impl AsRef<Path>, hash: u64) -> Result<Self> {
+    fn new(path: &impl AsRef<Path>, hash: u64, n_samples: usize) -> Result<Self> {
         let path = path.as_ref();
         let file = if path.is_file() {
             println!("Opening validation cache: {:?}", path);
@@ -1105,21 +1118,25 @@ impl Hdf5Cache {
         let file = Arc::new(file);
         let filters = if filters::blosc_available() {
             filters::blosc_set_nthreads(8);
-            Some(Arc::new(vec![filters::Filter::blosc_lz4hc(5, true)]))
+            Arc::new(vec![filters::Filter::blosc_lz4hc(5, true)])
         } else if filters::deflate_available() {
-            Some(Arc::new(vec![filters::Filter::Deflate(4)]))
+            Arc::new(vec![filters::Filter::Deflate(4)])
         } else {
-            None
+            Arc::new(Vec::new())
         };
+        let max_gb = std::env::var("HDF5CACHE_MAX_GB")
+            .map(|s| s.parse::<f32>().unwrap_or_default())
+            .unwrap_or_default();
+        let max_size: u64 = (max_gb * 1024. * 1024. * 1024.) as u64;
+        Hdf5Cache::set_attr(file.deref(), "max_size", &max_size)?;
+        Hdf5Cache::set_attr(&file.as_location()?, "n_samples", &n_samples)?;
         let (sender, receiver) = sync_channel(256);
         let filters_c = filters.clone();
         let file_c = file.clone();
         let cacher = Some(thread::spawn(move || -> Result<()> {
+            seed_from_u64(0); // Only for selecting which samples to store;
             while let Some((key, sample)) = receiver.recv()? {
-                match filters_c.as_ref() {
-                    Some(f) => Hdf5Cache::cache_sample_impl(&file_c, key, &sample, Some(f))?,
-                    None => Hdf5Cache::cache_sample_impl(&file_c, key, &sample, None)?,
-                }
+                Hdf5Cache::cache_sample_impl(&file_c, key, &sample, &filters_c)?;
             }
             Ok(())
         }));
@@ -1129,8 +1146,8 @@ impl Hdf5Cache {
             filters,
             cacher,
             sender,
-            max_gb: -1.0,
-            expected_gb: -1.0,
+            n_samples,
+            max_size,
         })
     }
     pub fn close(&mut self) -> Result<()> {
@@ -1146,42 +1163,46 @@ impl Hdf5Cache {
         Ok(())
     }
     pub fn cache_sample(&self, key: u64, sample: &Sample<Complex32>, queue: bool) -> Result<()> {
-        if queue {
-            Ok(self.sender.send(Some((key, sample.clone())))?)
-        } else {
-            match self.filters.as_ref() {
-                Some(f) => {
-                    Self::cache_sample_impl(self.file.as_ref().unwrap(), key, sample, Some(f))
-                }
-                None => Self::cache_sample_impl(self.file.as_ref().unwrap(), key, sample, None),
-            }
+        if Self::is_full(self.file.as_ref().unwrap(), self.max_size) {
+            return Ok(());
         }
+        if queue {
+            return Ok(self.sender.send(Some((key, sample.clone())))?);
+        } else {
+            Self::cache_sample_impl(self.file.as_ref().unwrap(), key, sample, &self.filters)?;
+        };
+        Ok(())
+    }
+    fn get_attr<T: H5Type>(l: &Location, name: &str) -> Result<Option<T>> {
+        match l.attr(name) {
+            Ok(a) => Ok(Some(a.read_scalar()?)),
+            Err(_) => Ok(None),
+        }
+    }
+    fn set_attr<T: H5Type>(l: &Location, name: &str, val: &T) -> Result<()> {
+        let attr = l.new_attr::<T>().create(name).unwrap_or_else(|_| l.attr(name).unwrap());
+        attr.write_scalar(val)?;
+        Ok(())
     }
     fn create_ds<'d, A, T, D>(
         grp: &Group,
         name: &str,
         data: A,
-        filters: Option<&Vec<filters::Filter>>,
+        filters: &[filters::Filter],
     ) -> Result<()>
     where
         A: Into<ArrayView<'d, T, D>>,
         T: H5Type,
         D: ndarray::Dimension,
     {
-        let builder = grp.new_dataset_builder();
-        let builder = if let Some(filters) = filters.as_ref() {
-            builder.set_filters(filters)
-        } else {
-            builder
-        };
-        builder.with_data(data).create(name)?;
+        grp.new_dataset_builder().set_filters(filters).with_data(data).create(name)?;
         Ok(())
     }
     fn store_cplx(
         grp: &Group,
         name: &str,
         data: ArrayViewD<Complex32>,
-        filters: Option<&Vec<filters::Filter>>,
+        filters: &[filters::Filter],
     ) -> Result<()> {
         let complex = data.split_complex();
         let name_re = name.to_owned() + "_re";
@@ -1211,21 +1232,48 @@ impl Hdf5Cache {
         ds_im.read_dyn()?.move_into(view.im);
         Ok(out)
     }
-    fn store_attr<T: H5Type>(grp: &Group, name: &str, data: &T) -> Result<()> {
-        let attr = grp.new_attr::<T>().create(name)?;
-        attr.write_scalar(data)?;
-        Ok(())
+    fn is_full(file: &File, max_size: u64) -> bool {
+        if max_size == 0 {
+            return false;
+        }
+        file.size() > max_size
     }
-    fn load_attr<T: H5Type>(grp: &Group, name: &str) -> Result<T> {
-        let attr = grp.attr(name)?;
-        Ok(attr.read_scalar()?)
+    fn should_cache(
+        file: &File,
+        max_size: Option<u64>,
+        total_samples: Option<u64>,
+    ) -> Result<bool> {
+        let max_size = max_size
+            .unwrap_or_else(|| Self::get_attr(file, "max_size").unwrap().unwrap_or_default());
+        if Self::is_full(file, max_size) {
+            return Ok(false);
+        }
+        let n_samples = file.len();
+        if n_samples == 0 {
+            return Ok(true);
+        }
+        let total_samples = total_samples
+            .unwrap_or_else(|| Self::get_attr(file, "total_samples").unwrap().unwrap_or_default());
+        let avg_size = file.size() as f32 / n_samples as f32;
+        let total_estimate = total_samples as f32 * avg_size;
+        if total_estimate < max_size as f32 {
+            Ok(true)
+        } else {
+            // Since we can't store all samples, let's just store a fraction by uniformly
+            // sampling.
+            let p = max_size as f32 / total_estimate;
+            Ok(p >= thread_rng()?.gen_range(0f32..1f32))
+        }
     }
     fn cache_sample_impl(
         file: &File,
         key: u64,
         sample: &Sample<Complex32>,
-        filters: Option<&Vec<filters::Filter>>,
+        filters: &[filters::Filter],
     ) -> Result<()> {
+        if !Self::should_cache(file, None, None)? {
+            return Ok(());
+        }
         let grp = file.create_group(&key.to_string())?;
         Self::store_cplx(&grp, "speech", sample.speech.view(), filters)?;
         Self::store_cplx(&grp, "noise", sample.noise.view(), filters)?;
@@ -1236,10 +1284,10 @@ impl Hdf5Cache {
         if let Some(feat_spec) = sample.feat_spec.as_ref() {
             Self::store_cplx(&grp, "feat_spec", feat_spec.view(), filters)?;
         }
-        Self::store_attr(&grp, "max_freq", &sample.max_freq)?;
-        Self::store_attr(&grp, "snr", &sample.snr)?;
-        Self::store_attr(&grp, "gain", &sample.gain)?;
-        Self::store_attr(&grp, "idx", &sample.idx)?;
+        Self::set_attr(&grp, "max_freq", &sample.max_freq)?;
+        Self::set_attr(&grp, "snr", &sample.snr)?;
+        Self::set_attr(&grp, "gain", &sample.gain)?;
+        Self::set_attr(&grp, "idx", &sample.idx)?;
         Ok(())
     }
     fn load_sample(&self, key: u64) -> Result<Option<Sample<Complex32>>> {
@@ -1251,18 +1299,12 @@ impl Hdf5Cache {
             speech: Self::load_cplx(&grp, "speech")?,
             noise: Self::load_cplx(&grp, "noise")?,
             noisy: Self::load_cplx(&grp, "noisy")?,
-            feat_erb: match grp.dataset("feat_erb") {
-                Ok(d) => Some(d.read_dyn()?),
-                Err(_) => None,
-            },
-            feat_spec: match Self::load_cplx(&grp, "feat_spec") {
-                Ok(s) => Some(s),
-                Err(_) => None,
-            },
-            max_freq: Self::load_attr(&grp, "max_freq")?,
-            snr: Self::load_attr(&grp, "snr")?,
-            gain: Self::load_attr(&grp, "gain")?,
-            idx: Self::load_attr(&grp, "idx")?,
+            feat_erb: Some(grp.dataset("feat_erb")?.read_dyn()?),
+            feat_spec: Some(Self::load_cplx(&grp, "feat_spec")?),
+            max_freq: Self::get_attr(&grp, "max_freq")?.unwrap(),
+            snr: Self::get_attr(&grp, "snr")?.unwrap(),
+            gain: Self::get_attr(&grp, "gain")?.unwrap(),
+            idx: Self::get_attr(&grp, "idx")?.unwrap(),
         }))
     }
 }
@@ -2057,7 +2099,7 @@ mod tests {
         let fft_size = 960;
         let hop_size = Some(480);
         let nb_erb = Some(32);
-        let nb_spec = None;
+        let nb_spec = Some(32);
         let norm_alpha = None;
         let sr = 48000;
         let ds_dir = "../assets/";
