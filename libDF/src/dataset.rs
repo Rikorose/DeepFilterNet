@@ -1099,7 +1099,7 @@ impl Drop for Hdf5Cache {
     }
 }
 impl Hdf5Cache {
-    fn new(path: &impl AsRef<Path>, hash: u64, n_samples: usize) -> Result<Self> {
+    fn new(path: &impl AsRef<Path>, hash: u64, n_total_samples: usize) -> Result<Self> {
         let path = path.as_ref();
         let file = if path.is_file() {
             println!("Opening validation cache: {:?}", path);
@@ -1129,7 +1129,7 @@ impl Hdf5Cache {
             .unwrap_or_default();
         let max_size: u64 = (max_gb * 1024. * 1024. * 1024.) as u64;
         Hdf5Cache::set_attr(file.deref(), "max_size", &max_size)?;
-        Hdf5Cache::set_attr(&file.as_location()?, "n_samples", &n_samples)?;
+        Hdf5Cache::set_attr(&file.as_location()?, "total_samples", &n_total_samples)?;
         let (sender, receiver) = sync_channel(256);
         let filters_c = filters.clone();
         let file_c = file.clone();
@@ -1146,7 +1146,7 @@ impl Hdf5Cache {
             filters,
             cacher,
             sender,
-            n_samples,
+            n_samples: n_total_samples,
             max_size,
         })
     }
