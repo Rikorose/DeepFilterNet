@@ -7,7 +7,11 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::ops::Range;
 use std::path::Path;
-use std::sync::mpsc::sync_channel;
+use std::sync::{
+    mpsc::{sync_channel, SyncSender},
+    Arc,
+};
+use std::thread;
 use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
@@ -72,6 +76,24 @@ pub enum DfDatasetError {
     #[cfg(feature = "flac")]
     #[error("Flac Decode Error")]
     FlacError(#[from] claxon::Error),
+    #[error("Multithreading Send Error: {0:?}")]
+    SendError(String),
+    #[error("Multithreading Recv Error: {0:?}")]
+    RecvError(String),
+    #[error("Thread Join Error: {0:?}")]
+    ThreadJoinError(String),
+}
+
+impl From<std::sync::mpsc::RecvError> for DfDatasetError {
+    fn from(error: std::sync::mpsc::RecvError) -> Self {
+        DfDatasetError::RecvError(error.to_string())
+    }
+}
+
+impl<T> From<std::sync::mpsc::SendError<T>> for DfDatasetError {
+    fn from(error: std::sync::mpsc::SendError<T>) -> Self {
+        DfDatasetError::SendError(error.to_string())
+    }
 }
 
 type Signal = Array2<f32>;
@@ -302,6 +324,7 @@ pub enum SampleType {
     TimeDomain,
     FreqDomain,
 }
+#[derive(Clone)]
 pub struct Sample<T>
 where
     T: Data,
@@ -452,8 +475,7 @@ impl DatasetBuilder {
                 hash_vec.push(fft_size as u64);
                 hash_vec.push(hop_size as u64);
                 hash_vec.push(nb_erb as u64);
-                dbg!(&hash_vec);
-                dbg!(calculate_hash(&hash_vec))
+                (calculate_hash(&hash_vec)
             };
             let cache_path = ds_path.join(format!("{}_cache_{}.hdf5", split, hash));
             Some(Hdf5Cache::new(&cache_path, hash)?)
@@ -708,7 +730,7 @@ impl Dataset<Complex32> for FftDataset {
             idx: sample.idx,
         };
         if let Some(cache) = self.cache.as_ref() {
-            cache.cache_sample(hash, &sample)?;
+            cache.cache_sample(hash, &sample, true)?;
         }
         Ok(sample)
     }
@@ -1049,9 +1071,13 @@ pub enum DType {
 /// Cache for validation dataset
 #[derive(Debug)]
 struct Hdf5Cache {
-    file: Option<File>,
+    file: Option<Arc<File>>,
     hash: u64,
-    filters: Option<Vec<filters::Filter>>,
+    filters: Option<Arc<Vec<filters::Filter>>>,
+    cacher: Option<thread::JoinHandle<Result<()>>>,
+    sender: SyncSender<Option<(u64, Sample<Complex32>)>>,
+    max_gb: f32,
+    expected_gb: f32,
 }
 
 impl Drop for Hdf5Cache {
@@ -1076,35 +1102,74 @@ impl Hdf5Cache {
             }
             Ok(attr) => assert_eq!(attr.read_scalar::<u64>().unwrap(), hash),
         };
+        let file = Arc::new(file);
         let filters = if filters::blosc_available() {
-            dbg!(filters::blosc_get_nthreads());
-            dbg!(filters::blosc_set_nthreads(8));
-            Some(vec![filters::Filter::blosc_lz4hc(5, true)])
+            filters::blosc_set_nthreads(8);
+            Some(Arc::new(vec![filters::Filter::blosc_lz4hc(5, true)]))
         } else if filters::deflate_available() {
-            Some(vec![filters::Filter::Deflate(4)])
+            Some(Arc::new(vec![filters::Filter::Deflate(4)]))
         } else {
             None
         };
+        let (sender, receiver) = sync_channel(256);
+        let filters_c = filters.clone();
+        let file_c = file.clone();
+        let cacher = Some(thread::spawn(move || -> Result<()> {
+            while let Some((key, sample)) = receiver.recv()? {
+                match filters_c.as_ref() {
+                    Some(f) => Hdf5Cache::cache_sample_impl(&file_c, key, &sample, Some(f))?,
+                    None => Hdf5Cache::cache_sample_impl(&file_c, key, &sample, None)?,
+                }
+            }
+            Ok(())
+        }));
         Ok(Hdf5Cache {
             file: Some(file),
             hash,
             filters,
+            cacher,
+            sender,
+            max_gb: -1.0,
+            expected_gb: -1.0,
         })
     }
-    fn close(&mut self) -> Result<()> {
+    pub fn close(&mut self) -> Result<()> {
+        self.sender.try_send(None).unwrap_or_default();
+        if let Some(thread) = self.cacher.take() {
+            thread
+                .join()
+                .map_err(|e| DfDatasetError::ThreadJoinError(format!("{:?}", e)))??;
+        }
         if let Some(file) = self.file.take() {
-            file.close()?
+            Arc::try_unwrap(file).unwrap().close()?
         }
         Ok(())
     }
-    fn create_ds<'d, A, T, D>(&self, grp: &Group, name: &str, data: A) -> Result<()>
+    pub fn cache_sample(&self, key: u64, sample: &Sample<Complex32>, queue: bool) -> Result<()> {
+        if queue {
+            Ok(self.sender.send(Some((key, sample.clone())))?)
+        } else {
+            match self.filters.as_ref() {
+                Some(f) => {
+                    Self::cache_sample_impl(self.file.as_ref().unwrap(), key, sample, Some(f))
+                }
+                None => Self::cache_sample_impl(self.file.as_ref().unwrap(), key, sample, None),
+            }
+        }
+    }
+    fn create_ds<'d, A, T, D>(
+        grp: &Group,
+        name: &str,
+        data: A,
+        filters: Option<&Vec<filters::Filter>>,
+    ) -> Result<()>
     where
         A: Into<ArrayView<'d, T, D>>,
         T: H5Type,
         D: ndarray::Dimension,
     {
         let builder = grp.new_dataset_builder();
-        let builder = if let Some(filters) = self.filters.as_ref() {
+        let builder = if let Some(filters) = filters.as_ref() {
             builder.set_filters(filters)
         } else {
             builder
@@ -1112,15 +1177,30 @@ impl Hdf5Cache {
         builder.with_data(data).create(name)?;
         Ok(())
     }
-    fn store_cplx(&self, grp: &Group, name: &str, data: ArrayViewD<Complex32>) -> Result<()> {
+    fn store_cplx(
+        grp: &Group,
+        name: &str,
+        data: ArrayViewD<Complex32>,
+        filters: Option<&Vec<filters::Filter>>,
+    ) -> Result<()> {
         let complex = data.split_complex();
         let name_re = name.to_owned() + "_re";
         let name_im = name.to_owned() + "_im";
-        self.create_ds(grp, &name_re, complex.re.as_standard_layout().view())?;
-        self.create_ds(grp, &name_im, complex.im.as_standard_layout().view())?;
+        Self::create_ds(
+            grp,
+            &name_re,
+            complex.re.as_standard_layout().view(),
+            filters,
+        )?;
+        Self::create_ds(
+            grp,
+            &name_im,
+            complex.im.as_standard_layout().view(),
+            filters,
+        )?;
         Ok(())
     }
-    fn load_cplx(&self, grp: &Group, name: &str) -> Result<ArrayD<Complex32>> {
+    fn load_cplx(grp: &Group, name: &str) -> Result<ArrayD<Complex32>> {
         let name_re = name.to_owned() + "_re";
         let name_im = name.to_owned() + "_im";
         let ds_re = grp.dataset(&*name_re)?;
@@ -1131,30 +1211,35 @@ impl Hdf5Cache {
         ds_im.read_dyn()?.move_into(view.im);
         Ok(out)
     }
-    fn store_attr<T: H5Type>(&self, grp: &Group, name: &str, data: &T) -> Result<()> {
+    fn store_attr<T: H5Type>(grp: &Group, name: &str, data: &T) -> Result<()> {
         let attr = grp.new_attr::<T>().create(name)?;
         attr.write_scalar(data)?;
         Ok(())
     }
-    fn load_attr<T: H5Type>(&self, grp: &Group, name: &str) -> Result<T> {
+    fn load_attr<T: H5Type>(grp: &Group, name: &str) -> Result<T> {
         let attr = grp.attr(name)?;
         Ok(attr.read_scalar()?)
     }
-    fn cache_sample(&self, key: u64, sample: &Sample<Complex32>) -> Result<()> {
-        let grp = self.file.as_ref().unwrap().create_group(&key.to_string())?;
-        self.store_cplx(&grp, "speech", sample.speech.view())?;
-        self.store_cplx(&grp, "noise", sample.noise.view())?;
-        self.store_cplx(&grp, "noisy", sample.noisy.view())?;
+    fn cache_sample_impl(
+        file: &File,
+        key: u64,
+        sample: &Sample<Complex32>,
+        filters: Option<&Vec<filters::Filter>>,
+    ) -> Result<()> {
+        let grp = file.create_group(&key.to_string())?;
+        Self::store_cplx(&grp, "speech", sample.speech.view(), filters)?;
+        Self::store_cplx(&grp, "noise", sample.noise.view(), filters)?;
+        Self::store_cplx(&grp, "noisy", sample.noisy.view(), filters)?;
         if let Some(feat_erb) = sample.feat_erb.as_ref() {
-            self.create_ds(&grp, "feat_erb", feat_erb.view())?;
+            Self::create_ds(&grp, "feat_erb", feat_erb.view(), filters)?;
         }
         if let Some(feat_spec) = sample.feat_spec.as_ref() {
-            self.store_cplx(&grp, "feat_spec", feat_spec.view())?;
+            Self::store_cplx(&grp, "feat_spec", feat_spec.view(), filters)?;
         }
-        self.store_attr(&grp, "max_freq", &sample.max_freq)?;
-        self.store_attr(&grp, "snr", &sample.snr)?;
-        self.store_attr(&grp, "gain", &sample.gain)?;
-        self.store_attr(&grp, "idx", &sample.idx)?;
+        Self::store_attr(&grp, "max_freq", &sample.max_freq)?;
+        Self::store_attr(&grp, "snr", &sample.snr)?;
+        Self::store_attr(&grp, "gain", &sample.gain)?;
+        Self::store_attr(&grp, "idx", &sample.idx)?;
         Ok(())
     }
     fn load_sample(&self, key: u64) -> Result<Option<Sample<Complex32>>> {
@@ -1163,21 +1248,21 @@ impl Hdf5Cache {
             Err(_) => return Ok(None),
         };
         Ok(Some(Sample {
-            speech: self.load_cplx(&grp, "speech")?,
-            noise: self.load_cplx(&grp, "noise")?,
-            noisy: self.load_cplx(&grp, "noisy")?,
+            speech: Self::load_cplx(&grp, "speech")?,
+            noise: Self::load_cplx(&grp, "noise")?,
+            noisy: Self::load_cplx(&grp, "noisy")?,
             feat_erb: match grp.dataset("feat_erb") {
                 Ok(d) => Some(d.read_dyn()?),
                 Err(_) => None,
             },
-            feat_spec: match self.load_cplx(&grp, "feat_erb") {
+            feat_spec: match Self::load_cplx(&grp, "feat_spec") {
                 Ok(s) => Some(s),
                 Err(_) => None,
             },
-            max_freq: self.load_attr(&grp, "max_freq")?,
-            snr: self.load_attr(&grp, "snr")?,
-            gain: self.load_attr(&grp, "gain")?,
-            idx: self.load_attr(&grp, "idx")?,
+            max_freq: Self::load_attr(&grp, "max_freq")?,
+            snr: Self::load_attr(&grp, "snr")?,
+            gain: Self::load_attr(&grp, "gain")?,
+            idx: Self::load_attr(&grp, "idx")?,
         }))
     }
 }
