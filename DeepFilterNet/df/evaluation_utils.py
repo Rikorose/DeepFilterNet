@@ -14,6 +14,7 @@ from pesq import pesq
 from torch import Tensor
 from torch.multiprocessing.pool import Pool
 from torchaudio.transforms import Resample
+from torchaudio.functional import highpass_biquad
 
 from df.enhance import df_features, load_audio, save_audio
 from df.sepm import composite as composite_py
@@ -47,13 +48,18 @@ except ImportError:
 
 
 @torch.no_grad()
-def enhance(model, df_state, audio):
+def enhance(model, df_state, audio, f_hp_cutoff: Optional[int] = None):
     model.eval()
     if hasattr(model, "reset_h0"):
         model.reset_h0(batch_size=1, device=get_device())
     spec, erb_feat, spec_feat = df_features(audio, df_state, get_device())
-    spec = model(spec, erb_feat, spec_feat)[0]
-    return df_state.synthesis(as_complex(spec.squeeze(0)).cpu().numpy())
+    spec = model(spec, erb_feat, spec_feat)[0].squeeze(0)  # [C, T, F, 2]
+    audio = df_state.synthesis(as_complex(spec).cpu().numpy())
+    if f_hp_cutoff is not None:
+        audio = highpass_biquad(
+            torch.from_numpy(audio), df_state.sr(), cutoff_freq=f_hp_cutoff
+        ).numpy()
+    return audio
 
 
 def evaluation_loop(
@@ -61,7 +67,7 @@ def evaluation_loop(
     model,
     clean_files: List[str],
     noisy_files: List[str],
-    metric_list: List[str] = ["stoi", "sisdr", "composite"],
+    metrics: List[str] = ["stoi", "composite", "sisdr"],
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
     n_workers: int = 4,
 ) -> Dict[str, float]:
@@ -70,6 +76,7 @@ def evaluation_loop(
         "stoi": partial(StoiMetric, sr=sr),
         "sisdr": SiSDRMetric,
         "composite": partial(CompositeMetric, sr=sr),
+        "composite-octave": partial(CompositeMetric, sr=sr, use_octave=True),
         "pesq": partial(PesqMetric, sr=sr),
     }
     if n_workers >= 1:
@@ -77,12 +84,12 @@ def evaluation_loop(
     else:
         pool_fn = DummyPool
     with pool_fn(processes=max(1, n_workers)) as pool:
-        metrics: List[Metric] = [metrics_dict[m.lower()](pool=pool) for m in metric_list]
+        metrics: List[Metric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
         for noisyfn, cleanfn in tqdm(zip(noisy_files, clean_files), total=len(noisy_files)):
             noisy, _ = load_audio(noisyfn, sr)
             clean, _ = load_audio(cleanfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
-            enh = enhance(model, df_state, noisy)[0]
+            enh = enhance(model, df_state, noisy, 40)[0]
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
             for m in metrics:
@@ -294,13 +301,19 @@ class PesqMetric(MPMetric):
 
 
 class CompositeMetric(MPMetric):
-    def __init__(self, sr: int, pool: Pool):
+    def __init__(self, sr: int, pool: Pool, use_octave: bool = False):
         names = ["PESQ", "CSIG", "CBAK", "COVL", "SSNR"]
         super().__init__(names, pool=pool, source_sr=sr, target_sr=16000)
+        self.use_octave = use_octave
 
     def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        c = composite(clean=clean.squeeze(0), degraded=degraded.squeeze(0), sr=self.sr)
+        c = composite(
+            clean=clean.squeeze(0),
+            degraded=degraded.squeeze(0),
+            sr=self.sr,
+            use_octave=self.use_octave,
+        )
         return c
 
 
