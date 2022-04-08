@@ -432,7 +432,7 @@ class Loss(nn.Module):
                 self.sdrl = SdrLoss(self.sdrl_f)
         self.lsnr_f = config("factor", 0.0005, float, section="LocalSnrLoss")
         self.lsnrl = LocalSnrLoss(self.lsnr_f) if self.lsnr_f > 0 else None
-        self.dev_str = str(get_device())
+        self.dev_str = get_device().type
 
     def forward(
         self,
