@@ -682,7 +682,7 @@ class SqueezedGRU(nn.Module):
         input = self.linear_in(input)
         x, h = self.gru(input, h)
         if self.gru_skip is not None:
-            x += self.gru_skip(input)
+            x = x + self.gru_skip(input)
         x = self.linear_out(x)
         return x, h
 
