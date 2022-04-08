@@ -118,6 +118,8 @@ class PytorchDataLoader:
             snrs=snrs,
             gains=gains,
         )
+        for message in self.loader.get_log_messages():
+            logger.log(message[0], "Dataloader: " + message[1])
         self.prefetch = prefetch
         self.pin_memory = pin_memory if torch.cuda.is_available() else False
         self.idx = 0
@@ -222,6 +224,8 @@ class PytorchDataLoader:
         # Initializes workers. This needs to be done before pin_memory thread is
         # started via setup_data_queue().
         self.loader.start_epoch(split, seed)
+        for message in self.loader.get_log_messages():
+            logger.log(message[0], "Dataloader: " + message[1])
         if self.log_timings:
             self.timings_py = []
             self.timings_rs = []
