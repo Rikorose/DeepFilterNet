@@ -86,8 +86,11 @@ class Formatter:
 def _metrics_key(k_: Tuple[str, float]):
     k0 = k_[0]
     ks = k0.split("_")
-    if len(ks) >= 2:
-        return int(ks[-1])
+    if len(ks) > 2:
+        try:
+            return int(ks[-1])
+        except ValueError:
+            return 1000
     elif k0 == "loss":
         return -999
     elif "loss" in k0.lower():
