@@ -213,6 +213,8 @@ class PytorchDataLoader:
         if self.log_timings:
             self.timings_py.append(time.time() - t0)
             self.timings_rs.append(batch.timings)
+        for message in self.loader.get_log_messages():
+            logger.log(message[0], "Dataloader: " + message[1])
         return batch
 
     def iter_epoch(self, split: str, seed: int) -> Iterator[Batch]:

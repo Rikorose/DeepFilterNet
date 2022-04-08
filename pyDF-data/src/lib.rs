@@ -2,11 +2,12 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Instant;
 
+use crossbeam_channel::{unbounded, Receiver, TryRecvError};
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
 use df::dataset::{
     DatasetBuilder, DatasetConfigCacheJson, DatasetConfigJson, Datasets, DfDatasetError,
-    FftDataset, Hdf5Cfg, Split,
+    FftDataset, Hdf5Cfg, LogLevel, Split,
 };
 use df::Complex32;
 use ndarray::{ArrayD, ShapeError};
@@ -25,6 +26,7 @@ struct _FdDataLoader {
     loader: DataLoader,
     finished: bool,
     cur_id: isize,
+    logger: Receiver<(LogLevel, String)>,
 }
 
 // TODO: Does not work due to pyo3 restrictions; instead return tuples
@@ -98,6 +100,7 @@ impl _FdDataLoader {
         snrs: Option<Vec<i8>>,
         gains: Option<Vec<i8>>,
     ) -> PyResult<Self> {
+        let (log_sender, log_receiver) = unbounded();
         seed_from_u64(42);
         let mut cfg = match DatasetConfigJson::open(config_path) {
             Err(e) => {
@@ -138,7 +141,7 @@ impl _FdDataLoader {
         }
         let valid_handle = {
             let valid_cfg = cfg.split_config(Split::Valid);
-            let valid_ds_builder = ds_builder.clone();
+            let valid_ds_builder = ds_builder.clone().add_logger(log_sender.clone());
             let valid_ds_builder = if cache_valid.unwrap_or(false) {
                 valid_ds_builder.cache_valid_dataset()
             } else {
@@ -148,10 +151,10 @@ impl _FdDataLoader {
         };
         let test_handle = {
             let test_cfg = cfg.split_config(Split::Test);
-            let test_ds_builder = ds_builder.clone();
+            let test_ds_builder = ds_builder.clone().add_logger(log_sender.clone());
             thread::spawn(|| test_ds_builder.dataset(test_cfg).build_fft_dataset())
         };
-        ds_builder = ds_builder.p_sample_full_speech(1.0);
+        ds_builder = ds_builder.p_sample_full_speech(1.0).add_logger(log_sender);
         let train_handle = {
             let train_cfg = cfg.split_config(Split::Train);
             thread::spawn(|| ds_builder.dataset(train_cfg).build_fft_dataset())
@@ -194,6 +197,7 @@ impl _FdDataLoader {
             loader,
             finished: false,
             cur_id: -1,
+            logger: log_receiver,
         })
     }
 
@@ -254,6 +258,21 @@ impl _FdDataLoader {
 
     fn set_batch_size(&mut self, batch_size: usize, split: &str) {
         self.loader.set_batch_size(batch_size, split)
+    }
+
+    fn get_log_messages(&mut self) -> Vec<(String, String)> {
+        let mut messages = Vec::new();
+        loop {
+            match self.logger.try_recv() {
+                Ok(m) => messages.push((m.0.into(), m.1)),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    eprintln!("Dataloader logger disconnected unexpectetly!");
+                    break;
+                }
+            }
+        }
+        messages
     }
 }
 fn cache_path(cfg_path: &str) -> PathBuf {
