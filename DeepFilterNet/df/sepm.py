@@ -239,6 +239,7 @@ def lpcoeff(speech_frame, model_order):
 
 
 def llr(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
+    eps = np.finfo(np.float64).eps
     alpha = 0.95
     winlength = round(frameLen * fs)  # window length in samples
     skiprate = int(np.floor((1 - overlap) * frameLen * fs))  # window skip in samples
@@ -255,15 +256,17 @@ def llr(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
         processed_speech, winlength, winlength - skiprate, hannWin
     )
     numFrames = clean_speech_framed.shape[0]
+    if numFrames == 0:
+        return None
     numerators = np.zeros((numFrames - 1,))
-    denominators = np.zeros((numFrames - 1,))
+    denominators = np.zeros((numFrames - 1,)) + eps
 
     for ii in range(numFrames - 1):
         A_clean, R_clean = lpcoeff(clean_speech_framed[ii, :], P)
         A_proc, R_proc = lpcoeff(processed_speech_framed[ii, :], P)
 
         numerators[ii] = A_proc.dot(toeplitz(R_clean).dot(A_proc.T))
-        denominators[ii] = A_clean.dot(toeplitz(R_clean).dot(A_clean.T))
+        denominators[ii] = A_clean.dot(toeplitz(R_clean).dot(A_clean.T)) + eps
 
     frac = numerators / denominators
     frac[frac <= 0] = 1000
@@ -490,6 +493,9 @@ def composite(clean_speech, processed_speech, fs):
     assert fs == 16000
     wss_dist = wss(clean_speech, processed_speech, fs)
     llr_mean = llr(clean_speech, processed_speech, fs)
+    if llr_mean is None:
+        print("Error computing llr")
+        llr_mean = 0
     segSNR = SNRseg(clean_speech, processed_speech, fs)
     pesq_mos = pesq(fs, clean_speech, processed_speech, "wb")
 
