@@ -274,6 +274,14 @@ def main():
             logger.info("Stopping training due to timeout")
             exit(0)
         losses.reset_summaries()
+    model, epoch = load_model(
+        checkpoint_dir,
+        state,
+        jit=jit,
+        epoch="best",
+        mask_only=mask_only,
+        train_df_only=train_df_only,
+    )
     test_loss = run_epoch(
         model=model,
         epoch=epoch,
