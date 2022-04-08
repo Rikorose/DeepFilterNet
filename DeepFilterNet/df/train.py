@@ -90,6 +90,7 @@ def main():
             from scripts.set_batch_size import main as set_batch_size  # type: ignore
 
             key = get_host() + "_" + config.get("model", section="train")
+            key += "_" + config.get("fft_size", section="df")
             set_batch_size(config_file, args.host_batchsize_config, host_key=key)
             config.load(config_file, allow_reload=True)  # Load again
         except Exception as e:
