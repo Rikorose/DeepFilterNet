@@ -48,8 +48,8 @@ poethepoet = "^0.11"
 pre-commit = "^2.17"
 
 [tool.poe.tasks]
-install-torch-cuda111 = "python -m pip install torch==1.10.0 torchaudio==0.10.0 --extra-index-url https://download.pytorch.org/whl/cu111/"
-install-torch-cpu = "python -m pip install torch==1.10.0 torchaudio==0.10.0 --extra-index-url https://download.pytorch.org/whl/cpu/"
+install-torch-cuda111 = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
+install-torch-cpu = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cpu/"
 
 [build-system]
 requires = ["poetry>=1.0"]
@@ -57,7 +57,7 @@ build-backend = "poetry.masonry.api"
 
 [tool.black]
 line-length = 100
-target-version = ["py37", "py38", "py39"]
+target-version = ["py37", "py38", "py39", "py310"]
 include = '\.pyi?$'
 
 [tool.isort]
