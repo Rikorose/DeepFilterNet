@@ -1891,12 +1891,17 @@ impl fmt::Display for LogLevel {
         }
     }
 }
-impl Into<String> for LogLevel {
-    fn into(self) -> String {
-        match self {
-            Self::Debug => "DEBUG".to_string(),
-            Self::Info => "INFO".to_string(),
-            Self::Warning => "WARNING".to_string(),
+impl From<LogLevel> for String {
+    fn from(l: LogLevel) -> String {
+        String::from(&l)
+    }
+}
+impl From<&LogLevel> for String {
+    fn from(l: &LogLevel) -> String {
+        match l {
+            LogLevel::Debug => "DEBUG".to_string(),
+            LogLevel::Info => "INFO".to_string(),
+            LogLevel::Warning => "WARNING".to_string(),
         }
     }
 }
