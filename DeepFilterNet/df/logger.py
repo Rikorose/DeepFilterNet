@@ -33,7 +33,10 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
             )
             if file is not None:
                 logger.add(
-                    file, level=level, format=log_format, filter=lambda r: r["level"].no != WARN_ONCE_NO
+                    file,
+                    level=level,
+                    format=log_format,
+                    filter=lambda r: r["level"].no != WARN_ONCE_NO,
                 )
 
             logger.info(f"Running on torch {torch.__version__}")
