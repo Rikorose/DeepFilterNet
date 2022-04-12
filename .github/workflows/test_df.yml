@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9"]
+        python: ["3.10"]
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         include:
           - os: "windows-latest"
