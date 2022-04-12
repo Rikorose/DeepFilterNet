@@ -13,8 +13,8 @@ from loguru import logger
 from pesq import pesq
 from torch import Tensor
 from torch.multiprocessing.pool import Pool
-from torchaudio.transforms import Resample
 from torchaudio.functional import highpass_biquad
+from torchaudio.transforms import Resample
 
 from df.enhance import df_features, load_audio, save_audio
 from df.sepm import composite as composite_py

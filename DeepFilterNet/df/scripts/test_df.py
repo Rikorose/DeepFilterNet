@@ -9,7 +9,6 @@ import torch
 from loguru import logger
 
 import df
-from df.deepfilternet import ModelParams
 from df.enhance import DF, enhance, init_df, load_audio
 from df.evaluation_utils import composite, si_sdr_speechmetrics, stoi
 
