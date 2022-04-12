@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import os
-from typing import List
+import unittest
+from typing import Dict, List, Union
 
 import numpy as np
 import torch
@@ -9,13 +10,13 @@ from loguru import logger
 
 import df
 from df.deepfilternet import ModelParams
-from df.enhance import enhance, init_df, load_audio
+from df.enhance import DF, enhance, init_df, load_audio
 from df.evaluation_utils import composite, si_sdr_speechmetrics, stoi
 
 __a_tol = 1e-4
 
 
-def eval_composite(clean, enhanced, sr, m_target: List[float]):
+def eval_composite(clean, enhanced, sr, m_target: List[float]):  # type: ignore
     logger.info("Computing composite metrics")
     try:
         m_enh_octave = torch.as_tensor(
@@ -83,20 +84,49 @@ TARGET_METRICS = {
     },
 }
 
-if __name__ == "__main__":
-    torch.set_printoptions(precision=14, linewidth=120)
-    df_dir = os.path.abspath(os.path.join(os.path.dirname(df.__file__), os.pardir))
-    for model_n, target_m in TARGET_METRICS.items():
-        model_base_dir = os.path.join(df_dir, "pretrained_models", model_n)
-        model, df_state, _ = init_df(model_base_dir, config_allow_defaults=True)
-        sr = ModelParams().sr
+
+def _load_model(df_dir: str, model_n: str):
+    model_base_dir = os.path.join(df_dir, "pretrained_models", model_n)
+    model, df_state, _ = init_df(model_base_dir, config_allow_defaults=True)
+    logger.info(f"Loaded model {model_n}")
+    return model, df_state
+
+
+class TestDfModels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        torch.set_printoptions(precision=14, linewidth=120)
+        cls.df_dir = os.path.abspath(os.path.join(os.path.dirname(df.__file__), os.pardir))
+        cls.models = {m: _load_model(cls.df_dir, m) for m in TARGET_METRICS.keys()}
+        return cls
+
+    def _test_model(
+        self,
+        model: torch.nn.Module,
+        df_state: DF,
+        target_metrics: Dict[str, Union[float, List[float]]],
+    ):
+        sr = df_state.sr()
         logger.info("Loading audios")
-        noisy, _ = load_audio(os.path.join(df_dir, os.path.pardir, "assets", "noisy_snr0.wav"), sr)
-        clean, _ = load_audio(
-            os.path.join(df_dir, os.path.pardir, "assets", "clean_freesound_33711.wav"), sr
+        noisy, _ = load_audio(
+            os.path.join(self.df_dir, os.path.pardir, "assets", "noisy_snr0.wav"), sr
         )
-        logger.info(f"Testing model {model_n}")
+        clean, _ = load_audio(
+            os.path.join(self.df_dir, os.path.pardir, "assets", "clean_freesound_33711.wav"), sr
+        )
         enhanced = enhance(model, df_state, noisy, pad=True)
-        eval_composite(clean, enhanced, sr, target_m["composite"])
-        eval_pystoi(clean, enhanced, sr, m_target=target_m["stoi"])
-        eval_sdr(clean, enhanced, m_target=target_m["sdr"])
+        eval_composite(clean, enhanced, sr, target_metrics["composite"])  # type: ignore
+        eval_pystoi(clean, enhanced, sr, m_target=target_metrics["stoi"])  # type: ignore
+        eval_sdr(clean, enhanced, m_target=target_metrics["sdr"])  # type: ignore
+
+    def test_deepfilternet(self):
+        model = "DeepFilterNet"
+        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model])
+
+    def test_deepfilternet2(self):
+        model = "DeepFilterNet2"
+        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model])
+
+
+if __name__ == "__main__":
+    unittest.main()
