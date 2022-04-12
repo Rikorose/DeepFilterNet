@@ -20,38 +20,38 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
     global _logger_initialized, _duplicate_filter
     if _logger_initialized:
         logger.debug("Logger already initialized.")
-        return
-    logger.remove()
-    level = level.upper()
-    if level.lower() != "none":
-        log_format = Formatter(debug=level == "DEBUG").format
-        logger.add(
-            sys.stdout,
-            level=level,
-            format=log_format,
-            filter=lambda r: r["level"].no != WARN_ONCE_NO,
-        )
-        if file is not None:
+    else:
+        logger.remove()
+        level = level.upper()
+        if level.lower() != "none":
+            log_format = Formatter(debug=level == "DEBUG").format
             logger.add(
-                file, level=level, format=log_format, filter=lambda r: r["level"].no != WARN_ONCE_NO
+                sys.stdout,
+                level=level,
+                format=log_format,
+                filter=lambda r: r["level"].no != WARN_ONCE_NO,
             )
+            if file is not None:
+                logger.add(
+                    file, level=level, format=log_format, filter=lambda r: r["level"].no != WARN_ONCE_NO
+                )
 
-        if model is not None:
-            logger.info("Loading model settings of {}", os.path.basename(model.rstrip("/")))
-        logger.info(f"Running on torch {torch.__version__}")
-        logger.info(f"Running on host {get_host()}")
-        commit = get_commit_hash()
-        if commit is not None:
-            logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
-        if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
-            logger.info(f"Slurm jobid: {jobid}")
-        logger.level("WARNONCE", no=WARN_ONCE_NO, color="<yellow><bold>")
-        logger.add(
-            sys.stderr,
-            level=max(logger.level(level).no, WARN_ONCE_NO),
-            format=log_format,
-            filter=lambda r: r["level"].no == WARN_ONCE_NO and _duplicate_filter(r),
-        )
+            logger.info(f"Running on torch {torch.__version__}")
+            logger.info(f"Running on host {get_host()}")
+            commit = get_commit_hash()
+            if commit is not None:
+                logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
+            if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
+                logger.info(f"Slurm jobid: {jobid}")
+            logger.level("WARNONCE", no=WARN_ONCE_NO, color="<yellow><bold>")
+            logger.add(
+                sys.stderr,
+                level=max(logger.level(level).no, WARN_ONCE_NO),
+                format=log_format,
+                filter=lambda r: r["level"].no == WARN_ONCE_NO and _duplicate_filter(r),
+            )
+    if model is not None:
+        logger.info("Loading model settings of {}", os.path.basename(model.rstrip("/")))
     _logger_initialized = True
 
 
