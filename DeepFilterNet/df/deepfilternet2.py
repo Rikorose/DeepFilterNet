@@ -6,6 +6,7 @@ from loguru import logger
 from torch import Tensor, nn
 
 from df.config import Csv, DfParams, config
+from df.logger import log_deprecated
 from df.modules import (
     Conv2dNormAct,
     ConvTranspose2dNormAct,
@@ -323,6 +324,7 @@ class DfDecoder(nn.Module):
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
         c = c.view(b, t, self.df_bins, self.df_order * 2)  # [B, T, F, O*2]
+        # TODO: use c.add(c0).view(b, t, self.df_order, self.df_bins, 2)  # [B, T, O, F, 2]
         c = c.add(c0).view(b, t, self.df_order, 2, self.df_bins).transpose(3, 4)  # [B, T, O, F, 2]
         return c, alpha
 
@@ -331,6 +333,7 @@ class DfDecoderLinear(nn.Module):
     # For compat
     def __init__(self):
         super().__init__()
+        log_deprecated("Use of `linear` for `df_ouput_layer` is marked as deprecated.")
         p = ModelParams()
         layer_width = p.conv_ch
         self.emb_dim = p.emb_hidden_dim
