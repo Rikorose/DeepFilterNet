@@ -92,7 +92,7 @@ def psd(x: Tensor, n: int) -> Tensor:
     Returns:
         Rxx (complex Tensor): Correlation matrix of shape [B, C, T, F, N, N]
     """
-    x = F.pad(x, (n - 1, 0, 0, 0)).unfold(-2, n, -1)
+    x = F.pad(x, (0, 0, n - 1, 0)).unfold(-2, n, 1)
     return torch.einsum("...n,...m->...mn", x, x.conj())
 
 
@@ -164,8 +164,11 @@ class MfWf(MultiFrameModule):
         return self.num_channels
 
     @staticmethod
-    def solve(Rxx, rss) -> Tensor:
-        return torch.einsum("...nm,...m->...n", torch.inverse(Rxx), rss)  # [T, F, N]
+    def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-8) -> Tensor:
+        ic(Rxx.shape, rss.shape)
+        return torch.einsum(
+            "...nm,...m->...n", torch.inverse(_tik_reg(Rxx, diag_eps, eps)), rss
+        )  # [T, F, N]
 
     @abstractmethod
     def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
@@ -194,20 +197,35 @@ class MfWf(MultiFrameModule):
 
 
 class MfWfDf(MfWf):
+    eps_diag: Final[float]
+
+    def __init__(
+        self,
+        num_freqs: int,
+        frame_size: int,
+        lookahead: int = 0,
+        eps_diag: float = 1e-8,
+        eps: float = 1e-8,
+    ):
+        super().__init__(num_freqs, frame_size, lookahead)
+        self.eps_diag = eps_diag
+        self.eps = eps
+
     def num_channels(self):
         # frame_size/df_order * 2 (x/s) * 2 (re/im)
         return self.frame_size * 4
 
     def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        df_s, df_x = torch.split(coefs, 2, 1)  # [B, C, T, F, N]
+        coefs.chunk
+        df_s, df_x = torch.chunk(coefs, 2, 1)  # [B, C, T, F, N]
         df_s = df_s.unflatten(1, (-1, self.frame_size))
         df_x = df_x.unflatten(1, (-1, self.frame_size))
         spec_s = df(spec, df_s)  # [B, C, T, F]
         spec_x = df(spec, df_x)
         Rss = psd(spec_s, self.frame_size)  # [B, C, T, F, N. N]
         Rxx = psd(spec_x, self.frame_size)
-        rss = Rss[-1]  # TODO: use -1 or self.idx?
-        c = self.solve(Rxx, rss)  # [B, C, T, F, N]
+        rss = Rss[..., -1]  # TODO: use -1 or self.idx?
+        c = self.solve(Rxx, rss, self.eps_diag, self.eps)  # [B, C, T, F, N]
         return c
 
 
@@ -262,3 +280,42 @@ MF_METHODS: Dict[str, MultiFrameModule] = {
     "mfwf_psd_ifc": MfWfPsd,
     "mfwf_c": MfWfC,
 }
+
+
+# From torchaudio
+def _compute_mat_trace(input: torch.Tensor, dim1: int = -1, dim2: int = -2) -> torch.Tensor:
+    r"""Compute the trace of a Tensor along ``dim1`` and ``dim2`` dimensions.
+    Args:
+        input (torch.Tensor): Tensor of dimension `(..., channel, channel)`
+        dim1 (int, optional): the first dimension of the diagonal matrix
+            (Default: -1)
+        dim2 (int, optional): the second dimension of the diagonal matrix
+            (Default: -2)
+    Returns:
+        Tensor: trace of the input Tensor
+    """
+    assert input.ndim >= 2, "The dimension of the tensor must be at least 2."
+    assert (
+        input.shape[dim1] == input.shape[dim2]
+    ), "The size of ``dim1`` and ``dim2`` must be the same."
+    input = torch.diagonal(input, 0, dim1=dim1, dim2=dim2)
+    return input.sum(dim=-1)
+
+
+def _tik_reg(mat: torch.Tensor, reg: float = 1e-7, eps: float = 1e-8) -> torch.Tensor:
+    """Perform Tikhonov regularization (only modifying real part).
+    Args:
+        mat (torch.Tensor): input matrix (..., channel, channel)
+        reg (float, optional): regularization factor (Default: 1e-8)
+        eps (float, optional): a value to avoid the correlation matrix is all-zero (Default: ``1e-8``)
+    Returns:
+        Tensor: regularized matrix (..., channel, channel)
+    """
+    # Add eps
+    C = mat.size(-1)
+    eye = torch.eye(C, dtype=mat.dtype, device=mat.device)
+    epsilon = _compute_mat_trace(mat).real[..., None, None] * reg
+    # in case that correlation_matrix is all-zero
+    epsilon = epsilon + eps
+    mat = mat + epsilon * eye[..., :, :]
+    return mat
