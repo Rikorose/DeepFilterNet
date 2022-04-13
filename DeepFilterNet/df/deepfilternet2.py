@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Final, List, Optional, Tuple
+from typing import Final, List, Optional, Tuple, Union
 
 import torch
 from loguru import logger
@@ -19,6 +19,7 @@ from df.modules import (
     erb_fb,
     get_device,
 )
+from df.multiframe import MF_METHODS, MultiFrameModule
 from df.multistagenet import MagCompression
 from libdf import DF
 
@@ -253,8 +254,40 @@ class ErbDecoder(nn.Module):
         return m
 
 
+class DfOutputReshapeOld(nn.Module):
+    """Coefficients output reshape for moudles/DfOp"""
+
+    def __init__(self, df_order: int, df_bins: int):
+        super().__init__()
+        self.df_order = df_order
+        self.df_bins = df_bins
+
+    def forward(self, coefs: Tensor) -> Tensor:
+        # [B, T, F, O*2] -> [B, T, O, F, 2]
+        b, t = coefs.shape[:2]
+        coefs = coefs.view(b, t, self.df_order, 2, self.df_bins).transpose(3, 4)
+        return coefs
+
+
+class DfOutputReshapeMF(nn.Module):
+    """Coefficients output reshape for multiframe/MultiFrameModule
+
+    Requires input of shape B, C, T, F, 2.
+    """
+
+    def __init__(self, df_order: int, df_bins: int):
+        super().__init__()
+        self.df_order = df_order
+        self.df_bins = df_bins
+
+    def forward(self, coefs: Tensor) -> Tensor:
+        # [B, T, F, O*2] -> [B, O, T, F, 2]
+        coefs = coefs.unflatten(-1, (-1, 2)).permute(0, 3, 1, 2, 4)
+        return coefs
+
+
 class DfDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self, out_channels: int = -1):
         super().__init__()
         p = ModelParams()
         layer_width = p.conv_ch
@@ -266,6 +299,7 @@ class DfDecoder(nn.Module):
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.gru_groups = p.gru_groups
+        self.df_out_ch = out_channels if out_channels > 0 else p.df_order * 2
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
@@ -305,7 +339,7 @@ class DfDecoder(nn.Module):
             raise NotImplementedError()
         assert p.df_output_layer in ("linear", "groupedlinear")
         self.df_out: nn.Module
-        out_dim = self.df_bins * self.df_order * 2
+        out_dim = self.df_bins * self.df_out_ch
         if p.df_output_layer == "linear":
             df_out = nn.Linear(self.df_n_hidden, out_dim)
         elif p.df_output_layer == "groupedlinear":
@@ -314,6 +348,11 @@ class DfDecoder(nn.Module):
             raise NotImplementedError
         self.df_out = nn.Sequential(df_out, nn.Tanh())
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
+        self.out_transform = (
+            DfOutputReshapeOld(self.df_order, self.df_bins)
+            if p.dfop_method == "real_unfold"
+            else DfOutputReshapeMF(self.df_order, self.df_bins)
+        )
 
     def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
@@ -323,9 +362,8 @@ class DfDecoder(nn.Module):
         c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
-        c = c.view(b, t, self.df_bins, self.df_order * 2)  # [B, T, F, O*2]
-        # TODO: use c.add(c0).view(b, t, self.df_order, self.df_bins, 2)  # [B, T, O, F, 2]
-        c = c.add(c0).view(b, t, self.df_order, 2, self.df_bins).transpose(3, 4)  # [B, T, O, F, 2]
+        c = c.view(b, t, self.df_bins, self.df_order * 2) + c0  # [B, T, F, O*2]
+        c = self.out_transform(c)
         return c, alpha
 
 
@@ -376,6 +414,7 @@ class DfDecoderLinear(nn.Module):
 
 class DfNet(nn.Module):
     run_df: Final[bool]
+    use_alpha: Final[bool]
 
     def __init__(
         self,
@@ -406,19 +445,28 @@ class DfNet(nn.Module):
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
-        if p.df_output_layer == "linear":
-            self.df_dec = DfDecoderLinear()
-        else:
-            self.df_dec = DfDecoder()
-        self.df_op = torch.jit.script(
-            DfOp(
+        self.df_op: Union[DfOp, MultiFrameModule]
+        if p.dfop_method == "real_unfold":
+            self.df_op = DfOp(
                 p.nb_df,
                 p.df_order,
                 p.df_lookahead,
                 freq_bins=self.freq_bins,
                 method=p.dfop_method,
             )
-        )
+            n_ch_out = p.df_order * 2
+            self.use_alpha = True
+        else:
+            assert p.df_output_layer != "linear", "Must be used with `groupedlinear`"
+            self.df_op = MF_METHODS[p.dfop_method](
+                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=p.df_lookahead
+            )
+            n_ch_out = self.df_op.num_channels()
+            self.use_alpha = False
+        if p.df_output_layer == "linear":
+            self.df_dec = DfDecoderLinear()
+        else:
+            self.df_dec = DfDecoder(out_channels=n_ch_out)
 
         self.run_df = run_df
         if not run_df:
@@ -443,5 +491,9 @@ class DfNet(nn.Module):
         df_coefs, df_alpha = self.df_dec(emb, c0)
 
         for _ in range(self.df_iter):
-            spec = self.df_op(spec, df_coefs, df_alpha)
+            if self.use_alpha:
+                spec = self.df_op(spec, df_coefs, df_alpha)
+            else:
+                spec = self.df_op(spec, df_coefs)
+
         return spec, m, lsnr, df_alpha
