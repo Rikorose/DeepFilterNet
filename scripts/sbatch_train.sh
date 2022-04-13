@@ -25,7 +25,7 @@ export XDG_CACHE_DIR="/cluster/$USER/.cache"
 export PYTHONUSERBASE="/cluster/$USER/.python_packages"
 # Workaround for HDF5 on other file systems. All hdf5 files are opened in read
 # only mode; we do not need locks.
-export HDF5_USE_FILE_LOCKING='FALSE'
+export HDF5_USE_FILE_LOCKING=FALSE
 
 PROJECT_NAME=DeepFilterNet
 DATA_DIR=${DATA_DIR:-$CLUSTER/Data/HDF5}     # Set to the directory containing the HDF5s
@@ -33,7 +33,8 @@ DATA_CFG=${DATA_CFG:-$DATA_DIR/datasets.cfg} # Default dataset configuration
 DATA_CFG=$(readlink -f "$DATA_CFG")
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
 COPY_DATA=${COPY_DATA:-1}                    # Copy data
-COPY_MAX_GB=${COPY_MAX_GB:-50}               # Max amount to copy hdf5 datasets, rest will be linked
+COPY_MAX_GB=${COPY_MAX_GB:-200}              # Max amount to copy hdf5 datasets, rest will be linked
+HDF5CACHE_MAX_GB=${HDF5CACHE_MAX_GB:-100}    # Max amount used for hdf5 validation set caching
 DEBUG=${DEBUG:-0}                            # Debug mode passed to the python train script
 EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 
