@@ -303,7 +303,7 @@ class DfDecoder(nn.Module):
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
-        self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=(kt, 1))
+        self.df_convp = conv_layer(layer_width, self.df_out_ch, fstride=1, kernel_size=(kt, 1))
         if p.gru_type == "grouped":
             self.df_gru = GroupedGRU(
                 p.emb_hidden_dim,
@@ -362,7 +362,7 @@ class DfDecoder(nn.Module):
         c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
-        c = c.view(b, t, self.df_bins, self.df_order * 2) + c0  # [B, T, F, O*2]
+        c = c.view(b, t, self.df_bins, self.df_out_ch) + c0  # [B, T, F, O*2]
         c = self.out_transform(c)
         return c, alpha
 
