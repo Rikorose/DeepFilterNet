@@ -59,13 +59,13 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
     # We can have a write lock allowing exclusive access as well as multiple parallel read locks
     if os.path.isfile(lock_f):
         tries = 1
-        while any(
-            line.strip().endswith(".write")
-            and (lock is not None and not line.strip().startswith(lock))
-            for line in open(lock_f)
-        ):
-            have_write_locks = True
-            if not wait_write_lock:
+        while True:
+            have_write_locks = any(
+                line.strip().endswith(".write")
+                and (lock is not None and not line.strip().startswith(lock))
+                for line in open(lock_f)
+            )
+            if not have_write_locks or not wait_write_lock:
                 break
             # Wait until the current write lock is released
             warnings.warn(f"<copy_datadir.py>: Could not lock directory {directory}")
@@ -96,9 +96,10 @@ def copy_datasets(
     src_dir: str, target_dir: str, cfg_path: str, max_gb: float, lock: Optional[str] = None
 ):
     print(f"Copying datasets from {src_dir} to {target_dir}", flush=True)
+    copied = set()
     os.makedirs(target_dir, exist_ok=True)
     lock_f = os.path.join(target_dir, ".lock")
-    have_read_locks, have_write_locks = has_locks(target_dir, lock, wait_write_lock=True)
+    have_read_locks, _ = has_locks(target_dir, lock, wait_write_lock=True)
     # Lock the target dir for writing
     open(lock_f, "a+").write(f"\n{lock}.{timestamp}.write")
     cfg = json.load(open(cfg_path))
@@ -123,6 +124,9 @@ def copy_datasets(
         # since they will be accessed more often.
         for dstype in ("noise", "speech", "rir"):
             for fn, _ in datasets[dstype]:
+                if fn in copied:
+                    continue
+                copied.add(fn)
                 fn_src = os.path.join(src_dir, fn)
                 fn_tgt = os.path.join(target_dir, fn)
                 new_gb = du(fn_src)
