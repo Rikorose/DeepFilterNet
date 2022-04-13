@@ -113,11 +113,12 @@ def df(spec: Tensor, coefs: Tensor) -> Tensor:
 class CRM(MultiFrameModule):
     """Complex ratio mask."""
 
-    def __init__(self, num_freqs: int):
+    def __init__(self, num_freqs: int, frame_size: int = 1, lookahead: int = 0):
+        assert frame_size == 1 and lookahead == 0, (frame_size, lookahead)
         super().__init__(num_freqs, 1)
 
     def forward_impl(self, spec: Tensor, coefs: Tensor):
-        return spec.mul(coefs).squeeze(-1)
+        return spec.squeeze(-1).mul(coefs)
 
     def num_channels(self):
         return 2
