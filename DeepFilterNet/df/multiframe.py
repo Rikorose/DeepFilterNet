@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import Final
 
 import torch
@@ -18,14 +19,16 @@ class MultiFrameModule(nn.Module, ABC):
         IFC: Inter-frame correlation vector: PSD*u, u: selection vector. Notated as `rxx`
     """
 
+    num_freqs: Final[int]
     frame_size: Final[int]
     need_pad: Final[bool]
 
-    def __init__(self, frame_size: int, lookahead: int = 0):
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
         super().__init__()
+        self.num_freqs = num_freqs
         self.frame_size = frame_size
-        self.pad = [frame_size - lookahead - 1, lookahead, 0, 0]
-        self.need_pad = frame_size == 1 and lookahead == 0
+        self.pad = nn.ConstantPad2d((0, 0, frame_size - lookahead - 1, lookahead), 0.0)
+        self.need_pad = frame_size > 1 or lookahead != 0
 
     def pad_unfold(self, spec: Tensor):
         """Pads and unfolds the spectrogram according to frame_size.
@@ -36,7 +39,7 @@ class MultiFrameModule(nn.Module, ABC):
             spec (Tensor): Unfolded spectrogram of shape [B, C, T, F, N], where N: frame_size.
         """
         if self.need_pad:
-            return F.pad(spec, self.pad).unfold(1, self.frame_size, 1)
+            return self.pad(spec).unfold(2, self.frame_size, 1)
         return spec.unsqueeze(-1)
 
     def forward(self, spec: Tensor, coefs: Tensor):
@@ -46,9 +49,13 @@ class MultiFrameModule(nn.Module, ABC):
             spec (Tensor): Spectrogram of shape [B, C, T, F, 2]
             coefs (Tensor): Spectrogram of shape [B, C, T, F, 2]
         """
-        spec = self.pad_unfold(torch.view_as_complex(spec))
+        spec_u = self.pad_unfold(torch.view_as_complex(spec))
         coefs = torch.view_as_complex(coefs)
-        spec = torch.view_as_real(self.forward_impl(spec, coefs))
+        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
+        spec_f = self.forward_impl(spec_f, coefs)
+        if self.training:
+            spec = spec.clone()
+        spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
         return spec
 
     @abstractmethod
@@ -100,14 +107,14 @@ def df(spec: Tensor, coefs: Tensor) -> Tensor:
     Returns:
         spec (complex Tensor): Spectrogram of shape [B, C, T, F]
     """
-    return torch.einsum("...ntf,...tfn->...tf", spec, coefs)
+    return torch.einsum("...tfn,...ntf->...tf", spec, coefs)
 
 
 class CRM(MultiFrameModule):
     """Complex ratio mask."""
 
-    def __init__(self):
-        super().__init__(1)
+    def __init__(self, num_freqs: int):
+        super().__init__(num_freqs, 1)
 
     def forward_impl(self, spec: Tensor, coefs: Tensor):
         return spec.mul(coefs).squeeze(-1)
@@ -117,13 +124,17 @@ class CRM(MultiFrameModule):
 
 
 class DF(MultiFrameModule):
+    conj: Final[bool]
     """Deep Filtering."""
 
-    def __init__(self, frame_size: int, lookahead: int = 0):
-        super().__init__(frame_size, lookahead)
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
+        super().__init__(num_freqs, frame_size, lookahead)
+        self.conj = conj
 
     def forward_impl(self, spec: Tensor, coefs: Tensor):
         coefs = coefs.unflatten(1, (-1, self.frame_size))
+        if self.conj:
+            coefs = coefs.conj()
         return df(spec, coefs)
 
     def num_channels(self):
@@ -133,7 +144,9 @@ class DF(MultiFrameModule):
 class MfWf(MultiFrameModule):
     """Multi-frame Wiener Filter."""
 
-    def __init__(self, frame_size: int, lookahead: int = 0, method: str = "psd_ifc"):
+    def __init__(
+        self, num_freqs: int, frame_size: int, lookahead: int = 0, method: str = "psd_ifc"
+    ):
         """Multi-frame Wiener Filter.
 
         Several implementation methods are available resulting in different number of required input
@@ -146,7 +159,7 @@ class MfWf(MultiFrameModule):
             c: Directly predict Wiener filter coefficients. Computation same as deep filtering.
 
         """
-        super().__init__(frame_size, lookahead=0)
+        super().__init__(num_freqs, frame_size, lookahead=0)
         self.idx = -lookahead
         self.method = method.lower()
         methods = {
@@ -195,15 +208,24 @@ class MfWf(MultiFrameModule):
 
 
 class MvdrSouden(MultiFrameModule):
-    def __init__(self, frame_size: int, lookahead: int = 0):
-        super().__init__(frame_size, lookahead)
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
+        super().__init__(num_freqs, frame_size, lookahead)
 
 
 class MvdrEvd(MultiFrameModule):
-    def __init__(self, frame_size: int, lookahead: int = 0):
-        super().__init__(frame_size, lookahead)
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
+        super().__init__(num_freqs, frame_size, lookahead)
 
 
 class MvdrRtfPower(MultiFrameModule):
-    def __init__(self, frame_size: int, lookahead: int = 0):
-        super().__init__(frame_size, lookahead)
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
+        super().__init__(num_freqs, frame_size, lookahead)
+
+
+MF_METHODS = {
+    "crm": CRM,
+    "df": DF,
+    "mfwf_df": partial(MfWf, method="df"),
+    "mfwf_psd": partial(MfWf, method="psd_ifc"),
+    "mfwf_c": partial(MfWf, method="c"),
+}
