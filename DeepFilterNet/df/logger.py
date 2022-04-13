@@ -14,6 +14,7 @@ from df.utils import get_branch_name, get_commit_hash, get_device, get_host
 
 _logger_initialized = False
 WARN_ONCE_NO = logger.level("WARNING").no + 1
+DEPRECATED_NO = logger.level("WARNING").no + 2
 
 
 def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional[str] = None):
@@ -29,7 +30,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
                 sys.stdout,
                 level=level,
                 format=log_format,
-                filter=lambda r: r["level"].no != WARN_ONCE_NO,
+                filter=lambda r: r["level"].no not in {WARN_ONCE_NO, DEPRECATED_NO},
             )
             if file is not None:
                 logger.add(
@@ -53,6 +54,13 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
                 format=log_format,
                 filter=lambda r: r["level"].no == WARN_ONCE_NO and _duplicate_filter(r),
             )
+            logger.level("DEPRECATED", no=DEPRECATED_NO, color="<yellow><bold>")
+            logger.add(
+                sys.stderr,
+                level=max(logger.level(level).no, DEPRECATED_NO),
+                format=log_format,
+                filter=lambda r: r["level"].no == DEPRECATED_NO and _duplicate_filter(r),
+            )
     if model is not None:
         logger.info("Loading model settings of {}", os.path.basename(model.rstrip("/")))
     _logger_initialized = True
@@ -60,6 +68,10 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
 
 def warn_once(message, *args, **kwargs):
     logger.log("WARNONCE", message, *args, **kwargs)
+
+
+def log_deprecated(message, *args, **kwargs):
+    logger.log("DEPRECATED", message, *args, **kwargs)
 
 
 class Formatter:
@@ -140,9 +152,12 @@ class DuplicateFilter:
         self.msgs = set()
 
     def __call__(self, record) -> bool:
-        rv = record["message"] not in self.msgs
-        self.msgs.add(record["message"])
-        return rv
+        k = f"{record['level']}{record['message']}"
+        if k in self.msgs:
+            return False
+        else:
+            self.msgs.add(k)
+            return True
 
 
 _duplicate_filter = DuplicateFilter()
