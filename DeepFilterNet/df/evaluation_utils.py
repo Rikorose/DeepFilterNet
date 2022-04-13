@@ -89,7 +89,7 @@ def evaluation_loop(
             noisy, _ = load_audio(noisyfn, sr)
             clean, _ = load_audio(cleanfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
-            enh = enhance(model, df_state, noisy, 40)[0]
+            enh = enhance(model, df_state, noisy)[0]
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
             for m in metrics:

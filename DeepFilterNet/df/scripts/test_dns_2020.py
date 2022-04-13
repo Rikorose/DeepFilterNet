@@ -48,6 +48,7 @@ def main(args):
             noisy_files,
             n_workers=args.metric_workers,
             save_audio_callback=save_audio_callback,
+            metrics=["stoi", "composite", "sisdr"],
         )
         for k, v in metrics.items():
             logger.info(f"{k}: {v}")
