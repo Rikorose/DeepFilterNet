@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-from functools import partial
-from typing import Final
+from typing import Dict, Final
 
 import torch
 import torch.nn.functional as F
@@ -143,11 +142,9 @@ class DF(MultiFrameModule):
 
 
 class MfWf(MultiFrameModule):
-    """Multi-frame Wiener Filter."""
+    """Multi-frame Wiener filter base module."""
 
-    def __init__(
-        self, num_freqs: int, frame_size: int, lookahead: int = 0, method: str = "psd_ifc"
-    ):
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
         """Multi-frame Wiener Filter.
 
         Several implementation methods are available resulting in different number of required input
@@ -162,24 +159,46 @@ class MfWf(MultiFrameModule):
         """
         super().__init__(num_freqs, frame_size, lookahead=0)
         self.idx = -lookahead
-        self.method = method.lower()
-        methods = {
-            "df": (self.mfwf_dfsx, frame_size * 4),  # 2x deep filter
-            "df_sx": (self.mfwf_dfsx, frame_size * 4),  # 2x deep filter
-            "psd_ifc": (self.mfwf_psd_ifc, frame_size**2 + frame_size),  # Rxx+rss
-            "c": (self.mfwf_c, frame_size * 2),
-        }
-        assert self.method in methods
-        self.forward_impl, self._num_channels = methods[self.method]
 
     def num_channels(self):
         return self.num_channels
 
     @staticmethod
-    def _mfwf(Rxx, rss) -> Tensor:
+    def solve(Rxx, rss) -> Tensor:
         return torch.einsum("...nm,...m->...n", torch.inverse(Rxx), rss)  # [T, F, N]
 
-    def mfwf_dfsx(self, spec: Tensor, coefs: Tensor) -> Tensor:
+    @abstractmethod
+    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
+        """Multi-frame Wiener filter impl taking complex spectrogram and coefficients.
+
+        Coefficients may be split into multiple parts w.g. for multiple DF coefs or PSDs.
+
+        Args:
+            spec (complex Tensor): Spectrogram of shape [B, C1, T, F, N]
+            coefs (complex Tensor): Coefficients [B, C2, T, F]
+
+        Returns:
+            c (complex Tensor): MfWf coefs of shape [B, C1, T, F, N]
+        """
+        ...
+
+    def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
+        coefs = self.mfwf(spec, coefs)
+        return self.apply_coefs(spec, coefs)
+
+    @staticmethod
+    def apply_coefs(spec: Tensor, coefs: Tensor) -> Tensor:
+        # spec: [B, C, T, F, N]
+        # coefs: [B, C, T, F, N]
+        return torch.einsum("...n,...n->...", spec, coefs)
+
+
+class MfWfDf(MfWf):
+    def num_channels(self):
+        # frame_size/df_order * 2 (x/s) * 2 (re/im)
+        return self.frame_size * 4
+
+    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
         df_s, df_x = torch.split(coefs, 2, 1)  # [B, C, T, F, N]
         df_s = df_s.unflatten(1, (-1, self.frame_size))
         df_x = df_x.unflatten(1, (-1, self.frame_size))
@@ -188,24 +207,35 @@ class MfWf(MultiFrameModule):
         Rss = psd(spec_s, self.frame_size)  # [B, C, T, F, N. N]
         Rxx = psd(spec_x, self.frame_size)
         rss = Rss[-1]  # TODO: use -1 or self.idx?
-        c = self._mfwf(Rxx, rss)  # [B, C, T, F, N]
-        return self.apply_coefs(spec, c)
+        c = self.solve(Rxx, rss)  # [B, C, T, F, N]
+        return c
 
-    def mfwf_psd_ifc(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        Rxx, rss = torch.split(coefs, [self.frame_size**2, self.frame_size], 1)
-        c = self._mfwf(Rxx, rss)
-        return self.apply_coefs(spec, c)
 
-    def mfwf_c(self, spec: Tensor, coefs: Tensor) -> Tensor:
+class MfWfPsd(MfWf):
+    """Multi-frame Wiener filter by predicting noisy PSD `Rxx` and speech IFC `rss`."""
+
+    def num_channels(self):
+        # (Rxx + rss) * 2 (re/im)
+        return (self.frame_size**2 + self.frame_size) * 2
+
+    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:  # type: ignore
+        Rxx, rss = torch.split(coefs.movedim(1, -1), [self.frame_size**2, self.frame_size], -1)
+        c = self.solve(Rxx.unflatten(-1, (self.frame_size, self.frame_size)), rss)
+        return c
+
+
+class MfWfC(MfWf):
+    """Multi-frame Wiener filter by directly predicting the MfWf coefficients."""
+
+    def num_channels(self):
+        # mfwf coefs * 2 (re/im)
+        return self.frame_size * 2
+
+    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:  # type: ignore
         coefs = coefs.unflatten(1, (-1, self.frame_size)).permute(
             0, 1, 3, 4, 2
         )  # [B, C*N, T, F] -> [B, C, T, F, N]
-        return self.apply_coefs(spec, coefs)
-
-    def apply_coefs(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        # spec: [B, C, T, F, N]
-        # coefs: [B, C, T, F, N]
-        return torch.einsum("...n,...n->...", spec, coefs)
+        return coefs
 
 
 class MvdrSouden(MultiFrameModule):
@@ -223,10 +253,12 @@ class MvdrRtfPower(MultiFrameModule):
         super().__init__(num_freqs, frame_size, lookahead)
 
 
-MF_METHODS = {
+MF_METHODS: Dict[str, MultiFrameModule] = {
     "crm": CRM,
     "df": DF,
-    "mfwf_df": partial(MfWf, method="df"),
-    "mfwf_psd": partial(MfWf, method="psd_ifc"),
-    "mfwf_c": partial(MfWf, method="c"),
+    "mfwf_df": MfWfDf,
+    "mfwf_df_sx": MfWfDf,
+    "mfwf_psd": MfWfPsd,
+    "mfwf_psd_ifc": MfWfPsd,
+    "mfwf_c": MfWfC,
 }
