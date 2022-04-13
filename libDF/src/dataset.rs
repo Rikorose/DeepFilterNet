@@ -1285,6 +1285,9 @@ impl Hdf5Cache {
     ) -> Result<bool> {
         let max_size = max_size
             .unwrap_or_else(|| Self::get_attr(file, "max_size").unwrap().unwrap_or_default());
+        if max_size == 0 {
+            return Ok(true);
+        }
         if Self::is_full(file, max_size) {
             return Ok(false);
         }
@@ -1302,7 +1305,7 @@ impl Hdf5Cache {
             // Since we can't store all samples, let's just store a fraction by uniformly
             // sampling.
             let p = max_size as f32 / total_estimate;
-            Ok(p >= thread_rng()?.gen_range(0f32..1f32))
+            Ok(p > 0. && p >= thread_rng()?.gen_range(0f32..1f32))
         }
     }
     fn cache_sample_impl(
