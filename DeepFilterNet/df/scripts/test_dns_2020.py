@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 
 from loguru import logger
 
@@ -38,8 +39,12 @@ def main(args):
         noisy_dir = os.path.join(ds_dir, "noisy")
         clean_dir = os.path.join(ds_dir, "clean")
         assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
-        noisy_files = sorted(glob.iglob(noisy_dir + "/*.wav"), key=extract_fileid)
-        clean_files = sorted(glob.glob(clean_dir + "/*.wav"), key=extract_fileid)
+        expr = re.compile(r"clnsp.*_fileid")
+        noisy_files = glob.glob(noisy_dir + "/*.wav")
+        clean_files = [
+            re.sub(expr, "clean_fileid", f.replace("noisy", "clean")) for f in noisy_files
+        ]
+        assert len(clean_files) == 150
 
         metrics = evaluation_loop(
             df_state,
@@ -52,10 +57,6 @@ def main(args):
         )
         for k, v in metrics.items():
             logger.info(f"{k}: {v}")
-
-
-def extract_fileid(fn: str) -> int:
-    return int(os.path.splitext(fn)[0].split("_")[-1])
 
 
 if __name__ == "__main__":
