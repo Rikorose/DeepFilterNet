@@ -114,7 +114,7 @@ def init_df(
     )
     checkpoint_dir = os.path.join(model_base_dir, "checkpoints")
     load_cp = epoch is not None and not (isinstance(epoch, str) and epoch.lower() == "none")
-    if load_cp:
+    if not load_cp:
         checkpoint_dir = None
     model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch)
     if epoch is None and load_cp:
