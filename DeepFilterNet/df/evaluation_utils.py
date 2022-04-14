@@ -107,7 +107,7 @@ def evaluation_loop(
         for m in metrics:
             for k, v in m.mean().items():
                 out_dict[k] = v
-        ic(np.mean(pesqs))
+        print(f"pesq mean: {np.mean(pesqs)}")
         return out_dict
 
 
