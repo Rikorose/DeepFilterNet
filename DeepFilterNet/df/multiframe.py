@@ -164,7 +164,7 @@ class MfWf(MultiFrameModule):
         return self.num_channels
 
     @staticmethod
-    def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-8) -> Tensor:
+    def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-7) -> Tensor:
         return torch.einsum(
             "...nm,...m->...n", torch.inverse(_tik_reg(Rxx, diag_eps, eps)), rss
         )  # [T, F, N]
@@ -203,8 +203,8 @@ class MfWfDf(MfWf):
         num_freqs: int,
         frame_size: int,
         lookahead: int = 0,
-        eps_diag: float = 1e-8,
-        eps: float = 1e-8,
+        eps_diag: float = 1e-7,
+        eps: float = 1e-7,
     ):
         super().__init__(num_freqs, frame_size, lookahead)
         self.eps_diag = eps_diag
