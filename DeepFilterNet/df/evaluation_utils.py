@@ -23,28 +23,26 @@ from libdf import DF
 
 RESAMPLE_METHOD = "sinc_fast"
 
-try:
-    from tqdm import tqdm
-except ImportError:
 
-    def tqdm(iterable, total: Optional[int] = None, log_freq_percent=25, desc="Progress"):
-        assert 0 < log_freq_percent < 100
-        # tqdm not available using fallback
-        logged = set()
-        try:
-            L = iterable.__len__()
-        except AttributeError:
-            assert total is not None
-            L = total
+def log_progress(iterable, total: Optional[int] = None, log_freq_percent=25, desc="Progress"):
+    disable_logging = log_freq_percent < 0 or log_freq_percent >= 100
+    logged = set()
+    try:
+        L = iterable.__len__()
+    except AttributeError:
+        assert total is not None
+        L = total
 
-        for k, i in enumerate(iterable):
-            yield i
-            p = (k + 1) / L
-            progress = int(100 * p)
-            if progress % log_freq_percent == 0 and progress > 0:
-                if progress not in logged:
-                    logger.info("{}: {: >2d}%".format(desc, progress))
-                    logged.add(progress)
+    for k, i in enumerate(iterable):
+        yield i
+        if disable_logging:
+            continue
+        p = (k + 1) / L
+        progress = int(100 * p)
+        if progress % log_freq_percent == 0 and progress > 0:
+            if progress not in logged:
+                logger.info("{}: {: >2d}%".format(desc, progress))
+                logged.add(progress)
 
 
 @torch.no_grad()
@@ -70,6 +68,7 @@ def evaluation_loop(
     metrics: List[str] = ["stoi", "composite", "sisdr"],
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
     n_workers: int = 4,
+    log_percent: int = 25,
 ) -> Dict[str, float]:
     sr = df_state.sr()
     metrics_dict = {
@@ -83,9 +82,15 @@ def evaluation_loop(
         pool_fn = mp.Pool
     else:
         pool_fn = DummyPool
+    pesqs = []
     with pool_fn(processes=max(1, n_workers)) as pool:
         metrics: List[Metric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
-        for noisyfn, cleanfn in tqdm(zip(noisy_files, clean_files), total=len(noisy_files)):
+        for noisyfn, cleanfn in log_progress(
+            zip(noisy_files, clean_files), len(noisy_files), log_percent
+        ):
+            noisy, _ = load_audio(noisyfn, 16000)
+            clean, _ = load_audio(cleanfn, 16000)
+            pesqs.append(pesq_(clean, noisy, 16000))
             noisy, _ = load_audio(noisyfn, sr)
             clean, _ = load_audio(cleanfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
@@ -102,6 +107,7 @@ def evaluation_loop(
         for m in metrics:
             for k, v in m.mean().items():
                 out_dict[k] = v
+        ic(np.mean(pesqs))
         return out_dict
 
 
@@ -113,6 +119,16 @@ def stoi(clean, degraded, sr, extended=False):
         sr = 10000
     stoi = pystoi.stoi(x=clean, y=degraded, fs_sig=sr, extended=extended)
     return stoi
+
+
+def pesq_(
+    clean: Union[np.ndarray, Tensor], degraded: Union[np.ndarray, Tensor], sr: int
+) -> np.ndarray:
+    if sr != 16000:
+        clean = resample(torch.as_tensor(clean), sr, 16000, method=RESAMPLE_METHOD).numpy()
+        degraded = resample(torch.as_tensor(degraded), sr, 16000, method=RESAMPLE_METHOD).numpy()
+        sr = 16000
+    return pesq(sr, as_numpy(clean).squeeze(), as_numpy(degraded).squeeze(), "wb")
 
 
 def composite(
