@@ -55,9 +55,9 @@ def init_df(
     model_base_dir: Optional[str] = None,
     post_filter: bool = False,
     log_level: str = "INFO",
-    log_file: str = "enhance.log",
+    log_file: Optional[str] = "enhance.log",
     config_allow_defaults: bool = False,
-    epoch: str = "best",
+    epoch: Union[str, int, None] = "best",
 ) -> Tuple[nn.Module, DF, str]:
     """Initializes and loads config, model and deep filtering state.
 
@@ -65,7 +65,11 @@ def init_df(
         model_base_dir (str): Path to the model directory containing checkpoint and config. If None,
             load the default pretrained model.
         post_filter (bool): Enable post filter for some minor, extra noise reduction.
-        log (bool): Enable logging. This initializes the logger globaly if not already initilzed.
+        log_level (str): Control amount of logging. Defaults to `INFO`.
+        log_file (str): Optional log file name. None disables it. Defaults to `enhance.log`.
+        config_allow_defaults (bool): Whether to allow initializing new config values with defaults.
+        epoch (str): Checkpoint epoch to load. Options are `best`, `latest`, `<int>`, and `none`.
+            `none` disables checkpoint loading. Defaults to `best`.
 
     Returns:
         model (nn.Modules): Intialized model, moved to GPU if available.
@@ -88,7 +92,8 @@ def init_df(
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
-    init_logger(file=os.path.join(model_base_dir, log_file), level=log_level, model=model_base_dir)
+    log_file = os.path.join(model_base_dir, log_file) if log_file is not None else None
+    init_logger(file=log_file, level=log_level, model=model_base_dir)
     if use_default_model:
         logger.info(f"Using default model at {model_base_dir}")
     config.load(
@@ -108,8 +113,11 @@ def init_df(
         min_nb_erb_freqs=p.min_nb_freqs,
     )
     checkpoint_dir = os.path.join(model_base_dir, "checkpoints")
+    load_cp = epoch is not None and not (isinstance(epoch, "str") and epoch.lower() == "none")
+    if load_cp:
+        checkpoint_dir = None
     model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch)
-    if epoch is None:
+    if epoch is None and load_cp:
         logger.error("Could not find a checkpoint")
         exit(1)
     logger.debug(f"Loaded checkpoint from epoch {epoch}")
@@ -229,7 +237,7 @@ def parse_epoch_type(value: str) -> Union[int, str]:
         return value
 
 
-def setup_df_argument_parser() -> argparse.ArgumentParser:
+def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-base-dir",
@@ -253,7 +261,7 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level",
         type=str,
-        default="info",
+        default=default_log_level,
         help="Logger verbosity. Can be one of (debug, info, error, none)",
     )
     parser.add_argument("--debug", "-d", action="store_const", const="DEBUG", dest="log_level")
