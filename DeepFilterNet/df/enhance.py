@@ -113,7 +113,7 @@ def init_df(
         min_nb_erb_freqs=p.min_nb_freqs,
     )
     checkpoint_dir = os.path.join(model_base_dir, "checkpoints")
-    load_cp = epoch is not None and not (isinstance(epoch, "str") and epoch.lower() == "none")
+    load_cp = epoch is not None and not (isinstance(epoch, str) and epoch.lower() == "none")
     if load_cp:
         checkpoint_dir = None
     model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch)

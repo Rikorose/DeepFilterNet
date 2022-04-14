@@ -165,7 +165,6 @@ class MfWf(MultiFrameModule):
 
     @staticmethod
     def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-8) -> Tensor:
-        ic(Rxx.shape, rss.shape)
         return torch.einsum(
             "...nm,...m->...n", torch.inverse(_tik_reg(Rxx, diag_eps, eps)), rss
         )  # [T, F, N]
