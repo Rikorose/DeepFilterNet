@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
+deep_filter = { features = ["dataset", "vorbis", "flac", "cache"], path = "../libDF" }
 pyo3 = { version = "^0.16", default_features = true, features = ["extension-module"]}
 crossbeam-channel = "^0.5"
 numpy = "^0.16"

@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import warnings
-from typing import Iterator, List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -68,23 +68,23 @@ class PytorchDataLoader:
         sr: int,
         batch_size: int,
         max_len_s: Optional[float] = 10.0,
-        prefetch=8,
-        num_workers=None,
-        pin_memory=True,
-        drop_last=False,  # Drop the last batch if it contains fewer samples then batch_size
-        fft_size: int = None,  # FFT size for stft calcualtion
-        hop_size: int = None,  # Hop size for stft calcualtion
-        nb_erb: int = None,  # Number of ERB bands
-        nb_spec: int = None,  # Number of complex spectrogram bins
-        norm_alpha: float = None,  # Exponential normalization decay for erb_feat and spec_feat
+        prefetch: int = 8,
+        num_workers: Optional[int] = None,
+        pin_memory: bool = True,
+        drop_last: bool = False,  # Drop the last batch if it contains fewer samples then batch_size
+        fft_size: Optional[int] = None,  # FFT size for stft calcualtion
+        hop_size: Optional[int] = None,  # Hop size for stft calcualtion
+        nb_erb: Optional[int] = None,  # Number of ERB bands
+        nb_spec: Optional[int] = None,  # Number of complex spectrogram bins
+        norm_alpha: Optional[float] = None,  # Exponential normalization decay for erb/spec_feat
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
-        overfit=False,  # Overfit on one epoch
-        cache_valid=False,  # Cache validiation dataset via a hdf5 dataset
-        seed=0,
-        min_nb_erb_freqs: int = None,  # Minimum number of frequency bins per ERB band
+        overfit: bool = False,  # Overfit on one epoch
+        cache_valid: Union[bool, float, None] = False,  # Cache validiation dataset, float is max GB
+        seed: int = 0,
+        min_nb_erb_freqs: Optional[int] = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
-        global_sampling_factor: float = None,  # Additional over/undersampling of all datasets
+        global_sampling_factor: Optional[float] = None,  # Additional over/undersampling of all ds
         snrs=None,  # Signal to noise ratios (SNRs) to generate. Defaults to [-5,0,5,10,20,40] dB
         gains=None,  # Additional gains applied to speech. Defaults to [-6,0,6] dB
     ):
@@ -94,6 +94,9 @@ class PytorchDataLoader:
         prefetch_loader = batch_size * (num_workers or 1)
         logger.info(f"Initializing dataloader with data directory {ds_dir}")
         assert self.fft_size is not None, "No fft_size provided"
+        if cache_valid is not None:
+            if isinstance(cache_valid, bool):
+                cache_valid = 0.0
         self.loader = _FdDataLoader(
             ds_dir,
             ds_config,

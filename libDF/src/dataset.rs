@@ -1,36 +1,29 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::fs;
-use std::hash::Hash;
-use std::hash::Hasher;
-use std::io::BufReader;
-use std::io::BufWriter;
-use std::ops::Deref;
+use std::hash::{Hash, Hasher};
+use std::io::{BufReader, BufWriter};
 use std::ops::Range;
 use std::path::Path;
-use std::sync::{
-    mpsc::{sync_channel, SyncSender},
-    Arc,
-};
-use std::thread;
+use std::sync::mpsc::sync_channel;
 use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
 use claxon;
 use crossbeam_channel::Sender;
-use hdf5::Location;
-use hdf5::{filters, types::VarLenUnicode, File, Group, H5Type};
+use hdf5::{types::VarLenUnicode, File};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::Rng;
 use rayon::prelude::*;
 use realfft::num_traits::Zero;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 #[cfg(feature = "vorbis")]
 use {lewton::inside_ogg::OggStreamReader, ogg::reading::PacketReader as OggPacketReader};
 
+#[cfg(feature = "cache")]
+use crate::cache::ValidCache;
 use crate::{augmentations::*, transforms::*, util::*, Complex32, DFState};
 
 type Result<T> = std::result::Result<T, DfDatasetError>;
@@ -58,6 +51,9 @@ pub enum DfDatasetError {
     TransformError(#[from] crate::transforms::TransformError),
     #[error("DF Augmentation Error")]
     AugmentationError(#[from] crate::augmentations::AugmentationError),
+    #[cfg(feature = "cache")]
+    #[error("DF Cache Error")]
+    CacheError(#[from] crate::cache::DfCacheError),
     #[error("DF Utils Error")]
     UtilsError(#[from] crate::util::UtilsError),
     #[error("Ndarray Shape Error")]
@@ -331,11 +327,7 @@ pub trait Data: Sized + Clone + Default + Send + Sync + Zero + 'static {}
 impl Data for f32 {}
 impl Data for Complex32 {}
 
-pub enum SampleType {
-    TimeDomain,
-    FreqDomain,
-}
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Sample<T>
 where
     T: Data,
@@ -351,9 +343,6 @@ where
     pub idx: usize,
 }
 impl Sample<f32> {
-    fn sample_type(&self) -> SampleType {
-        SampleType::TimeDomain
-    }
     fn get_speech_view(&self) -> Result<ArrayView2<f32>> {
         Ok(self.speech.view().into_dimensionality()?)
     }
@@ -368,9 +357,6 @@ impl Sample<f32> {
     }
 }
 impl Sample<Complex32> {
-    fn sample_type(&self) -> SampleType {
-        SampleType::FreqDomain
-    }
     fn get_speech_view(&self) -> Result<ArrayView3<Complex32>> {
         Ok(self.speech.view().into_dimensionality()?)
     }
@@ -434,7 +420,7 @@ pub struct DatasetBuilder {
     global_sampling_f: Option<f32>,
     snrs: Option<Vec<i8>>,
     gains: Option<Vec<i8>>,
-    cache_valid: bool,
+    cache_valid: Option<f32>,
     num_threads: Option<usize>,
     logger: Option<Sender<(LogLevel, String)>>,
 }
@@ -457,7 +443,7 @@ impl DatasetBuilder {
             global_sampling_f: None,
             snrs: None,
             gains: None,
-            cache_valid: false,
+            cache_valid: None,
             num_threads: None,
             logger: None,
         }
@@ -480,21 +466,40 @@ impl DatasetBuilder {
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
-        let split = self.datasets.unwrap().split;
-        let cache = if self.cache_valid && split == Split::Valid {
-            let ds_path = Path::new(&self.ds_dir);
-            let hash = {
-                let mut hash_vec: Vec<u64> = ds.config.iter().map(|c| c.hash().unwrap()).collect();
-                hash_vec.push(fft_size as u64);
-                hash_vec.push(hop_size as u64);
-                hash_vec.push(nb_erb as u64);
-                calculate_hash(&hash_vec)
-            };
-            let cache_path = ds_path.join(format!("{}_cache_{}.hdf5", split, hash));
-            Some(Hdf5Cache::new(&cache_path, hash, ds.len())?)
-        } else {
-            None
+        #[cfg(feature = "cache")]
+        let cache = {
+            let split = self.datasets.unwrap().split;
+            if self.cache_valid.is_some() && split == Split::Valid {
+                let ds_path = Path::new(&self.ds_dir);
+                let hash = {
+                    let mut hash_vec: Vec<u64> =
+                        ds.config.iter().map(|c| c.hash().unwrap()).collect();
+                    hash_vec.push(fft_size as u64);
+                    hash_vec.push(hop_size as u64);
+                    hash_vec.push(nb_erb as u64);
+                    calculate_hash(&hash_vec)
+                };
+                let cache_path = ds_path.join(format!("{}_cache_{}", split, hash));
+                if let Some(logger) = self.logger.as_ref() {
+                    logger.send((
+                        LogLevel::Info,
+                        format!("Using validation dataset cache at {:?}", &cache_path),
+                    ))?;
+                }
+                Some(ValidCache::new(
+                    &cache_path,
+                    hash,
+                    ds.len(),
+                    self.cache_valid,
+                )?)
+            } else {
+                None
+            }
         };
+        #[cfg(not(feature = "cache"))]
+        if self.cache_valid && split == Split::Valid {
+            panic!("Dataset not compiled with caching capabilities");
+        }
         Ok(FftDataset {
             ds,
             fft_size,
@@ -503,6 +508,7 @@ impl DatasetBuilder {
             nb_spec: self.nb_spec,
             norm_alpha: self.norm_alpha,
             min_nb_freqs: self.min_nb_freqs,
+            #[cfg(feature = "cache")]
             cache,
         })
     }
@@ -687,8 +693,9 @@ impl DatasetBuilder {
         self.num_threads = Some(n);
         self
     }
-    pub fn cache_valid_dataset(mut self) -> Self {
-        self.cache_valid = true;
+    /// Use a cache for validation set. If `max_gb` is None use `DF_CACHE_MAX_GB` env is used.
+    pub fn cache_valid_dataset(mut self, max_gb: Option<f32>) -> Self {
+        self.cache_valid = Some(max_gb.unwrap_or_default());
         self
     }
     pub fn add_logger(mut self, logger: Sender<(LogLevel, String)>) -> Self {
@@ -705,7 +712,8 @@ pub struct FftDataset {
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
     min_nb_freqs: Option<usize>,
-    cache: Option<Hdf5Cache>,
+    #[cfg(feature = "cache")]
+    cache: Option<ValidCache>,
 }
 impl FftDataset {
     pub fn get_hdf5cfg(&self, filename: &str) -> Option<&Hdf5Cfg> {
@@ -716,18 +724,17 @@ impl FftDataset {
         }
         None
     }
-    pub fn close_cache(&mut self) -> Result<()> {
-        if let Some(mut c) = self.cache.take() {
-            c.close()?;
-        }
-        Ok(())
-    }
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
+        #[cfg(feature = "cache")]
         let hash = if let Some(cache) = self.cache.as_ref() {
             let hash = calculate_hash(&(idx, seed));
             if let Some(s) = cache.load_sample(hash)? {
+                if let Some(logger) = self.ds.logger.as_ref() {
+                    let msg = format!("Found cached sample for idx {idx} (hash: {hash})");
+                    logger.send((LogLevel::Debug, msg)).unwrap_or(());
+                }
                 return Ok(s);
             }
             hash
@@ -769,8 +776,13 @@ impl Dataset<Complex32> for FftDataset {
             snr: sample.snr,
             idx: sample.idx,
         };
+        #[cfg(feature = "cache")]
         if let Some(cache) = self.cache.as_ref() {
-            cache.cache_sample(hash, &sample, true)?;
+            if let Some(logger) = self.ds.logger.as_ref() {
+                let msg = format!("Caching sample for idx {idx} (hash: {hash})");
+                logger.send((LogLevel::Debug, msg)).unwrap_or(());
+            }
+            cache.cache_sample(hash, &sample)?;
         }
         Ok(sample)
     }
@@ -792,6 +804,19 @@ impl Dataset<Complex32> for FftDataset {
     }
 
     fn need_generate_keys(&self) -> bool {
+        if let Some(cache) = self.cache.as_ref() {
+            match cache.flush() {
+                Ok(_) => (),
+                Err(e) => {
+                    let msg = format!("Failed to flush cache: {:?}", e);
+                    if let Some(logger) = self.ds.logger.as_ref() {
+                        logger.send((LogLevel::Warning, msg)).unwrap()
+                    } else {
+                        eprintln!("{}", msg);
+                    }
+                }
+            }
+        }
         self.ds.need_generate_keys()
     }
 
@@ -1121,234 +1146,6 @@ pub enum DType {
     F32 = 1,
 }
 
-/// Cache for validation dataset
-#[derive(Debug)]
-struct Hdf5Cache {
-    file: Option<Arc<File>>,
-    hash: u64,
-    filters: Arc<Vec<filters::Filter>>,
-    cacher: Option<thread::JoinHandle<Result<()>>>,
-    sender: SyncSender<Option<(u64, Sample<Complex32>)>>,
-    n_samples: usize,
-    max_size: u64, // in bytes
-}
-
-impl Drop for Hdf5Cache {
-    fn drop(&mut self) {
-        self.close().unwrap();
-    }
-}
-impl Hdf5Cache {
-    fn new(path: &impl AsRef<Path>, hash: u64, n_total_samples: usize) -> Result<Self> {
-        let path = path.as_ref();
-        let file = if path.is_file() {
-            println!("Opening validation cache: {:?}", path);
-            File::open_rw(path)?
-        } else {
-            println!("Validation cache not found. Creating: {:?}", path);
-            File::create(path)?
-        };
-        match file.attr("hash") {
-            Err(_e) => {
-                let attr = file.new_attr::<u64>().create("hash")?;
-                attr.write_scalar::<u64>(&hash)?;
-            }
-            Ok(attr) => assert_eq!(attr.read_scalar::<u64>().unwrap(), hash),
-        };
-        let file = Arc::new(file);
-        let filters = if filters::blosc_available() {
-            filters::blosc_set_nthreads(8);
-            Arc::new(vec![filters::Filter::blosc_lz4hc(5, true)])
-        } else if filters::deflate_available() {
-            Arc::new(vec![filters::Filter::Deflate(4)])
-        } else {
-            Arc::new(Vec::new())
-        };
-        let max_gb = std::env::var("HDF5CACHE_MAX_GB")
-            .map(|s| s.parse::<f32>().unwrap_or_default())
-            .unwrap_or_default();
-        let max_size: u64 = (max_gb * 1024. * 1024. * 1024.) as u64;
-        Hdf5Cache::set_attr(file.deref(), "max_size", &max_size)?;
-        Hdf5Cache::set_attr(&file.as_location()?, "total_samples", &n_total_samples)?;
-        let (sender, receiver) = sync_channel(256);
-        let filters_c = filters.clone();
-        let file_c = file.clone();
-        let cacher = Some(thread::spawn(move || -> Result<()> {
-            seed_from_u64(0); // Only for selecting which samples to store;
-            while let Some((key, sample)) = receiver.recv()? {
-                Hdf5Cache::cache_sample_impl(&file_c, key, &sample, &filters_c)?;
-            }
-            Ok(())
-        }));
-        Ok(Hdf5Cache {
-            file: Some(file),
-            hash,
-            filters,
-            cacher,
-            sender,
-            n_samples: n_total_samples,
-            max_size,
-        })
-    }
-    pub fn close(&mut self) -> Result<()> {
-        self.sender.try_send(None).unwrap_or_default();
-        if let Some(thread) = self.cacher.take() {
-            thread
-                .join()
-                .map_err(|e| DfDatasetError::ThreadJoinError(format!("{:?}", e)))??;
-        }
-        if let Some(file) = self.file.take() {
-            Arc::try_unwrap(file).unwrap().close()?
-        }
-        Ok(())
-    }
-    pub fn cache_sample(&self, key: u64, sample: &Sample<Complex32>, queue: bool) -> Result<()> {
-        if Self::is_full(self.file.as_ref().unwrap(), self.max_size) {
-            return Ok(());
-        }
-        if queue {
-            return Ok(self.sender.send(Some((key, sample.clone())))?);
-        } else {
-            Self::cache_sample_impl(self.file.as_ref().unwrap(), key, sample, &self.filters)?;
-        };
-        Ok(())
-    }
-    fn get_attr<T: H5Type>(l: &Location, name: &str) -> Result<Option<T>> {
-        match l.attr(name) {
-            Ok(a) => Ok(Some(a.read_scalar()?)),
-            Err(_) => Ok(None),
-        }
-    }
-    fn set_attr<T: H5Type>(l: &Location, name: &str, val: &T) -> Result<()> {
-        let attr = l.new_attr::<T>().create(name).unwrap_or_else(|_| l.attr(name).unwrap());
-        attr.write_scalar(val)?;
-        Ok(())
-    }
-    fn create_ds<'d, A, T, D>(
-        grp: &Group,
-        name: &str,
-        data: A,
-        filters: &[filters::Filter],
-    ) -> Result<()>
-    where
-        A: Into<ArrayView<'d, T, D>>,
-        T: H5Type,
-        D: ndarray::Dimension,
-    {
-        grp.new_dataset_builder().set_filters(filters).with_data(data).create(name)?;
-        Ok(())
-    }
-    fn store_cplx(
-        grp: &Group,
-        name: &str,
-        data: ArrayViewD<Complex32>,
-        filters: &[filters::Filter],
-    ) -> Result<()> {
-        let complex = data.split_complex();
-        let name_re = name.to_owned() + "_re";
-        let name_im = name.to_owned() + "_im";
-        Self::create_ds(
-            grp,
-            &name_re,
-            complex.re.as_standard_layout().view(),
-            filters,
-        )?;
-        Self::create_ds(
-            grp,
-            &name_im,
-            complex.im.as_standard_layout().view(),
-            filters,
-        )?;
-        Ok(())
-    }
-    fn load_cplx(grp: &Group, name: &str) -> Result<ArrayD<Complex32>> {
-        let name_re = name.to_owned() + "_re";
-        let name_im = name.to_owned() + "_im";
-        let ds_re = grp.dataset(&*name_re)?;
-        let ds_im = grp.dataset(&*name_im)?;
-        let mut out = ArrayD::zeros(ds_re.shape());
-        let view = out.view_mut().split_complex();
-        ds_re.read_dyn()?.move_into(view.re);
-        ds_im.read_dyn()?.move_into(view.im);
-        Ok(out)
-    }
-    fn is_full(file: &File, max_size: u64) -> bool {
-        if max_size == 0 {
-            return false;
-        }
-        file.size() > max_size
-    }
-    fn should_cache(
-        file: &File,
-        max_size: Option<u64>,
-        total_samples: Option<u64>,
-    ) -> Result<bool> {
-        let max_size = max_size
-            .unwrap_or_else(|| Self::get_attr(file, "max_size").unwrap().unwrap_or_default());
-        if Self::is_full(file, max_size) {
-            return Ok(false);
-        }
-        let n_samples = file.len();
-        if n_samples == 0 {
-            return Ok(true);
-        }
-        let total_samples = total_samples
-            .unwrap_or_else(|| Self::get_attr(file, "total_samples").unwrap().unwrap_or_default());
-        let avg_size = file.size() as f32 / n_samples as f32;
-        let total_estimate = total_samples as f32 * avg_size;
-        if total_estimate < max_size as f32 {
-            Ok(true)
-        } else {
-            // Since we can't store all samples, let's just store a fraction by uniformly
-            // sampling.
-            let p = max_size as f32 / total_estimate;
-            Ok(p >= thread_rng()?.gen_range(0f32..1f32))
-        }
-    }
-    fn cache_sample_impl(
-        file: &File,
-        key: u64,
-        sample: &Sample<Complex32>,
-        filters: &[filters::Filter],
-    ) -> Result<()> {
-        if !Self::should_cache(file, None, None)? {
-            return Ok(());
-        }
-        let grp = file.create_group(&key.to_string())?;
-        Self::store_cplx(&grp, "speech", sample.speech.view(), filters)?;
-        Self::store_cplx(&grp, "noise", sample.noise.view(), filters)?;
-        Self::store_cplx(&grp, "noisy", sample.noisy.view(), filters)?;
-        if let Some(feat_erb) = sample.feat_erb.as_ref() {
-            Self::create_ds(&grp, "feat_erb", feat_erb.view(), filters)?;
-        }
-        if let Some(feat_spec) = sample.feat_spec.as_ref() {
-            Self::store_cplx(&grp, "feat_spec", feat_spec.view(), filters)?;
-        }
-        Self::set_attr(&grp, "max_freq", &sample.max_freq)?;
-        Self::set_attr(&grp, "snr", &sample.snr)?;
-        Self::set_attr(&grp, "gain", &sample.gain)?;
-        Self::set_attr(&grp, "idx", &sample.idx)?;
-        Ok(())
-    }
-    fn load_sample(&self, key: u64) -> Result<Option<Sample<Complex32>>> {
-        let grp = match self.file.as_ref().unwrap().group(&key.to_string()) {
-            Ok(g) => g,
-            Err(_) => return Ok(None),
-        };
-        Ok(Some(Sample {
-            speech: Self::load_cplx(&grp, "speech")?,
-            noise: Self::load_cplx(&grp, "noise")?,
-            noisy: Self::load_cplx(&grp, "noisy")?,
-            feat_erb: Some(grp.dataset("feat_erb")?.read_dyn()?),
-            feat_spec: Some(Self::load_cplx(&grp, "feat_spec")?),
-            max_freq: Self::get_attr(&grp, "max_freq")?.unwrap(),
-            snr: Self::get_attr(&grp, "snr")?.unwrap(),
-            gain: Self::get_attr(&grp, "gain")?.unwrap(),
-            idx: Self::get_attr(&grp, "idx")?.unwrap(),
-        }))
-    }
-}
-
 #[derive(Debug)]
 pub struct Hdf5Dataset {
     file: File,
@@ -1357,12 +1154,6 @@ pub struct Hdf5Dataset {
     pub codec: Option<Codec>,
     max_freq: Option<usize>,
     dtype: Option<DType>,
-}
-
-#[derive(Hash, Debug, Clone)]
-pub struct Hdf5CacheHash {
-    seed: u64,
-    ds_hashes: Vec<(String, u64)>, // dataset filename, u64 hash via calculate_hash(&DatasetModified)
 }
 
 fn get_dstype(file: &File) -> Option<DsType> {
@@ -2176,6 +1967,8 @@ mod tests {
     }
     #[test]
     pub fn test_cached_valid_dataset() -> Result<()> {
+        use std::collections::BTreeMap;
+
         seed_from_u64(42);
         let fft_size = 960;
         let hop_size = Some(480);
@@ -2184,39 +1977,45 @@ mod tests {
         let norm_alpha = None;
         let sr = 48000;
         let ds_dir = "../assets/";
-        for file in fs::read_dir(Path::new("../assets/"))? {
-            let file = file?.path();
-            if file.is_file()
-                && file.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")
+        for item in fs::read_dir(Path::new("../assets/"))? {
+            let item = item?.path();
+            if item.is_dir()
+                && item.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")
             {
-                println!("Removing existing cache '{:?}'", file);
-                fs::remove_file(file)?;
+                println!("Removing existing cache '{:?}'", item);
+                fs::remove_dir_all(item)?;
             }
         }
         let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
         for c in cfg.valid.iter_mut() {
-            c.1 = 3.0; // Set sampling factor
+            c.1 = 10.0; // Set sampling factor
         }
         let builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
             .max_len(1.);
         let mut val_ds = builder
-            .cache_valid_dataset()
+            .cache_valid_dataset(Some(0.02)) // Limit by 20 MB
             .dataset(cfg.split_config(Split::Valid))
             .build_fft_dataset()?;
         let ds_len = val_ds.len();
+        let mut mixture_cache = BTreeMap::new();
         dbg!(ds_len);
         for seed in [42, 43] {
             dbg!(seed);
-            for _ in 0..2 {
+            for _epoch in 0..2 {
                 val_ds.set_seed(seed);
                 if val_ds.need_generate_keys() {
-                    dbg!();
                     val_ds.generate_keys()?
                 }
                 for idx in 0..ds_len {
-                    let sample = val_ds.get_sample(idx, Some(seed))?;
-                    dbg!(idx, sample);
+                    let sample = val_ds.get_sample(idx, Some(seed + idx as u64))?;
+                    let key = (seed, idx);
+                    if let Some(cached_noisy) = mixture_cache.get(&key) {
+                        println!("Found sample {:?} in cache", key);
+                        assert_eq!(sample.noisy, cached_noisy);
+                    } else {
+                        mixture_cache.insert(key, sample.noisy.clone());
+                    }
                 }
             }
         }
