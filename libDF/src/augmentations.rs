@@ -294,6 +294,76 @@ impl Transform for RandResample {
 }
 
 #[derive(Clone)]
+pub struct RandClipping {
+    prob: f32,
+    db_low: f32,
+    db_high: f32,
+    eps: f32,
+    eps_c: f32,
+}
+impl RandClipping {
+    pub fn new(p: f32, db_low: f32, db_high: f32, eps: f32, convergence_eps: f32) -> Self {
+        RandClipping {
+            prob: p,
+            db_low,
+            db_high,
+            eps,
+            eps_c: convergence_eps,
+        }
+    }
+    fn clip_inplace(&self, x: &mut Array2<f32>, c: f32) {
+        x.mapv_inplace(|x| x.max(-c).min(c))
+    }
+    fn clip(&self, x: ArrayView2<f32>, c: f32) -> Array2<f32> {
+        x.map(|x| x.max(-c).min(c))
+    }
+    pub fn snr(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> f32 {
+        assert_eq!(a.shape(), b.shape());
+        let numel = a.len();
+        assert!(numel > 0);
+        let a = a.fold(0., |acc, x| acc + x.abs()) / numel as f32;
+        let b = b.fold(0., |acc, x| acc + x.abs()) / numel as f32;
+        (a / (b + self.eps)).log10() * 20.
+    }
+}
+impl Transform for RandClipping {
+    fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
+        let mut rng = thread_rng()?;
+        if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
+            return Ok(());
+        }
+        let target_snr = if self.db_low >= self.db_high {
+            self.db_low
+        } else {
+            rng.gen_range(self.db_low..self.db_high)
+        };
+        let max = x.fold(0.0, |acc, x| x.abs().max(acc));
+        let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
+        let c = match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("RandClipping: Failed to find root");
+                return Ok(());
+            }
+        };
+        self.clip_inplace(x, c);
+        Ok(())
+    }
+    fn default_with_prob(p: f32) -> Self {
+        RandClipping {
+            prob: p,
+            db_low: 0.5,
+            db_high: 3.0,
+            eps: 1e-10,
+            eps_c: 0.001,
+        }
+    }
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
+        Box::new((*self).clone())
+    }
+}
+
+#[derive(Clone)]
 pub struct RandRemoveDc {
     prob: f32,
 }
@@ -612,6 +682,26 @@ mod tests {
         write_wav_arr2("../out/speech_target.wav", speech.view(), sr as u32)?;
         write_wav_arr2("../out/speech_reverb.wav", speech_rev.view(), sr as u32)?;
         write_wav_arr2("../out/noise_reverb.wav", noise.view(), sr as u32)?;
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_clipping() -> Result<()> {
+        create_out_dir().expect("Could not create output directory");
+        seed_from_u64(42);
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
+        let sr = reader.sr as u32;
+        let test_sample = reader.samples_arr2()?;
+        let mut test_sample_c = test_sample.clone();
+        let ch = test_sample.len_of(Axis(0)) as u16;
+        // Test with 3dB
+        let tsnr = 3.;
+        let transform = RandClipping::new(1.0, tsnr, tsnr, 1e-10, 0.001);
+        transform.transform(&mut test_sample_c)?;
+        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
+        dbg!(tsnr, resulting_snr);
+        write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
+        assert!(resulting_snr - tsnr < 0.01);
         Ok(())
     }
 }
