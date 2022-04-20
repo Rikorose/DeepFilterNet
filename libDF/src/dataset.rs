@@ -596,10 +596,16 @@ impl DatasetBuilder {
         let sp_transforms = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
             Box::new(RandLFilt::default_with_prob(0.25)),
+            Box::new(RandEQ::default_with_prob(0.1).with_sr(self.sr)),
+            Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
+            Box::new(RandClipping::default_with_prob(0.05).with_snr(0.5, 3.)),
+        ]);
+        let ns_transforms = Compose::new(vec![
+            Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.25).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
+            Box::new(RandClipping::default_with_prob(0.1).with_snr(1., 10.)),
         ]);
-        let ns_transforms = sp_transforms.clone();
         let p_reverb = self.p_reverb.unwrap_or(0.);
         if p_reverb > 0. && !has_rirs {
             if let Some(logger) = self.logger.as_ref() {

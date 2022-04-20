@@ -55,6 +55,10 @@ impl Compose {
         Compose { transforms }
     }
 
+    pub fn append(&mut self, t: Box<dyn Transform + Send>) {
+        self.transforms.push(t);
+    }
+
     pub fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
         for t in self.transforms.iter() {
             t.transform(x)?;
@@ -310,6 +314,11 @@ impl RandClipping {
             eps,
             eps_c: convergence_eps,
         }
+    }
+    pub fn with_snr(mut self, db_low: f32, db_high: f32) -> Self {
+        self.db_low = db_low;
+        self.db_high = db_high;
+        self
     }
     fn clip_inplace(&self, x: &mut Array2<f32>, c: f32) {
         x.mapv_inplace(|x| x.max(-c).min(c))
