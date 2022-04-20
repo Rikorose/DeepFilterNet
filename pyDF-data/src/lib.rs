@@ -313,7 +313,13 @@ fn write_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
 fn update_keys(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
     for hdf5cfg in cfgs.iter_mut() {
         let ds_path = ds_dir.to_owned() + "/" + hdf5cfg.filename();
-        let cfg = ds.get_hdf5cfg(hdf5cfg.filename()).expect("Could not get hdf5cfg");
+        let cfg = match ds.get_hdf5cfg(hdf5cfg.filename()) {
+            Some(cfg) => cfg,
+            None => {
+                eprintln!("Could not get hdf5cfg for filename {}", hdf5cfg.filename());
+                continue;
+            }
+        };
         let hash = cfg
             .hash()
             .unwrap_or_else(|| cfg.hash_from_ds_path(&ds_path).expect("Could not calculate hash"));
