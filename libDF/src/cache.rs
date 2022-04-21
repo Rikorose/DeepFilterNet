@@ -70,11 +70,9 @@ impl ValidCache {
         let path = path.as_ref();
         let db = sled::open(path)?;
         let config = bincode::config::standard();
-        let max_gb = max_gb.unwrap_or_else(|| {
-            std::env::var("DF_CACHE_MAX_GB")
-                .map(|s| s.parse::<f32>().unwrap_or_default())
-                .unwrap_or_default()
-        });
+        let max_gb = std::env::var("DF_CACHE_MAX_GB")
+            .map(|s| s.parse::<f32>().expect("Failed to parse `DF_CACHE_MAX_GB` env variable"))
+            .unwrap_or_else(|_| max_gb.unwrap_or_default());
         let max_size = max_gb * 1000f32.powi(3);
         db.compare_and_swap(b"len", None as Option<&[u8]>, Some(&u64_to_ivec(0)))?
             .unwrap_or_default();

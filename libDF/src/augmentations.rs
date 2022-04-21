@@ -350,8 +350,8 @@ impl Transform for RandClipping {
         let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
         let c = match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
             Ok(c) => c,
-            Err(_) => {
-                eprintln!("RandClipping: Failed to find root");
+            Err(e) => {
+                eprintln!("RandClipping: Failed to find root: {:?}", e);
                 return Ok(());
             }
         };
