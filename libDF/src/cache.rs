@@ -114,7 +114,15 @@ impl ValidCache {
             let p = self.max_size / total_estimate;
             return Ok(p >= thread_rng()?.gen_range(0f32..1f32));
         }
-        Ok(true)
+        // If had an io error; return false
+        Ok(!self.had_io_error()?)
+    }
+    pub fn had_io_error(&self) -> Result<bool> {
+        Ok(self.db.contains_key(b"io_error")?)
+    }
+    pub fn log_io_error(&self) -> Result<()> {
+        self.db.insert(b"io_error", &[1])?;
+        Ok(())
     }
     pub fn increment_len(&self) -> Result<()> {
         self.db.update_and_fetch(b"len", increment)?;
@@ -131,7 +139,14 @@ impl ValidCache {
         let data = get_buffer();
         let n_enc = bincode::serde::encode_into_slice(sample, data, self.config)?;
         let key = u64_to_ivec(key);
-        self.db.insert(&key, &data[..n_enc])?;
+        match self.db.insert(&key, &data[..n_enc]) {
+            Ok(_) => (),
+            Err(sled::Error::Io(e)) => {
+                eprintln!("io::Error during sled insert: {:?}", e);
+                self.log_io_error()?;
+            }
+            Err(e) => return Err(e.into()),
+        };
         self.increment_len()?;
         self.db.get(&key)?;
         Ok(())
