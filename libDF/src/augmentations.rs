@@ -349,9 +349,10 @@ impl Transform for RandClipping {
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
         let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
         let c = match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
-            Ok(c) => c,
+            Ok(c) => dbg!(c),
             Err(e) => {
                 eprintln!("RandClipping: Failed to find root: {:?}", e);
+                dbg!(max, f(0.01 * max), f(0.99 * max));
                 return Ok(());
             }
         };
