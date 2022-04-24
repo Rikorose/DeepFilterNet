@@ -26,7 +26,8 @@ required-features = ["dataset", "anyhow"]
 default = []
 
 transforms = ["thiserror", "ndarray"]
-dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel", "serde_json", "serde", "hound", "rubato", "roots"]
+dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel",
+        "serde_json", "serde", "hound", "rubato", "roots", "log"]
 dataset_timings = []
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
@@ -36,7 +37,7 @@ cache = ["sled", "bincode"]
 rustfft = "^6.0.1"
 realfft = "^3.0.0"
 num-complex = { version = "^0.4", features=["serde"] }
-log = { version = "0.4", features = ["std"] }
+log = { version = "0.4", features = ["std"], optional=true }
 rand = { version="0.8", optional=true }
 rubato = { version="0.11", optional=true }
 roots = { version="0.0.7", optional=true }
