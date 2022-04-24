@@ -9,7 +9,6 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-
 def windowed_energy(x: Tensor, ws: int, hop) -> Tensor:
     x = x.to(torch.float32) / x.max().item()
     x = F.pad(x, (ws // 2, ws // 2)).unfold(-1, ws, hop)
@@ -27,7 +26,7 @@ def main(path: str):
         path.replace(".hdf5", "_trimmed.hdf5"), "w", libver="latest"
     ) as fw:
         assert "speech" in fr
-        grp=fw.create_group("speech")
+        grp = fw.create_group("speech")
         sr = int(fr.attrs["sr"])
         for attr in fr.attrs:
             fw.attrs[attr] = fr.attrs[attr]
@@ -50,7 +49,7 @@ def main(path: str):
                     end = -i + 10
                     break
             print(n, e.min().item(), e.max().item(), e.shape[0], start, end)
-            assert start-end<e.shape[-1]
+            assert start - end < e.shape[-1]
             e = e[start:end]
             audio = audio[..., start * hop : end * hop]
             ds = grp.create_dataset(n, data=audio, compression="gzip")
