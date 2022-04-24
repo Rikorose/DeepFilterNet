@@ -6,6 +6,8 @@ use std::io::{BufReader, BufWriter};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
+#[cfg(feature = "dataset_timings")]
+use std::time::Instant;
 use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
@@ -598,13 +600,13 @@ impl DatasetBuilder {
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.1).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
-            Box::new(RandClipping::default_with_prob(0.05).with_snr(0.5, 3.)),
+            Box::new(RandClipping::default_with_prob(0.05).with_c(0.01..0.9)),
         ]);
         let ns_transforms = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.25).with_sr(self.sr)),
-            Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
-            Box::new(RandClipping::default_with_prob(0.1).with_snr(1., 10.)),
+            Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
+            Box::new(RandClipping::default_with_prob(0.1).with_c(0.005..0.95)),
         ]);
         let p_reverb = self.p_reverb.unwrap_or(0.);
         if p_reverb > 0. && !has_rirs {
@@ -733,6 +735,8 @@ impl FftDataset {
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         #[cfg(feature = "cache")]
         let hash = if let Some(cache) = self.cache.as_ref() {
             let hash = calculate_hash(&(idx, seed));
@@ -790,6 +794,11 @@ impl Dataset<Complex32> for FftDataset {
             }
             cache.cache_sample(hash, &sample)?;
         }
+        #[cfg(feature = "dataset_timings")]
+        log::trace!(
+            "FD sample: {:?} ms",
+            (std::time::Instant::now() - t0).as_millis()
+        );
         Ok(sample)
     }
 
@@ -958,6 +967,8 @@ impl TdDataset {
 
 impl Dataset<f32> for TdDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
         let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
@@ -978,6 +989,8 @@ impl Dataset<f32> for TdDataset {
         if speech.len_of(Axis(1)) > self.max_sample_len() {
             speech.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
         }
+        #[cfg(feature = "dataset_timings")]
+        let t_sp = Instant::now();
         // Apply low pass to the noise as well
         let noise_low_pass = if max_freq < self.sr / 2 {
             Some(LpParam {
@@ -1024,6 +1037,8 @@ impl Dataset<f32> for TdDataset {
             noises.push(ns);
             noise_gains.push(self.gains.choose(&mut rng).unwrap());
         }
+        #[cfg(feature = "dataset_timings")]
+        let t_ns = Instant::now();
         let noise_gains_f32: Vec<f32> = noise_gains.iter().map(|x| **x as f32).collect();
         // Sample SNR and gain
         let &snr = self.snrs.choose(&mut rng).unwrap();
@@ -1048,6 +1063,17 @@ impl Dataset<f32> for TdDataset {
             gain as f32,
             noise_low_pass,
         )?;
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) {
+            let te = std::time::Instant::now();
+            log::trace!(
+                "TD sample: {:?} ms (speech: {:?} ms, noise: {:?} ms, mix: {:?} ms)",
+                (te - t0).as_millis(),
+                (t_sp - t0).as_millis(),
+                (t_ns - t_sp).as_millis(),
+                (te - t_ns).as_millis(),
+            );
+        }
         Ok(Sample {
             speech: speech.into_dyn(),
             noise: noise.into_dyn(),
@@ -1717,12 +1743,29 @@ impl From<&str> for LogLevel {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::sync::Once;
 
+    use log::info;
     use rstest::rstest;
 
     use super::*;
     use crate::util::seed_from_u64;
     use crate::wav_utils;
+
+    static INIT: Once = Once::new();
+
+    /// Setup function that is only run once, even if called multiple times.
+    fn setup() {
+        INIT.call_once(|| {
+            let _ = env_logger::builder()
+                // Include all events in tests
+                .filter_module("df", log::LevelFilter::max())
+                // Ensure events are captured by `cargo test`
+                .is_test(true)
+                // Ignore errors initializing the logger if tests race to configure it
+                .try_init();
+        });
+    }
 
     fn calc_rms(x: &[f32]) -> f32 {
         let n = x.len() as f32;
@@ -1975,6 +2018,7 @@ mod tests {
     pub fn test_cached_valid_dataset() -> Result<()> {
         use std::collections::BTreeMap;
 
+        setup();
         seed_from_u64(42);
         let fft_size = 960;
         let hop_size = Some(480);
@@ -1988,7 +2032,7 @@ mod tests {
             if item.is_dir()
                 && item.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")
             {
-                println!("Removing existing cache '{:?}'", item);
+                info!("Removing existing cache '{:?}'", item);
                 fs::remove_dir_all(item)?;
             }
         }
@@ -2005,9 +2049,8 @@ mod tests {
             .build_fft_dataset()?;
         let ds_len = val_ds.len();
         let mut mixture_cache = BTreeMap::new();
-        dbg!(ds_len);
+        info!("Dataset length: {}", ds_len);
         for seed in [42, 43] {
-            dbg!(seed);
             for _epoch in 0..2 {
                 val_ds.set_seed(seed);
                 if val_ds.need_generate_keys() {
@@ -2017,7 +2060,7 @@ mod tests {
                     let sample = val_ds.get_sample(idx, Some(seed + idx as u64))?;
                     let key = (seed, idx);
                     if let Some(cached_noisy) = mixture_cache.get(&key) {
-                        println!("Found sample {:?} in cache", key);
+                        info!("Found sample {:?} in cache", key);
                         assert_eq!(sample.noisy, cached_noisy);
                     } else {
                         mixture_cache.insert(key, sample.noisy.clone());

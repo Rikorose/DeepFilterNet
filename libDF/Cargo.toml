@@ -27,6 +27,7 @@ default = []
 
 transforms = ["thiserror", "ndarray"]
 dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel", "serde_json", "serde", "hound", "rubato", "roots"]
+dataset_timings = []
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
 cache = ["sled", "bincode"]
@@ -35,6 +36,7 @@ cache = ["sled", "bincode"]
 rustfft = "^6.0.1"
 realfft = "^3.0.0"
 num-complex = { version = "^0.4", features=["serde"] }
+log = { version = "0.4", features = ["std"] }
 rand = { version="0.8", optional=true }
 rubato = { version="0.11", optional=true }
 roots = { version="0.0.7", optional=true }
@@ -57,6 +59,7 @@ bincode = { version = "2.0.0-rc", default-features = false, features = ["std", "
 [dev-dependencies]
 rand = "0.8"
 rstest = "0.12"
+env_logger = "0.9"
 
 [package.metadata.deb]
 assets = [

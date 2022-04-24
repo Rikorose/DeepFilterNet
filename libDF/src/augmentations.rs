@@ -1,4 +1,7 @@
 use std::mem::MaybeUninit;
+use std::ops::Range;
+#[cfg(feature = "dataset_timings")]
+use std::time::Instant;
 
 use ndarray::{prelude::*, Slice};
 use rand::{distributions::uniform::Uniform, Rng};
@@ -36,6 +39,7 @@ pub trait Transform {
     where
         Self: Sized;
     fn box_clone(&self) -> Box<dyn Transform + Send>;
+    fn name(&self) -> &str;
 }
 
 impl Clone for Box<dyn Transform> {
@@ -46,13 +50,21 @@ impl Clone for Box<dyn Transform> {
 
 pub struct Compose {
     transforms: Vec<Box<dyn Transform + Send>>,
+    log_timings: bool,
 }
 unsafe impl Send for Compose {}
 unsafe impl Sync for Compose {}
 
 impl Compose {
     pub fn new(transforms: Vec<Box<dyn Transform + Send>>) -> Self {
-        Compose { transforms }
+        Compose {
+            transforms,
+            log_timings: false,
+        }
+    }
+
+    pub fn log_timings(&mut self) {
+        self.log_timings = true
     }
 
     pub fn append(&mut self, t: Box<dyn Transform + Send>) {
@@ -60,8 +72,28 @@ impl Compose {
     }
 
     pub fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
+        #[cfg(feature = "dataset_timings")]
+        let mut t0 = Instant::now();
+        #[cfg(feature = "dataset_timings")]
+        let mut timings = Vec::new();
         for t in self.transforms.iter() {
             t.transform(x)?;
+            #[cfg(feature = "dataset_timings")]
+            {
+                let t1 = Instant::now();
+                let d = (t1 - t0).as_micros();
+                if d > 100 {
+                    timings.push(format!("{}: {} ms", t.name(), d / 1000));
+                }
+                t0 = t1;
+            }
+        }
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) && !timings.is_empty() {
+            log::trace!(
+                "Calculated augmentation transforms in {:?}",
+                timings.join(", ")
+            );
         }
         Ok(())
     }
@@ -70,6 +102,7 @@ impl Clone for Compose {
     fn clone(&self) -> Self {
         Compose {
             transforms: self.transforms.iter().map(|t| t.box_clone()).collect(),
+            log_timings: self.log_timings,
         }
     }
 }
@@ -107,6 +140,9 @@ impl Transform for RandLFilt {
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandLFilt"
     }
 }
 
@@ -176,6 +212,9 @@ impl Transform for RandEQ {
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandEQ"
     }
 }
 
@@ -295,29 +334,37 @@ impl Transform for RandResample {
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
+    fn name(&self) -> &str {
+        "RandResample"
+    }
 }
 
 #[derive(Clone)]
 pub struct RandClipping {
     prob: f32,
-    db_low: f32,
-    db_high: f32,
+    db_range: Option<Range<f32>>,
+    c_range: Option<Range<f32>>,
     eps: f32,
     eps_c: f32,
 }
 impl RandClipping {
-    pub fn new(p: f32, db_low: f32, db_high: f32, eps: f32, convergence_eps: f32) -> Self {
+    pub fn new(p: f32, eps: f32, convergence_eps: f32) -> Self {
         RandClipping {
             prob: p,
-            db_low,
-            db_high,
+            db_range: None,
+            c_range: None,
             eps,
             eps_c: convergence_eps,
         }
     }
-    pub fn with_snr(mut self, db_low: f32, db_high: f32) -> Self {
-        self.db_low = db_low;
-        self.db_high = db_high;
+    pub fn with_snr(mut self, db_range: Range<f32>) -> Self {
+        self.db_range = Some(db_range);
+        self.c_range = None;
+        self
+    }
+    pub fn with_c(mut self, c_range: Range<f32>) -> Self {
+        self.db_range = None;
+        self.c_range = Some(c_range);
         self
     }
     fn clip_inplace(&self, x: &mut Array2<f32>, c: f32) {
@@ -341,19 +388,27 @@ impl Transform for RandClipping {
         if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
             return Ok(());
         }
-        let target_snr = if self.db_low >= self.db_high {
-            self.db_low
-        } else {
-            rng.gen_range(self.db_low..self.db_high)
-        };
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
-        let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
-        let c = match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
-            Ok(c) => dbg!(c),
-            Err(e) => {
-                eprintln!("RandClipping: Failed to find root: {:?}", e);
-                dbg!(max, f(0.01 * max), f(0.99 * max));
-                return Ok(());
+        let c = if let Some(db_range) = self.db_range.as_ref() {
+            let target_snr = if db_range.start >= db_range.end {
+                db_range.start
+            } else {
+                rng.gen_range(db_range.start..db_range.end)
+            };
+            let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
+            match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("RandClipping: Failed to find root: {:?}", e);
+                    return Ok(());
+                }
+            }
+        } else {
+            let c_range = self.c_range.as_ref().unwrap();
+            if c_range.start >= c_range.end {
+                c_range.start
+            } else {
+                rng.gen_range(c_range.start * max..c_range.end * max)
             }
         };
         self.clip_inplace(x, c);
@@ -362,14 +417,17 @@ impl Transform for RandClipping {
     fn default_with_prob(p: f32) -> Self {
         RandClipping {
             prob: p,
-            db_low: 0.5,
-            db_high: 3.0,
+            db_range: None,
+            c_range: Some(0.01..0.25),
             eps: 1e-10,
             eps_c: 0.001,
         }
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandClipping"
     }
 }
 
@@ -393,6 +451,9 @@ impl Transform for RandRemoveDc {
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandRemoveDc"
     }
 }
 
@@ -706,12 +767,19 @@ mod tests {
         let ch = test_sample.len_of(Axis(0)) as u16;
         // Test with 3dB
         let tsnr = 3.;
-        let transform = RandClipping::new(1.0, tsnr, tsnr, 1e-10, 0.001);
+        let transform = RandClipping::new(1.0, 1e-10, 0.001).with_snr(tsnr..tsnr);
         transform.transform(&mut test_sample_c)?;
         let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
         dbg!(tsnr, resulting_snr);
         write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         assert!(resulting_snr - tsnr < 0.01);
+
+        let mut test_sample_c = test_sample.clone();
+        let c = 0.01;
+        let transform = RandClipping::new(1.0, 1e-10, 0.001).with_c(c..c);
+        transform.transform(&mut test_sample_c)?;
+        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
+        dbg!(c, resulting_snr);
         Ok(())
     }
 }
