@@ -11,7 +11,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Application Frameworks",
   "Topic :: Utilities",
   "Programming Language :: Rust",
-  "Programming Language :: Python"
+  "Programming Language :: Python",
 ]
 license = "MIT"
 packages = [{ include = "df" }]
@@ -32,7 +32,7 @@ icecream = { version = ">=2,<3", optional = true }
 pystoi = { version = "^0.3", optional = true }
 pesq = { version = "^0.0.3", optional = true }
 scipy = { version = "^1", optional = true }
-semetrics = {git = "https://github.com/usimarit/semetrics.git", optional = true}
+semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true }
 
 [tool.poetry.extras]
 train = ["deepfilterdataloader", "icecream"]

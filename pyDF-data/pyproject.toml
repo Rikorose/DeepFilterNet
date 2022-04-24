@@ -1,9 +1,7 @@
 [project]
 name = "DeepFilterDataLoader"
 version = "0.1.11-pre"
-classifiers = [
-    "Programming Language :: Rust"
-]
+classifiers = ["Programming Language :: Rust"]
 requires-python = ">=3.7"
 dependencies = ["numpy >= 1.20"]
 
