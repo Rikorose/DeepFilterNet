@@ -422,7 +422,8 @@ pub struct DatasetBuilder {
     global_sampling_f: Option<f32>,
     snrs: Option<Vec<i8>>,
     gains: Option<Vec<i8>>,
-    cache_valid: Option<f32>,
+    cache_valid: bool,
+    cache_valid_max_gb: Option<f32>,
     num_threads: Option<usize>,
     logger: Option<Sender<(LogLevel, String)>>,
 }
@@ -445,7 +446,8 @@ impl DatasetBuilder {
             global_sampling_f: None,
             snrs: None,
             gains: None,
-            cache_valid: None,
+            cache_valid: false,
+            cache_valid_max_gb: None,
             num_threads: None,
             logger: None,
         }
@@ -471,7 +473,7 @@ impl DatasetBuilder {
         #[cfg(feature = "cache")]
         let cache = {
             let split = self.datasets.unwrap().split;
-            if self.cache_valid.is_some() && split == Split::Valid {
+            if self.cache_valid && split == Split::Valid {
                 let ds_path = Path::new(&self.ds_dir);
                 let hash = {
                     let mut hash_vec: Vec<u64> =
@@ -492,7 +494,7 @@ impl DatasetBuilder {
                     &cache_path,
                     hash,
                     ds.len(),
-                    self.cache_valid,
+                    self.cache_valid_max_gb,
                 )?)
             } else {
                 None
@@ -703,7 +705,8 @@ impl DatasetBuilder {
     }
     /// Use a cache for validation set. If `max_gb` is None use `DF_CACHE_MAX_GB` env is used.
     pub fn cache_valid_dataset(mut self, max_gb: Option<f32>) -> Self {
-        self.cache_valid = Some(max_gb.unwrap_or_default());
+        self.cache_valid = true;
+        self.cache_valid_max_gb = max_gb;
         self
     }
     pub fn add_logger(mut self, logger: Sender<(LogLevel, String)>) -> Self {
