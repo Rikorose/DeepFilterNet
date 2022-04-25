@@ -77,7 +77,10 @@ impl Compose {
         #[cfg(feature = "dataset_timings")]
         let mut timings = Vec::new();
         for t in self.transforms.iter() {
-            t.transform(x)?;
+            match t.transform(x) {
+                Ok(()) => (),
+                Err(e) => log::error!("{:?}", e),
+            };
             #[cfg(feature = "dataset_timings")]
             {
                 let t1 = Instant::now();

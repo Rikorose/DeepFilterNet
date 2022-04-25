@@ -19,6 +19,7 @@ deep_filter = { features = [
 pyo3 = { version = "^0.16", default_features = true, features = [
   "extension-module",
 ] }
+log = { version = "0.4", features = ["std"] }
 crossbeam-channel = "^0.5"
 numpy = "^0.16"
 ndarray = "^0.15"

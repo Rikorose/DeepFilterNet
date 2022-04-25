@@ -1,9 +1,10 @@
 import atexit
+import os
 import queue
 import threading
 import time
 import warnings
-from typing import Iterator, List, Optional, Tuple, Union
+from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -80,7 +81,7 @@ class PytorchDataLoader:
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
         overfit: bool = False,  # Overfit on one epoch
-        cache_valid: Union[bool, float, None] = False,  # Cache validiation dataset, float is max GB
+        cache_valid: float = False,  # Cache validiation dataset
         seed: int = 0,
         min_nb_erb_freqs: Optional[int] = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
@@ -94,9 +95,6 @@ class PytorchDataLoader:
         prefetch_loader = batch_size * (num_workers or 1)
         logger.info(f"Initializing dataloader with data directory {ds_dir}")
         assert self.fft_size is not None, "No fft_size provided"
-        if cache_valid is not None:
-            if isinstance(cache_valid, bool):
-                cache_valid = 0.0
         self.loader = _FdDataLoader(
             ds_dir,
             ds_config,
@@ -121,8 +119,7 @@ class PytorchDataLoader:
             snrs=snrs,
             gains=gains,
         )
-        for message in self.loader.get_log_messages():
-            logger.log(message[0], "Dataloader: " + message[1])
+        self.log_dataloader_msgs()
         self.prefetch = prefetch
         self.pin_memory = pin_memory if torch.cuda.is_available() else False
         self.idx = 0
@@ -218,17 +215,27 @@ class PytorchDataLoader:
         if self.log_timings:
             self.timings_py.append(time.time() - t0)
             self.timings_rs.append(batch.timings)
-        for message in self.loader.get_log_messages():
-            logger.log(message[0], "Dataloader: " + message[1])
+        self.log_dataloader_msgs()
         return batch
+
+    def log_dataloader_msgs(self):
+        # message has type (level: str, message: str, module: Optional[str], lineno: Optional[int])
+        for (level, msg, module, lineno) in self.loader.get_log_messages():
+            # with logger.contextualize(module: "Dataloader", file=file, lineno=lineno):
+            def patch(r):
+                r["file"] = {"file": os.path.basename(module) + ".rs", "path": "pyDF-data/src/"}
+                r["module"] = module
+                r["function"] = module
+                r["line"] = lineno
+
+            logger.patch(patch).log(level, msg)
 
     def iter_epoch(self, split: str, seed: int) -> Iterator[Batch]:
         self.idx = 0
         # Initializes workers. This needs to be done before pin_memory thread is
         # started via setup_data_queue().
         self.loader.start_epoch(split, seed)
-        for message in self.loader.get_log_messages():
-            logger.log(message[0], "Dataloader: " + message[1])
+        self.log_dataloader_msgs()
         if self.log_timings:
             self.timings_py = []
             self.timings_rs = []

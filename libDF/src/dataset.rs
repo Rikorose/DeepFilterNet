@@ -12,7 +12,6 @@ use std::time::SystemTime;
 
 #[cfg(feature = "flac")]
 use claxon;
-use crossbeam_channel::Sender;
 use hdf5::{types::VarLenUnicode, File};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
@@ -211,7 +210,7 @@ impl DatasetConfigJson {
             if let Some(key_cache) = keys.iter().find(|c| c.filename == cfg.filename()) {
                 cfg.set_keys(key_cache.clone())?;
             } else {
-                eprintln!("Could not find cached keys for {}", cfg.filename());
+                log::warn!("Could not find cached keys for {}", cfg.filename());
             }
         }
         Ok(())
@@ -425,7 +424,6 @@ pub struct DatasetBuilder {
     cache_valid: bool,
     cache_valid_max_gb: Option<f32>,
     num_threads: Option<usize>,
-    logger: Option<Sender<(LogLevel, String)>>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -449,7 +447,6 @@ impl DatasetBuilder {
             cache_valid: false,
             cache_valid_max_gb: None,
             num_threads: None,
-            logger: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -484,12 +481,7 @@ impl DatasetBuilder {
                     calculate_hash(&hash_vec)
                 };
                 let cache_path = ds_path.join(format!("{}_cache_{}", split, hash));
-                if let Some(logger) = self.logger.as_ref() {
-                    logger.send((
-                        LogLevel::Info,
-                        format!("Using validation dataset cache at {:?}", &cache_path),
-                    ))?;
-                }
+                log::info!("Using validation dataset cache at {:?}", &cache_path);
                 Some(ValidCache::new(
                     &cache_path,
                     hash,
@@ -538,12 +530,7 @@ impl DatasetBuilder {
         datasets.hdf5s.par_iter().try_for_each(|cfg| -> Result<()> {
             let path = ds_path.join(cfg.filename());
             if (!path.is_file()) && path.read_link().is_err() {
-                if let Some(logger) = self.logger.as_ref() {
-                    logger.send((
-                        LogLevel::Warning,
-                        format!("Dataset {:?} not found. Skipping.", path),
-                    ))?;
-                }
+                log::warn!("Dataset {:?} not found. Skipping.", path);
                 return Ok(());
             }
             let mut cfg = cfg.clone();
@@ -576,18 +563,13 @@ impl DatasetBuilder {
             }
             ds_keys.push((ds.dstype, i, keys));
             config.push(cfg);
-            if let Some(logger) = self.logger.as_ref() {
-                logger.send((
-                    LogLevel::Debug,
-                    format!(
-                        "Found {} {} dataset {} with {} samples",
-                        &ds.dstype,
-                        datasets.split,
-                        ds.name(),
-                        ds.len()
-                    ),
-                ))?;
-            }
+            log::debug!(
+                "Found {} {} dataset {} with {} samples",
+                &ds.dstype,
+                datasets.split,
+                ds.name(),
+                ds.len()
+            );
             hdf5_handles.push(ds);
             i += 1;
         }
@@ -612,12 +594,7 @@ impl DatasetBuilder {
         ]);
         let p_reverb = self.p_reverb.unwrap_or(0.);
         if p_reverb > 0. && !has_rirs {
-            if let Some(logger) = self.logger.as_ref() {
-                logger.send((
-                    LogLevel::Warning,
-                    "Warning: Reverb augmentation enabled but no RIRs provided!".to_string(),
-                ))?;
-            }
+            log::warn!("Reverb augmentation enabled but no RIRs provided!",);
         }
         let reverb = RandReverbSim::new(p_reverb, self.sr);
         let seed = self.seed.unwrap_or(0);
@@ -639,7 +616,6 @@ impl DatasetBuilder {
             reverb,
             seed,
             ds_len,
-            logger: self.logger,
         })
     }
     pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
@@ -709,10 +685,6 @@ impl DatasetBuilder {
         self.cache_valid_max_gb = max_gb;
         self
     }
-    pub fn add_logger(mut self, logger: Sender<(LogLevel, String)>) -> Self {
-        self.logger = Some(logger);
-        self
-    }
 }
 
 pub struct FftDataset {
@@ -744,10 +716,7 @@ impl Dataset<Complex32> for FftDataset {
         let hash = if let Some(cache) = self.cache.as_ref() {
             let hash = calculate_hash(&(idx, seed));
             if let Some(s) = cache.load_sample(hash)? {
-                if let Some(logger) = self.ds.logger.as_ref() {
-                    let msg = format!("Found cached sample for idx {idx} (hash: {hash})");
-                    logger.send((LogLevel::Debug, msg)).unwrap_or(());
-                }
+                log::trace!("Found cached sample for idx {} (hash: {})", idx, hash);
                 return Ok(s);
             }
             hash
@@ -791,10 +760,7 @@ impl Dataset<Complex32> for FftDataset {
         };
         #[cfg(feature = "cache")]
         if let Some(cache) = self.cache.as_ref() {
-            if let Some(logger) = self.ds.logger.as_ref() {
-                let msg = format!("Caching sample for idx {idx} (hash: {hash})");
-                logger.send((LogLevel::Debug, msg)).unwrap_or(());
-            }
+            log::trace!("Caching sample for idx {} (hash: {})", idx, hash);
             cache.cache_sample(hash, &sample)?;
         }
         #[cfg(feature = "dataset_timings")]
@@ -826,12 +792,7 @@ impl Dataset<Complex32> for FftDataset {
             match cache.flush() {
                 Ok(_) => (),
                 Err(e) => {
-                    let msg = format!("Failed to flush cache: {:?}", e);
-                    if let Some(logger) = self.ds.logger.as_ref() {
-                        logger.send((LogLevel::Warning, msg)).unwrap()
-                    } else {
-                        eprintln!("{}", msg);
-                    }
+                    log::warn!("Failed to flush cache: {:?}", e);
                 }
             }
         }
@@ -861,7 +822,6 @@ pub struct TdDataset {
     reverb: RandReverbSim, // Separate reverb transform that may be applied to both speech and noise
     seed: u64,
     ds_len: usize,
-    logger: Option<Sender<(LogLevel, String)>>,
 }
 
 impl TdDataset {
@@ -912,31 +872,23 @@ impl TdDataset {
     fn read_max_len(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
         let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
             Err(e) => {
-                let msg = format!(
+                log::warn!(
                     "Error during {} read_max_len() for key '{}' from dataset {}: {:?}",
                     self.ds_type(idx),
                     key,
                     self.ds_name(idx),
                     e
                 );
-                eprintln!("{}", &msg);
-                if let Some(logger) = self.logger.as_ref() {
-                    logger.send((LogLevel::Warning, msg)).unwrap_or(());
-                }
                 let e_str = e.to_string();
                 if e_str.contains("inflate") || e_str.contains("Flac") {
                     // Get a different speech then
                     let idx = thread_rng()?.gen_range(0..self.len());
                     let (sp_idx, sp_key) = &self.sp_keys[idx];
-                    let msg = format!(
+                    log::warn!(
                         "Returning a different speech sample from {} due to {}",
                         self.ds_name(*sp_idx),
                         e_str
                     );
-                    eprintln!("{}", &msg);
-                    if let Some(logger) = self.logger.as_ref() {
-                        logger.send((LogLevel::Warning, msg)).unwrap_or(());
-                    }
                     self.read_max_len(*sp_idx, sp_key)?
                 } else {
                     return Err(e);
@@ -1021,11 +973,7 @@ impl Dataset<f32> for TdDataset {
         for (ns_idx, ns_key) in &ns_ids {
             let mut ns = match self.read_max_len(*ns_idx, ns_key) {
                 Err(e) => {
-                    let msg = format!("Error during noise reading get_sample(): {}", e);
-                    eprintln!("{}", &msg);
-                    if let Some(logger) = self.logger.as_ref() {
-                        logger.send((LogLevel::Warning, msg)).unwrap_or(());
-                    }
+                    log::warn!("Error during noise reading get_sample(): {}", e);
                     continue;
                 }
                 Ok(n) => n,
@@ -1442,7 +1390,7 @@ impl Hdf5Dataset {
                 Ok(Some(n)) => n,
                 Ok(None) => break,
                 Err(e) => {
-                    eprintln!("Error decoding flac dataset {} {:?}", key, e);
+                    log::warn!("Error decoding flac dataset {} {:?}", key, e);
                     if e.to_string().contains("CRC") {
                         break;
                     } else {
@@ -1700,47 +1648,6 @@ fn mix_audio_signal(
         mixture *= f;
     }
     Ok((clean_out, noise, mixture))
-}
-
-#[derive(Clone, Debug)]
-pub enum LogLevel {
-    Debug,
-    Info,
-    Warning,
-}
-impl fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Debug => write!(f, "DEBUG"),
-            Self::Info => write!(f, "INFO"),
-            Self::Warning => write!(f, "WARNING"),
-        }
-    }
-}
-impl From<LogLevel> for String {
-    fn from(l: LogLevel) -> String {
-        String::from(&l)
-    }
-}
-impl From<&LogLevel> for String {
-    fn from(l: &LogLevel) -> String {
-        match l {
-            LogLevel::Debug => "DEBUG".to_string(),
-            LogLevel::Info => "INFO".to_string(),
-            LogLevel::Warning => "WARNING".to_string(),
-        }
-    }
-}
-
-impl From<&str> for LogLevel {
-    fn from(loglevel: &str) -> Self {
-        match loglevel.to_lowercase().as_str() {
-            "debug" => LogLevel::Debug,
-            "info" => LogLevel::Info,
-            "warning" => LogLevel::Warning,
-            s => panic!("LogLevel '{}' does not exist.", s),
-        }
-    }
 }
 
 #[cfg(test)]
