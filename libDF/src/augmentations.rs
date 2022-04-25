@@ -393,11 +393,7 @@ impl Transform for RandClipping {
         }
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
         let c = if let Some(db_range) = self.db_range.as_ref() {
-            let target_snr = if db_range.start >= db_range.end {
-                db_range.start
-            } else {
-                rng.uniform(db_range.start, db_range.end)
-            };
+            let target_snr = rng.uniform(db_range.start, db_range.end);
             let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
             match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
                 Ok(c) => c,
@@ -408,11 +404,7 @@ impl Transform for RandClipping {
             }
         } else {
             let c_range = self.c_range.as_ref().unwrap();
-            if c_range.start >= c_range.end {
-                c_range.start
-            } else {
-                rng.uniform_inclusive(c_range.start * max, c_range.end * max)
-            }
+            rng.uniform_inclusive(c_range.start * max, c_range.end * max)
         };
         self.clip_inplace(x, c);
         Ok(())
