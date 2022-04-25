@@ -70,6 +70,22 @@ impl SeededRng {
     pub fn log_uniform(&mut self, low: f32, high: f32) -> f32 {
         self.gen_range(low.ln()..=high.ln()).exp()
     }
+    #[inline]
+    pub fn uniform<T: SampleUniform + PartialOrd>(&mut self, low: T, high: T) -> T {
+        if low >= high {
+            low
+        } else {
+            self.gen_range(low..high)
+        }
+    }
+    #[inline]
+    pub fn uniform_inclusive<T: SampleUniform + PartialOrd>(&mut self, low: T, high: T) -> T {
+        if low >= high {
+            low
+        } else {
+            self.gen_range(low..=high)
+        }
+    }
 }
 
 pub(crate) fn rng_uniform<T>(n: usize, low: T, high: T) -> Result<Vec<T>>

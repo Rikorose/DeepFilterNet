@@ -1,7 +1,6 @@
 use std::{cell::UnsafeCell, path::Path, rc::Rc};
 
 use bincode::error::{DecodeError, EncodeError};
-use rand::Rng;
 use thiserror::Error;
 
 use crate::{dataset::Sample, util::thread_rng, Complex32};
@@ -112,7 +111,7 @@ impl ValidCache {
         let total_estimate = avg_size * self.n_samples as f32;
         if total_estimate > self.max_size {
             let p = self.max_size / total_estimate;
-            return Ok(p >= thread_rng()?.gen_range(0f32..1f32));
+            return Ok(p >= thread_rng()?.uniform(0f32, 1f32));
         }
         // If had an io error; return false
         Ok(!self.had_io_error()?)

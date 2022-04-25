@@ -127,7 +127,7 @@ impl RandLFilt {
 }
 impl Transform for RandLFilt {
     fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
-        if self.prob == 0. || (self.prob < 1. && thread_rng()?.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && thread_rng()?.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let a: [f32; 2] = self.sample_ab()?;
@@ -175,13 +175,13 @@ impl Transform for RandEQ {
             });
         }
         let mut rng = thread_rng()?;
-        if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         for _ in 0..self.n_freqs {
             let freq = rng.log_uniform(self.f_low as f32, self.f_high as f32);
-            let gain = rng.gen_range(-self.gain_db..=self.gain_db) as f32;
-            let q = rng.gen_range(self.q_low..self.q_high);
+            let gain = rng.uniform_inclusive(-self.gain_db, self.gain_db) as f32;
+            let q = rng.uniform(self.q_low, self.q_high);
             let w0 = 2. * std::f32::consts::PI * freq / self.sr.unwrap() as f32;
             let amp = (gain / 40. * std::f32::consts::LN_10).exp();
             let alpha = w0.sin() / 2. / q;
@@ -304,12 +304,12 @@ impl Transform for RandResample {
         }
         let mut rng = thread_rng()?;
         let sr = self.sr.unwrap();
-        if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let ch = x.len_of(Axis(0));
         let len = x.len_of(Axis(1));
-        let new_sr = rng.gen_range(self.r_low..=self.r_high) * sr as f32;
+        let new_sr = rng.uniform_inclusive(self.r_low, self.r_high) * sr as f32;
         // round so we get a better gcd
         let new_sr = ((new_sr / 500.).round() * 500.) as usize;
         if new_sr == sr {
@@ -388,7 +388,7 @@ impl RandClipping {
 impl Transform for RandClipping {
     fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
         let mut rng = thread_rng()?;
-        if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
@@ -396,7 +396,7 @@ impl Transform for RandClipping {
             let target_snr = if db_range.start >= db_range.end {
                 db_range.start
             } else {
-                rng.gen_range(db_range.start..db_range.end)
+                rng.uniform(db_range.start, db_range.end)
             };
             let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
             match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
@@ -411,7 +411,7 @@ impl Transform for RandClipping {
             if c_range.start >= c_range.end {
                 c_range.start
             } else {
-                rng.gen_range(c_range.start * max..c_range.end * max)
+                rng.uniform_inclusive(c_range.start * max, c_range.end * max)
             }
         };
         self.clip_inplace(x, c);
@@ -440,7 +440,7 @@ pub struct RandRemoveDc {
 }
 impl Transform for RandRemoveDc {
     fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
-        if self.prob == 0. || (self.prob < 1. && thread_rng()?.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && thread_rng()?.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let mean = x.sum() / x.len() as f32;
@@ -605,20 +605,20 @@ impl RandReverbSim {
             }
         };
         let mut rng = thread_rng()?;
-        let apply_speech = self.prob_speech > rng.gen_range(0f32..1f32);
-        let apply_noise = self.prob_noise > rng.gen_range(0f32..1f32);
+        let apply_speech = self.prob_speech > rng.uniform(0f32, 1f32);
+        let apply_noise = self.prob_noise > rng.uniform(0f32, 1f32);
         if !(apply_speech || apply_noise) {
             return Ok(None);
         }
         let orig_len = speech.len_of(Axis(1));
         // Maybe resample RIR as augmentation
-        if self.prob_resample > rng.gen_range(0f32..1f32) {
-            let new_sr: f32 = rng.gen_range(0.8..1.2) * self.sr as f32;
+        if self.prob_resample > rng.uniform(0f32, 1f32) {
+            let new_sr: f32 = rng.uniform(0.8, 1.2) * self.sr as f32;
             let new_sr = ((new_sr / 500.).round() * 500.) as usize;
             rir = resample(&rir, self.sr, new_sr, Some(512))?;
         }
-        if self.prob_decay > rng.gen_range(0f32..1f32) {
-            let rt60 = rng.gen_range(0.2..1.);
+        if self.prob_decay > rng.uniform(0f32, 1f32) {
+            let rt60 = rng.uniform(0.2, 1.);
             rir = self.supress_late(rir, self.sr, 0., rt60, false)?;
         }
         rir = self.trim(rir)?;

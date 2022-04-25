@@ -15,7 +15,6 @@ use claxon;
 use hdf5::{types::VarLenUnicode, File};
 use ndarray::{prelude::*, Slice};
 use rand::prelude::{IteratorRandom, SliceRandom};
-use rand::Rng;
 use rayon::prelude::*;
 use realfft::num_traits::Zero;
 use serde::{Deserialize, Serialize};
@@ -839,7 +838,7 @@ impl TdDataset {
             let max_len = sample_len.min(l_sr);
             let s = sample_len as i64 - max_len as i64;
             if s > 0 {
-                let s = thread_rng()?.gen_range(0..(s as usize));
+                let s = thread_rng()?.uniform(0, s as usize);
                 Some(s..s + l_sr)
             } else {
                 None
@@ -882,7 +881,7 @@ impl TdDataset {
                 let e_str = e.to_string();
                 if e_str.contains("inflate") || e_str.contains("Flac") {
                     // Get a different speech then
-                    let idx = thread_rng()?.gen_range(0..self.len());
+                    let idx = thread_rng()?.uniform(0, self.len());
                     let (sp_idx, sp_key) = &self.sp_keys[idx];
                     log::warn!(
                         "Returning a different speech sample from {} due to {}",
@@ -932,7 +931,7 @@ impl Dataset<f32> for TdDataset {
         let mut max_freq = self.max_freq(*sp_idx)?;
         while speech.len_of(Axis(1)) < self.max_sample_len()
             && self.p_fill_speech > 0.0
-            && self.p_fill_speech > rng.gen_range(0f32..1f32)
+            && self.p_fill_speech > rng.uniform(0f32, 1f32)
         {
             // If too short, maybe sample another speech sample
             let (sp_idx, sp_key) = &self.sp_keys.choose(&mut rng).unwrap();
@@ -966,7 +965,7 @@ impl Dataset<f32> for TdDataset {
             ch = 1;
         }
         // Sample 2-5 noises and augment each
-        let n_noises = rng.gen_range(2..6);
+        let n_noises = rng.uniform(2, 6);
         let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng, n_noises);
         let mut noises = Vec::with_capacity(n_noises);
         let mut noise_gains = Vec::with_capacity(n_noises);
@@ -1293,7 +1292,7 @@ impl Hdf5Dataset {
             }
             2 => match ch_idx {
                 Some(-1) => {
-                    let idx = thread_rng()?.gen_range(0..x.len_of(Axis(ch_dim)));
+                    let idx = thread_rng()?.uniform(0, x.len_of(Axis(ch_dim)));
                     x.slice_axis_inplace(Axis(ch_dim), Slice::from(idx..idx + 1));
                     x
                 }
@@ -1334,7 +1333,7 @@ impl Hdf5Dataset {
                 2 => match channel {
                     Some(-1) => {
                         let nch = ds.shape()[1];
-                        ds.read_slice(s![thread_rng()?.gen_range(0..nch), r])
+                        ds.read_slice(s![thread_rng()?.uniform(0, nch), r])
                     } // rand ch
                     Some(channel) => ds.read_slice(s![channel, r]), // specified channel
                     None => ds.read_slice(s![.., r]),               // all channels
@@ -1572,17 +1571,17 @@ fn combine_noises(
         }
         let too_large = ns.len_of(Axis(1)).checked_sub(len);
         if let Some(too_large) = too_large {
-            let start: usize = rng.gen_range(0..too_large);
+            let start: usize = rng.uniform(0, too_large);
             ns.slice_collapse(s![.., start..start + len]);
         }
     }
     // Adjust number of noise channels to clean channels
     for ns in noises.iter_mut() {
         while ns.len_of(Axis(0)) > ch {
-            ns.remove_index(Axis(0), rng.gen_range(0..ns.len_of(Axis(0))))
+            ns.remove_index(Axis(0), rng.uniform(0, ns.len_of(Axis(0))))
         }
         while ns.len_of(Axis(0)) < ch {
-            let r = rng.gen_range(0..ns.len_of(Axis(0)));
+            let r = rng.uniform(0, ns.len_of(Axis(0)));
             let slc = ns.slice(s![r..r + 1, ..]).to_owned();
             ns.append(Axis(0), slc.view())?;
         }
