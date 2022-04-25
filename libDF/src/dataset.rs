@@ -578,19 +578,28 @@ impl DatasetBuilder {
         let snrs = self.snrs.unwrap_or_else(|| vec![-5, 0, 5, 10, 20, 40]);
         let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
-        let sp_transforms = Compose::new(vec![
+        let ds_split = datasets.split;
+        let mut sp_transforms = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.1).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
-            Box::new(RandClipping::default_with_prob(0.05).with_c(0.01..0.9)),
         ]);
+        if ds_split == Split::Train {
+            sp_transforms.push(Box::new(
+                RandClipping::default_with_prob(0.05).with_c(0.01..0.9),
+            ))
+        }
         let ns_transforms = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.25).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
-            Box::new(RandClipping::default_with_prob(0.1).with_c(0.005..0.95)),
         ]);
+        if ds_split == Split::Train {
+            sp_transforms.push(Box::new(
+                RandClipping::default_with_prob(0.1).with_c(0.005..0.95),
+            ))
+        }
         let p_reverb = self.p_reverb.unwrap_or(0.);
         if p_reverb > 0. && !has_rirs {
             log::warn!("Reverb augmentation enabled but no RIRs provided!",);
@@ -603,7 +612,7 @@ impl DatasetBuilder {
             max_samples,
             sr: self.sr,
             ds_keys,
-            ds_split: datasets.split,
+            ds_split,
             sp_keys: Vec::new(),
             ns_keys: Vec::new(),
             rir_keys: Vec::new(),

@@ -67,7 +67,7 @@ impl Compose {
         self.log_timings = true
     }
 
-    pub fn append(&mut self, t: Box<dyn Transform + Send>) {
+    pub fn push(&mut self, t: Box<dyn Transform + Send>) {
         self.transforms.push(t);
     }
 
