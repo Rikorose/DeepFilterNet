@@ -485,7 +485,7 @@ def load_opt(
     logger.debug(f"Training with optimizer {opt}")
     if cp_dir is not None:
         try:
-            read_cp(opt, "opt", cp_dir)
+            read_cp(opt, "opt", cp_dir, log=False)
         except ValueError as e:
             logger.error(f"Could not load optimizer state: {e}")
     for group in opt.param_groups:
