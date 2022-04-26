@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Cursor};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
@@ -877,6 +877,8 @@ impl TdDataset {
     }
 
     fn read_max_len(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
             Err(e) => {
                 log::warn!(
@@ -903,6 +905,15 @@ impl TdDataset {
             }
             Ok(s) => s,
         };
+        #[cfg(feature = "dataset_timings")]
+        {
+            log::trace!(
+                "Loaded sample {} with codec {:?} in {} ms",
+                key,
+                self.ds_codec(idx),
+                (Instant::now() - t0).as_millis()
+            );
+        }
         debug_assert!(x.len_of(Axis(1)) <= self.max_samples);
         Ok(x)
     }
@@ -939,14 +950,6 @@ impl Dataset<f32> for TdDataset {
         let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
-        #[cfg(feature = "dataset_timings")]
-        {
-            log::trace!(
-                "Loaded speech with codec {:?} in {} ms",
-                self.ds_codec(*sp_idx),
-                (Instant::now() - t0).as_millis()
-            );
-        }
         self.sp_transforms.transform(&mut speech)?;
         let mut max_freq = self.max_freq(*sp_idx)?;
         while speech.len_of(Axis(1)) < self.max_sample_len()
@@ -989,8 +992,6 @@ impl Dataset<f32> for TdDataset {
         let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng, n_noises);
         let mut noises = Vec::with_capacity(n_noises);
         let mut noise_gains = Vec::with_capacity(n_noises);
-        #[cfg(feature = "dataset_timings")]
-        let t0n = Instant::now();
         for (ns_idx, ns_key) in &ns_ids {
             let mut ns = match self.read_max_len(*ns_idx, ns_key) {
                 Err(e) => {
@@ -999,14 +1000,6 @@ impl Dataset<f32> for TdDataset {
                 }
                 Ok(n) => n,
             };
-            #[cfg(feature = "dataset_timings")]
-            {
-                log::trace!(
-                    "Loaded noise with codec {:?} in {} ms",
-                    self.ds_codec(*ns_idx),
-                    (Instant::now() - t0n).as_millis()
-                );
-            }
             if ns.len_of(Axis(1)) < 10 {
                 continue;
             }
@@ -1300,13 +1293,27 @@ impl Hdf5Dataset {
         }
         Ok(absgp as usize)
     }
+    fn sample_len_from_ds(&self, ds: hdf5::Dataset) -> Result<usize> {
+        Ok(match self.codec.as_ref().unwrap_or(&Codec::PCM) {
+            Codec::PCM => *ds.shape().last().unwrap_or(&0),
+            Codec::Vorbis => self.sample_len_vorbis(ds)?,
+            Codec::FLAC => self.sample_len_flac(ds)?,
+        })
+    }
     pub fn sample_len(&self, key: &str) -> Result<usize> {
         let ds = self.group()?.dataset(key)?;
-        match self.codec.as_ref().unwrap_or(&Codec::PCM) {
-            Codec::PCM => Ok(*ds.shape().last().unwrap_or(&0)),
-            Codec::Vorbis => Ok(self.sample_len_vorbis(ds)?),
-            Codec::FLAC => self.sample_len_flac(ds),
-        }
+        let n = match ds.attr("n_samples") {
+            Ok(a) => {
+                let n: usize = a.read_1d()?[0];
+                if n < 100 {
+                    self.sample_len_from_ds(ds)?
+                } else {
+                    n
+                }
+            }
+            Err(_) => self.sample_len_from_ds(ds)?,
+        };
+        Ok(n)
     }
     fn match_ch<T, D: ndarray::Dimension>(
         &self,
@@ -1469,7 +1476,7 @@ impl Hdf5Dataset {
         channel: Option<isize>,
         r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
-        let out = match self.read_flac_byte_reader(key) {
+        let out = match self.read_flac_ds(key) {
             Ok(x) => x,
             Err(_) => self.read_flac_ds(key)?,
         };
@@ -1506,7 +1513,8 @@ impl Hdf5Dataset {
         r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
         let ds = self.group()?.dataset(key)?;
-        let mut srr = OggStreamReader::new(ds.as_byte_reader()?)?;
+        let encoded = ds.read_1d()?;
+        let mut srr = OggStreamReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
         let ch = srr.ident_hdr.audio_channels as usize;
         let len = if let Some(r) = r.as_ref() {
             srr.seek_absgp_pg(r.start as u64)?;
@@ -1519,7 +1527,7 @@ impl Hdf5Dataset {
             Err(e) => {
                 if r.is_some() {
                     // Undo the seek and just start from the beginning
-                    srr = OggStreamReader::new(ds.as_byte_reader()?).unwrap();
+                    srr = OggStreamReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
                     srr.read_dec_packet_itl().unwrap()
                 } else {
                     return Err(e.into());
@@ -1531,9 +1539,9 @@ impl Hdf5Dataset {
             out.append(&mut p);
             if let (Some(r), Some(pos)) = (r.as_ref(), srr.get_last_absgp().map(|p| p as usize)) {
                 if pos >= r.end {
-                    // In some rare curcumstances the decoding start is behind r.start.
-                    // Nor sure if this is an error on my end or on lewton's. Anyways we just
-                    // return a slightly delayed slice, therefore the max operation.
+                    // In some rare circumstances the decoding start is behind r.start. Not sure
+                    // if this is an error on my end or on lewton's (probably mine). Anyways, we
+                    // just return a slightly delayed slice, therefore the max operation.
                     out.truncate((out.len() - (pos - r.end) * ch).max((r.end - r.start) * ch));
                     debug_assert!(out.len() >= r.end - r.start);
                     break;
