@@ -74,8 +74,8 @@ impl ValidCache {
             .flush_every_ms(Some(10000))
             .open()?;
         let config = bincode::config::standard();
-        let max_gb = dbg!(std::env::var("DF_CACHE_MAX_GB")
-            .map(|s| s.parse::<f32>().expect("Failed to parse `DF_CACHE_MAX_GB` env variable")))
+        let max_gb = std::env::var("DF_CACHE_MAX_GB")
+            .map(|s| s.parse::<f32>().expect("Failed to parse `DF_CACHE_MAX_GB` env variable"))
             .unwrap_or_else(|_| max_gb.unwrap_or_default());
         log::info!(
             "Using validation dataset cache at {:?} (max size: {:?} GB)",
