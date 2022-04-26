@@ -25,7 +25,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
         logger.remove()
         level = level.upper()
         if level.lower() != "none":
-            log_format = Formatter(debug=level == "DEBUG").format
+            log_format = Formatter(debug=logger.level(level).no <= logger.level("DEBUG").no).format
             logger.add(
                 sys.stdout,
                 level=level,
