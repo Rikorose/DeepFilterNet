@@ -70,6 +70,7 @@ impl ValidCache {
         let db = sled::Config::new()
             .path(path)
             .use_compression(true)
+            .compression_factor(10)
             .flush_every_ms(Some(10000))
             .open()?;
         let config = bincode::config::standard();
