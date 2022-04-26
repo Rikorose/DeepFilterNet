@@ -81,7 +81,7 @@ class PytorchDataLoader:
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
         overfit: bool = False,  # Overfit on one epoch
-        cache_valid: float = False,  # Cache validiation dataset
+        cache_valid: bool = False,  # Cache validiation dataset
         seed: int = 0,
         min_nb_erb_freqs: Optional[int] = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
