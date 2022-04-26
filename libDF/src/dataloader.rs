@@ -339,7 +339,7 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
-        let mut t0 = Instant::now();
+        let t0 = Instant::now();
         let bs = self.batch_size(self.current_split);
         let mut timings = Vec::with_capacity(bs);
         let mut samples = Vec::with_capacity(bs);
@@ -355,14 +355,15 @@ impl DataLoader {
             }
             Some(r) => r,
         };
+        let mut ts0 = Instant::now();
         'outer: while self.cur_out_idx < target_idx {
             // Check if we have some buffered samples
             if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
                 ids.push(self.cur_out_idx);
                 samples.push(s);
-                let t1 = Instant::now();
-                timings.push((t1 - t0).as_secs_f32());
-                t0 = t1;
+                let ts1 = Instant::now();
+                timings.push((ts1 - ts0).as_secs_f32());
+                ts0 = ts1;
                 self.cur_out_idx += 1;
             } else {
                 // Or check worker threads
@@ -384,8 +385,8 @@ impl DataLoader {
                         if o_idx == self.cur_out_idx {
                             samples.push(s);
                             let t1 = Instant::now();
-                            timings.push((t1 - t0).as_secs_f32());
-                            t0 = t1;
+                            timings.push((t1 - ts0).as_secs_f32());
+                            ts0 = t1;
                             ids.push(o_idx);
                             self.cur_out_idx += 1;
                         } else {
@@ -396,6 +397,7 @@ impl DataLoader {
             }
             tries = 0;
         }
+        let t1 = Instant::now();
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
             assert!(self.cur_out_idx >= target_idx);
@@ -415,6 +417,13 @@ impl DataLoader {
             batch.timings = timings;
             Some(batch)
         };
+        let t2 = Instant::now();
+        #[cfg(feature = "dataset_timings")]
+        log::trace!(
+            "Returning batch in {} us, (got samples in {} us)",
+            (t2 - t0).as_micros(),
+            (t1 - t0).as_micros()
+        );
         Ok(out)
     }
 

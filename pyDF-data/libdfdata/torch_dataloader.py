@@ -88,6 +88,7 @@ class PytorchDataLoader:
         global_sampling_factor: Optional[float] = None,  # Additional over/undersampling of all ds
         snrs=None,  # Signal to noise ratios (SNRs) to generate. Defaults to [-5,0,5,10,20,40] dB
         gains=None,  # Additional gains applied to speech. Defaults to [-6,0,6] dB
+        log_level: Optional[str] = None,  # Log level for dataloader logging
     ):
         self.fft_size = fft_size
         self.batch_size = batch_size
@@ -118,6 +119,7 @@ class PytorchDataLoader:
             global_sampling_factor=global_sampling_factor,
             snrs=snrs,
             gains=gains,
+            log_level=log_level,
         )
         self.log_dataloader_msgs()
         self.prefetch = prefetch

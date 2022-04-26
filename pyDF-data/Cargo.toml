@@ -15,6 +15,7 @@ deep_filter = { features = [
   "vorbis",
   "flac",
   "cache",
+  "dataset_timings",
 ], path = "../libDF" }
 pyo3 = { version = "^0.16", default_features = true, features = [
   "extension-module",
