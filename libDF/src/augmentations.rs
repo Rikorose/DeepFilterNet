@@ -395,7 +395,7 @@ impl Transform for RandClipping {
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
         let c = if let Some(db_range) = self.db_range.as_ref() {
             let target_snr = rng.uniform(db_range.start, db_range.end);
-            let f = |c| self.snr(self.clip(x.view(), c).view(), x.view()) - target_snr;
+            let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
             match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
                 Ok(c) => c,
                 Err(e) => {
@@ -783,11 +783,10 @@ mod tests {
         let test_sample = reader.samples_arr2()?;
         let mut test_sample_c = test_sample.clone();
         let ch = test_sample.len_of(Axis(0)) as u16;
-        // Test with 3dB
-        let tsnr = 3.;
+        let tsnr = 3.; // Test with 3dB
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_snr(tsnr..tsnr);
         transform.transform(&mut test_sample_c)?;
-        let resulting_snr = transform.snr(test_sample_c.view(), test_sample.view());
+        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped_snr.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(tsnr, resulting_snr);
         // Test relative difference
@@ -797,7 +796,7 @@ mod tests {
         let c = 0.05;
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_c(c..c);
         transform.transform(&mut test_sample_c)?;
-        let resulting_snr = transform.snr(test_sample_c.view(), test_sample.view());
+        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(c, resulting_snr);
         Ok(())
