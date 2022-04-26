@@ -939,6 +939,14 @@ impl Dataset<f32> for TdDataset {
         let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
+        #[cfg(feature = "dataset_timings")]
+        {
+            log::trace!(
+                "Loaded speech with codec {:?} in {} ms",
+                self.ds_codec(*sp_idx),
+                (Instant::now() - t0).as_millis()
+            );
+        }
         self.sp_transforms.transform(&mut speech)?;
         let mut max_freq = self.max_freq(*sp_idx)?;
         while speech.len_of(Axis(1)) < self.max_sample_len()
@@ -981,6 +989,8 @@ impl Dataset<f32> for TdDataset {
         let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng, n_noises);
         let mut noises = Vec::with_capacity(n_noises);
         let mut noise_gains = Vec::with_capacity(n_noises);
+        #[cfg(feature = "dataset_timings")]
+        let t0n = Instant::now();
         for (ns_idx, ns_key) in &ns_ids {
             let mut ns = match self.read_max_len(*ns_idx, ns_key) {
                 Err(e) => {
@@ -989,6 +999,14 @@ impl Dataset<f32> for TdDataset {
                 }
                 Ok(n) => n,
             };
+            #[cfg(feature = "dataset_timings")]
+            {
+                log::trace!(
+                    "Loaded noise with codec {:?} in {} ms",
+                    self.ds_codec(*ns_idx),
+                    (Instant::now() - t0n).as_millis()
+                );
+            }
             if ns.len_of(Axis(1)) < 10 {
                 continue;
             }

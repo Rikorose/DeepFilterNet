@@ -420,9 +420,9 @@ impl DataLoader {
         let t2 = Instant::now();
         #[cfg(feature = "dataset_timings")]
         log::trace!(
-            "Returning batch in {} us, (got samples in {} us)",
-            (t2 - t0).as_micros(),
-            (t1 - t0).as_micros()
+            "Returning batch in {} ms, (got samples in {} ms)",
+            (t2 - t0).as_millis(),
+            (t1 - t0).as_millis()
         );
         Ok(out)
     }
