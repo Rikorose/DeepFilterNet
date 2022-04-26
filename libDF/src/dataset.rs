@@ -925,6 +925,10 @@ impl TdDataset {
     fn ds_type(&self, idx: usize) -> String {
         self.hdf5_handles[idx].ds_type()
     }
+
+    fn ds_codec(&self, idx: usize) -> Codec {
+        self.hdf5_handles[idx].codec.clone().unwrap_or_default()
+    }
 }
 
 impl Dataset<f32> for TdDataset {
@@ -1114,7 +1118,7 @@ impl fmt::Display for DsType {
         write!(f, "{:?}", self)
     }
 }
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Codec {
     PCM = 0,
     Vorbis = 1,
