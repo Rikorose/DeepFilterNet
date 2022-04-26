@@ -376,12 +376,13 @@ impl RandClipping {
     fn clip(&self, x: ArrayView2<f32>, c: f32) -> Array2<f32> {
         x.map(|x| x.max(-c).min(c))
     }
-    pub fn snr(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> f32 {
-        assert_eq!(a.shape(), b.shape());
-        let numel = a.len();
-        assert!(numel > 0);
-        let a = a.fold(0., |acc, x| acc + x.abs()) / numel as f32;
-        let b = b.fold(0., |acc, x| acc + x.abs()) / numel as f32;
+    pub fn snr(&self, clean: ArrayView2<f32>, mixture: ArrayView2<f32>) -> f32 {
+        debug_assert_eq!(clean.shape(), mixture.shape());
+        let noise = mixture.to_owned() - clean;
+        let numel = clean.len();
+        debug_assert!(numel > 0);
+        let a = clean.fold(0., |acc, x| acc + x.abs()) / numel as f32;
+        let b = noise.fold(0., |acc, x| acc + x.abs()) / numel as f32;
         (a / (b + self.eps)).log10() * 20.
     }
 }
@@ -394,11 +395,12 @@ impl Transform for RandClipping {
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
         let c = if let Some(db_range) = self.db_range.as_ref() {
             let target_snr = rng.uniform(db_range.start, db_range.end);
-            let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
+            let f = |c| self.snr(self.clip(x.view(), c).view(), x.view()) - target_snr;
             match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
                 Ok(c) => c,
                 Err(e) => {
                     log::warn!("RandClipping: Failed to find root: {:?}", e);
+                    dbg!(max, f(0.01 * max), f(0.99 * max));
                     return Ok(());
                 }
             }
@@ -688,8 +690,25 @@ impl RandReverbSim {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
     use super::*;
     use crate::wav_utils::*;
+
+    static INIT: Once = Once::new();
+
+    /// Setup function that is only run once, even if called multiple times.
+    fn setup() {
+        INIT.call_once(|| {
+            let _ = env_logger::builder()
+                // Include all events in tests
+                .filter_module("df", log::LevelFilter::max())
+                // Ensure events are captured by `cargo test`
+                .is_test(true)
+                // Ignore errors initializing the logger if tests race to configure it
+                .try_init();
+        });
+    }
 
     fn create_out_dir() -> std::io::Result<()> {
         match std::fs::create_dir("../out") {
@@ -700,6 +719,7 @@ mod tests {
 
     #[test]
     pub fn test_rand_resample() -> Result<()> {
+        setup();
         create_out_dir().expect("Could not create output directory");
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
@@ -714,6 +734,7 @@ mod tests {
 
     #[test]
     pub fn test_low_pass() -> Result<()> {
+        setup();
         create_out_dir().expect("Could not create output directory");
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
@@ -730,6 +751,7 @@ mod tests {
 
     #[test]
     pub fn test_reverb() -> Result<()> {
+        setup();
         create_out_dir().expect("Could not create output directory");
         seed_from_u64(42);
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
@@ -753,6 +775,7 @@ mod tests {
 
     #[test]
     pub fn test_clipping() -> Result<()> {
+        setup();
         create_out_dir().expect("Could not create output directory");
         seed_from_u64(42);
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
@@ -764,16 +787,18 @@ mod tests {
         let tsnr = 3.;
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_snr(tsnr..tsnr);
         transform.transform(&mut test_sample_c)?;
-        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
+        let resulting_snr = transform.snr(test_sample_c.view(), test_sample.view());
+        write_wav_iter("../out/clipped_snr.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(tsnr, resulting_snr);
-        write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
-        assert!(resulting_snr - tsnr < 0.01);
+        // Test relative difference
+        assert!(((resulting_snr - tsnr) / tsnr).abs() < 0.05);
 
         let mut test_sample_c = test_sample.clone();
-        let c = 0.01;
+        let c = 0.05;
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_c(c..c);
         transform.transform(&mut test_sample_c)?;
-        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
+        let resulting_snr = transform.snr(test_sample_c.view(), test_sample.view());
+        write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(c, resulting_snr);
         Ok(())
     }

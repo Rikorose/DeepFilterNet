@@ -587,7 +587,7 @@ impl DatasetBuilder {
         ]);
         if ds_split == Split::Train {
             sp_transforms.push(Box::new(
-                RandClipping::default_with_prob(0.05).with_c(0.01..0.9),
+                RandClipping::default_with_prob(0.05).with_c(0.05..0.9),
             ))
         }
         let ns_transforms = Compose::new(vec![
@@ -597,7 +597,7 @@ impl DatasetBuilder {
         ]);
         if ds_split == Split::Train {
             sp_transforms.push(Box::new(
-                RandClipping::default_with_prob(0.1).with_c(0.005..0.95),
+                RandClipping::default_with_prob(0.1).with_c(0.01..0.5),
             ))
         }
         let p_reverb = self.p_reverb.unwrap_or(0.);
