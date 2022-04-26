@@ -788,7 +788,7 @@ mod tests {
         transform.transform(&mut test_sample_c)?;
         let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped_snr.wav", test_sample_c.iter(), sr, ch)?;
-        dbg!(tsnr, resulting_snr);
+        log::info!("Expecting target SNR {}, got SNR {}", tsnr, resulting_snr);
         // Test relative difference
         assert!(((resulting_snr - tsnr) / tsnr).abs() < 0.05);
 

@@ -214,7 +214,7 @@ impl DfLogger {
 
 impl log::Log for DfLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= self.level
+        metadata.level() <= self.level && metadata.target().starts_with("df:")
     }
 
     fn log(&self, record: &Record) {
