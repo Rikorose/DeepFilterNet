@@ -480,7 +480,6 @@ impl DatasetBuilder {
                     calculate_hash(&hash_vec)
                 };
                 let cache_path = ds_path.join(format!("{}_cache_{}", split, hash));
-                log::info!("Using validation dataset cache at {:?}", &cache_path);
                 Some(ValidCache::new(
                     &cache_path,
                     hash,
