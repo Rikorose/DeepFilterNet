@@ -62,6 +62,12 @@ def main():
         help="Path to a host specific batch size config.",
     )
     parser.add_argument("--no-resume", action="store_false", dest="resume")
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default=None,
+        help="Logger verbosity. Can be one of (trace, debug, info, error, none)",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-debug", action="store_false", dest="debug")
     args = parser.parse_args()
@@ -73,7 +79,12 @@ def main():
     summary_dir = os.path.join(args.base_dir, "summaries")
     os.makedirs(summary_dir, exist_ok=True)
     debug = args.debug
-    log_level = "DEBUG" if debug else "INFO"
+    if args.log_level is not None:
+        if debug and args.log_level.lower() != "debug":
+            raise ValueError("Either specify debug or a manual log level")
+        log_level = args.log_level
+    else:
+        log_level = "DEBUG" if debug else "INFO"
     init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level, model=args.base_dir)
     config_file = os.path.join(args.base_dir, "config.ini")
     config.load(config_file)
