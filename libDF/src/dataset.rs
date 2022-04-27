@@ -876,6 +876,11 @@ impl TdDataset {
         Ok(x)
     }
 
+    fn read_all_channels(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
+        let x = self._read_from_hdf5(key, idx, None)?;
+        Ok(x)
+    }
+
     fn read_max_len(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
         #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
@@ -1551,7 +1556,16 @@ impl Hdf5Dataset {
             srr.seek_absgp_pg(start as u64)?
         }
         let ch = srr.ident_hdr.audio_channels as usize;
-        let mut pck = srr.read_dec_packet_itl()?;
+        let mut pck = loop {
+            match srr.read_dec_packet_itl() {
+                Ok(p) => break p,
+                Err(lewton::VorbisError::BadAudio(
+                    lewton::audio::AudioReadError::AudioIsHeader,
+                )) => (),
+                Err(e) => return Err(e.into()),
+            }
+        };
+
         let mut out: Vec<i16> = Vec::with_capacity((len + 1024) * ch); // Allocate a little extra
         while let Some(mut p) = pck {
             out.append(&mut p);
@@ -1569,7 +1583,11 @@ impl Hdf5Dataset {
         let mut out = Array2::from_shape_vec((out.len() / ch, ch), out)?;
         // We already have a coarse range. The start may contain more samples from its
         // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
-        out.slice_axis_inplace(Axis(0), Slice::from(start_pos..(len + start_pos)));
+        let cur_len = out.len_of(Axis(0));
+        out.slice_axis_inplace(
+            Axis(0),
+            Slice::from(start_pos..(len + start_pos).min(cur_len)),
+        );
         // Select channel
         let out = self.match_ch(out, 1, channel)?;
         // Transpose to channels first and convert to float
