@@ -1175,12 +1175,27 @@ fn get_dstype(file: &File) -> Option<DsType> {
 
 impl Hdf5Dataset {
     pub fn new(path: &str) -> Result<Self> {
-        let file = File::open(path).map_err(move |e: hdf5::Error| -> DfDatasetError {
+        let file = Self::open_file(path, false)?;
+        Self::init_impl(file)
+    }
+    pub fn new_rw(path: &str) -> Result<Self> {
+        let file = Self::open_file(path, true)?;
+        Self::init_impl(file)
+    }
+    fn open_file(path: &str, rw: bool) -> Result<File> {
+        let file = if rw {
+            File::open_rw(path)
+        } else {
+            File::open(path)
+        };
+        file.map_err(move |e: hdf5::Error| -> DfDatasetError {
             DfDatasetError::Hdf5ErrorDetail {
                 source: e,
                 msg: format!("Error during File::open of dataset {}", path),
             }
-        })?;
+        })
+    }
+    fn init_impl(file: File) -> Result<Self> {
         match get_dstype(&file) {
             None => Err(DfDatasetError::Hdf5DsTypeNotFoundError),
             Some(dstype) => {
@@ -1240,6 +1255,9 @@ impl Hdf5Dataset {
     }
     pub fn attributes(&self) -> Result<Vec<String>> {
         Ok(self.file.attr_names()?)
+    }
+    pub fn ds(&self, key: &str) -> Result<hdf5::Dataset> {
+        Ok(self.group()?.dataset(key)?)
     }
     #[cfg(not(feature = "flac"))]
     fn sample_len_flac(&self, _ds: hdf5::Dataset) -> Result<usize> {
@@ -1301,10 +1319,14 @@ impl Hdf5Dataset {
         })
     }
     pub fn sample_len(&self, key: &str) -> Result<usize> {
-        let ds = self.group()?.dataset(key)?;
+        let ds = self.ds(key)?;
         let n = match ds.attr("n_samples") {
             Ok(a) => {
-                let n: usize = a.read_1d()?[0];
+                let n: usize = match a.ndim() {
+                    0 => a.read_scalar::<usize>()?,
+                    1 => a.read_1d()?[0],
+                    _ => unreachable!(),
+                };
                 if n < 100 {
                     self.sample_len_from_ds(ds)?
                 } else {
@@ -1356,7 +1378,7 @@ impl Hdf5Dataset {
         channel: Option<isize>,
         r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
-        let ds = self.group()?.dataset(key)?;
+        let ds = self.ds(key)?;
         let arr = if let Some(r) = r {
             // Directly to a sliced dataset read
             if r.end > *ds.shape().last().unwrap_or(&0) {
@@ -1451,13 +1473,13 @@ impl Hdf5Dataset {
     }
     #[cfg(feature = "flac")]
     fn read_flac_byte_reader(&self, key: &str) -> Result<Array2<f32>> {
-        let ds = self.group()?.dataset(key)?;
+        let ds = self.ds(key)?;
         let reader = claxon::FlacReader::new(ds.as_byte_reader()?)?;
         self._read_flac(key, reader)
     }
     #[cfg(feature = "flac")]
     fn read_flac_ds(&self, key: &str) -> Result<Array2<f32>> {
-        let ds = self.group()?.dataset(key)?;
+        let ds = self.ds(key)?;
         let encoded = ds.read_1d()?;
         let reader = claxon::FlacReader::new(encoded.as_slice().unwrap())?;
         self._read_flac(key, reader)
@@ -1476,10 +1498,7 @@ impl Hdf5Dataset {
         channel: Option<isize>,
         r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
-        let out = match self.read_flac_ds(key) {
-            Ok(x) => x,
-            Err(_) => self.read_flac_ds(key)?,
-        };
+        let out = self.read_flac_ds(key)?;
         let mut out = self.match_ch(out, 0, channel)?;
         if let Some(r) = r {
             out.slice_axis_inplace(Axis(1), Slice::from(r));
@@ -1512,7 +1531,7 @@ impl Hdf5Dataset {
         channel: Option<isize>,
         r: Option<Range<usize>>,
     ) -> Result<Array2<f32>> {
-        let ds = self.group()?.dataset(key)?;
+        let ds = self.ds(key)?;
         let encoded = ds.read_1d()?;
         let mut srr = OggStreamReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
         let ch = srr.ident_hdr.audio_channels as usize;
