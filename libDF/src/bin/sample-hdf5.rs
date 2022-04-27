@@ -21,10 +21,9 @@ fn main() -> Result<()> {
         None => ds.keys()?.choose(&mut rand::thread_rng()).unwrap().to_string(),
     };
     let data = ds.read(&k)?;
-    dbg!(&k, data.shape());
+    println!("Sampled '{}' with audio shape {:?}", k, data.shape());
     let out_dir = args.get(3).cloned().unwrap_or_else(|| "out".to_owned());
     let name = format!("{}/{}", out_dir, k);
-    println!("Sampled {:?}", k);
     write_wav_arr2(&name, data.view(), ds.sr.unwrap() as u32).unwrap();
     Ok(())
 }

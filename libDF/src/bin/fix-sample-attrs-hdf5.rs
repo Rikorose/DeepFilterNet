@@ -1,6 +1,7 @@
 use std::env::args;
 use std::process::exit;
-use std::sync::mpsc::{channel, TryRecvError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use df::dataset::Hdf5Dataset;
@@ -23,17 +24,21 @@ fn main() -> Result<()> {
             exit(1);
         }
     };
+    let should_stop = Arc::new(AtomicBool::new(false));
 
-    let (tx, rx) = channel();
+    let should_stop_t = should_stop.clone();
     ctrlc::set_handler(move || {
-        eprintln!("Received Ctrl+C! Stopping.");
-        tx.send(()).expect("Could not send signal on channel.");
+        if should_stop_t.load(Ordering::Acquire) {
+            panic!("Stopping");
+        }
+        println!("Got Ctrl+C! Stopping.");
+        should_stop_t.store(true, Ordering::Release);
     })
-    .expect("Error setting Ctrl-C handler");
+    .expect("Error setting Ctrl+C handler");
 
     let ds = Hdf5Dataset::new_rw(p)?;
     for k in ds.keys()? {
-        let audio = ds.read(&k)?;
+        let audio = ds.read_all_channels(&k)?;
         let n_samples = ds.sample_len(&k)?;
         println!(
             "Got sample '{}' with audio shape {:?}, n_samples: {}",
@@ -47,10 +52,9 @@ fn main() -> Result<()> {
         // dbg!(hdf5_ds.attr("n_samples")?.read_scalar::<usize>()?);
         // dbg!(hdf5_ds.attr("n_channels")?.read_scalar::<usize>()?);
         // break;
-        match rx.try_recv() {
-            Ok(()) => break, // Got Ctrl-C
-            Err(TryRecvError::Empty) => continue,
-            Err(e) => return Err(e.into()),
+
+        if should_stop.load(Ordering::Acquire) {
+            break;
         }
     }
     Ok(())

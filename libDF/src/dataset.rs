@@ -1602,6 +1602,13 @@ impl Hdf5Dataset {
             Codec::FLAC => self.read_flac(key, Some(0), Some(r)),
         }
     }
+    pub fn read_all_channels(&self, key: &str) -> Result<Array2<f32>> {
+        match *self.codec.as_ref().unwrap_or_default() {
+            Codec::PCM => self.read_pcm(key, None, None),
+            Codec::Vorbis => self.read_vorbis(key, None, None),
+            Codec::FLAC => self.read_flac(key, None, None),
+        }
+    }
 }
 
 struct LpParam {
