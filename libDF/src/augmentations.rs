@@ -376,14 +376,27 @@ impl RandClipping {
     fn clip(&self, x: ArrayView2<f32>, c: f32) -> Array2<f32> {
         x.map(|x| x.max(-c).min(c))
     }
-    pub fn snr(&self, clean: ArrayView2<f32>, mixture: ArrayView2<f32>) -> f32 {
-        debug_assert_eq!(clean.shape(), mixture.shape());
-        let noise = mixture.to_owned() - clean;
-        let numel = clean.len();
+    pub fn sdr(&self, orig: ArrayView2<f32>, processed: ArrayView2<f32>) -> f32 {
+        debug_assert_eq!(orig.shape(), processed.shape());
+        let numel = orig.len();
         debug_assert!(numel > 0);
-        let a = clean.fold(0., |acc, x| acc + x.abs()) / numel as f32;
-        let b = noise.fold(0., |acc, x| acc + x.abs()) / numel as f32;
+        let noise = orig.to_owned() - processed;
+        let a = orig.fold(0., |acc, x| acc + x.powi(2)) / numel as f32;
+        let b = noise.fold(0., |acc, x| acc + x.powi(2)) / numel as f32;
         (a / (b + self.eps)).log10() * 20.
+    }
+    fn find_root(&self, x: ArrayView2<f32>, target_snr: f32, max: Option<f32>) -> Option<f32> {
+        let max = max.unwrap_or(1.0);
+        let f = |c| self.sdr(x.view(), self.clip(x.view(), c).view()) - target_snr;
+        let (a, b) = (0.01 * max, 0.99 * max);
+        match roots::find_root_brent(a, b, &f, &mut self.eps_c.clone()) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("RandClipping: Failed to find root: {:?}", e);
+                dbg!(max, f(0.01 * max), f(0.99 * max));
+                None
+            }
+        }
     }
 }
 impl Transform for RandClipping {
@@ -395,14 +408,10 @@ impl Transform for RandClipping {
         let max = x.fold(0.0, |acc, x| x.abs().max(acc));
         let c = if let Some(db_range) = self.db_range.as_ref() {
             let target_snr = rng.uniform(db_range.start, db_range.end);
-            let f = |c| self.snr(x.view(), self.clip(x.view(), c).view()) - target_snr;
-            match roots::find_root_brent(0.01 * max, 0.99 * max, &f, &mut self.eps_c.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("RandClipping: Failed to find root: {:?}", e);
-                    dbg!(max, f(0.01 * max), f(0.99 * max));
-                    return Ok(());
-                }
+            if let Some(c) = self.find_root(x.view(), target_snr, Some(max)) {
+                dbg!(c)
+            } else {
+                return Ok(());
             }
         } else {
             let c_range = self.c_range.as_ref().unwrap();
@@ -786,7 +795,7 @@ mod tests {
         let tsnr = 3.; // Test with 3dB
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_snr(tsnr..tsnr);
         transform.transform(&mut test_sample_c)?;
-        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
+        let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped_snr.wav", test_sample_c.iter(), sr, ch)?;
         log::info!("Expecting target SNR {}, got SNR {}", tsnr, resulting_snr);
         // Test relative difference
@@ -796,7 +805,7 @@ mod tests {
         let c = 0.05;
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_c(c..c);
         transform.transform(&mut test_sample_c)?;
-        let resulting_snr = transform.snr(test_sample.view(), test_sample_c.view());
+        let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(c, resulting_snr);
         Ok(())
