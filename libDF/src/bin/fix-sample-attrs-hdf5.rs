@@ -6,12 +6,16 @@ use std::sync::Arc;
 use anyhow::Result;
 use df::dataset::Hdf5Dataset;
 
-fn update_attr(ds: &hdf5::Dataset, name: &str, value: &usize) -> Result<()> {
+fn update_attr(ds: &hdf5::Dataset, name: &str, value: usize) -> Result<()> {
     let attr = match ds.attr(name) {
         Ok(a) => a,
         Err(_) => ds.new_attr::<usize>().create(name)?,
     };
-    attr.write_scalar(value)?;
+    match attr.ndim() {
+        0 => attr.write_scalar(&value)?,
+        1 => attr.write_raw(&[value])?,
+        _ => unreachable!(),
+    };
     Ok(())
 }
 
@@ -47,11 +51,23 @@ fn main() -> Result<()> {
             n_samples
         );
         let hdf5_ds = ds.ds(&k)?;
-        update_attr(&hdf5_ds, "n_samples", &audio.len_of(ndarray::Axis(1)))?;
-        update_attr(&hdf5_ds, "n_channels", &audio.len_of(ndarray::Axis(0)))?;
-        // dbg!(hdf5_ds.attr("n_samples")?.read_scalar::<usize>()?);
-        // dbg!(hdf5_ds.attr("n_channels")?.read_scalar::<usize>()?);
-        // break;
+        let (audio_ch, audio_len) = if audio.ndim() == 1 {
+            (1, audio.len_of(ndarray::Axis(0)))
+        } else {
+            let ch = audio.len_of(ndarray::Axis(0));
+            let len = audio.len_of(ndarray::Axis(1));
+            assert!(len > 16 && ch <= 16); // Make sure channels and samples are not transposed
+            (ch, len)
+        };
+        if n_samples != audio_len {
+            eprintln!(
+                "Warning: Number of samples ({}) does not match with audio shape ({:?})",
+                n_samples,
+                audio.shape()
+            )
+        }
+        update_attr(&hdf5_ds, "n_samples", audio_len)?;
+        update_attr(&hdf5_ds, "n_channels", audio_ch)?;
 
         if should_stop.load(Ordering::Acquire) {
             break;
