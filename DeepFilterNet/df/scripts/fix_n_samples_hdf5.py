@@ -36,7 +36,7 @@ def main(args):
                 if codec == "pcm":
                     audio = torch.from_numpy(ds[...])
                 else:
-                    audio = load_vorbis(ds, codec=codec)
+                    audio = load_encoded(ds, codec=codec)
                 print(audio.shape)
                 assert audio.dim() <= 2
                 if n_samples is not None:
