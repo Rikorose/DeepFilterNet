@@ -339,6 +339,7 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
+        #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
         let bs = self.batch_size(self.current_split);
         let mut timings = Vec::with_capacity(bs);
@@ -384,9 +385,9 @@ impl DataLoader {
                     Ok((o_idx, Ok(s))) => {
                         if o_idx == self.cur_out_idx {
                             samples.push(s);
-                            let t1 = Instant::now();
-                            timings.push((t1 - ts0).as_secs_f32());
-                            ts0 = t1;
+                            let ts1 = Instant::now();
+                            timings.push((ts1 - ts0).as_secs_f32());
+                            ts0 = ts1;
                             ids.push(o_idx);
                             self.cur_out_idx += 1;
                         } else {
@@ -397,6 +398,7 @@ impl DataLoader {
             }
             tries = 0;
         }
+        #[cfg(feature = "dataset_timings")]
         let t1 = Instant::now();
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
@@ -417,13 +419,15 @@ impl DataLoader {
             batch.timings = timings;
             Some(batch)
         };
-        let t2 = Instant::now();
         #[cfg(feature = "dataset_timings")]
-        log::trace!(
-            "Returning batch in {} ms, (got samples in {} ms)",
-            (t2 - t0).as_millis(),
-            (t1 - t0).as_millis()
-        );
+        if log::log_enabled!(log::Level::Trace) {
+            let t2 = Instant::now();
+            log::trace!(
+                "Returning batch in {} ms, (got samples in {} ms)",
+                (t2 - t0).as_millis(),
+                (t1 - t0).as_millis()
+            );
+        }
         Ok(out)
     }
 
