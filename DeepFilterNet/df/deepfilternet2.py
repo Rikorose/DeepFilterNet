@@ -44,6 +44,9 @@ class ModelParams(DfParams):
         self.conv_kernel: List[int] = config(
             "CONV_KERNEL", cast=Csv(int), default=(1, 3), section=self.section  # type: ignore
         )
+        self.conv_kernel_inp: List[int] = config(
+            "CONV_KERNEL_INP", cast=Csv(int), default=(3, 3), section=self.section  # type: ignore
+        )
         self.emb_hidden_dim: int = config(
             "EMB_HIDDEN_DIM", cast=int, default=256, section=self.section
         )
@@ -101,7 +104,9 @@ class Encoder(nn.Module):
         p = ModelParams()
         assert p.nb_erb % 4 == 0, "erb_bins should be divisible by 4"
 
-        self.erb_conv0 = Conv2dNormAct(1, p.conv_ch, kernel_size=(3, 3), bias=False, separable=True)
+        self.erb_conv0 = Conv2dNormAct(
+            1, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
+        )
         conv_layer = partial(
             Conv2dNormAct,
             in_ch=p.conv_ch,
@@ -113,7 +118,9 @@ class Encoder(nn.Module):
         self.erb_conv1 = conv_layer(fstride=2)
         self.erb_conv2 = conv_layer(fstride=2)
         self.erb_conv3 = conv_layer(fstride=1)
-        self.df_conv0 = Conv2dNormAct(2, p.conv_ch, kernel_size=(3, 3), bias=False, separable=True)
+        self.df_conv0 = Conv2dNormAct(
+            2, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
+        )
         self.df_conv1 = conv_layer(fstride=2)
         self.erb_bins = p.nb_erb
         self.emb_in_dim = p.conv_ch * p.nb_erb // 4
