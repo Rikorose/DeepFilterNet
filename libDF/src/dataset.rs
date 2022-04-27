@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{BufReader, BufWriter, Cursor};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
@@ -1284,13 +1284,7 @@ impl Hdf5Dataset {
         })
     }
     #[cfg(feature = "vorbis")]
-    /// Get the sample length of a vorbis encoded dataset
-    ///
-    /// Arguments:
-    ///
-    /// * `ds`: `hdf5::Dataset` containing a vorbis (ogg) encoded audio sample.
-    fn sample_len_vorbis(&self, ds: hdf5::Dataset) -> Result<usize> {
-        let mut rdr = OggPacketReader::new(ds.as_byte_reader()?);
+    fn sample_len_vorbis_rdr<T: Read + Seek>(&self, rdr: &mut OggPacketReader<T>) -> Result<usize> {
         // Seek almost to end to get the last ogg package
         rdr.seek_bytes(std::io::SeekFrom::End(-4096))?;
         let mut pkg = rdr.read_packet();
@@ -1310,6 +1304,16 @@ impl Hdf5Dataset {
             pkg = rdr.read_packet();
         }
         Ok(absgp as usize)
+    }
+    #[cfg(feature = "vorbis")]
+    /// Get the sample length of a vorbis encoded dataset
+    ///
+    /// Arguments:
+    ///
+    /// * `ds`: `hdf5::Dataset` containing a vorbis (ogg) encoded audio sample.
+    fn sample_len_vorbis(&self, ds: hdf5::Dataset) -> Result<usize> {
+        let mut rdr = OggPacketReader::new(ds.as_byte_reader()?);
+        self.sample_len_vorbis_rdr(&mut rdr)
     }
     fn sample_len_from_ds(&self, ds: hdf5::Dataset) -> Result<usize> {
         Ok(match self.codec.as_ref().unwrap_or(&Codec::PCM) {
@@ -1517,6 +1521,7 @@ impl Hdf5Dataset {
             ds: format!("{:?}", self.file),
         })
     }
+    #[inline(never)]
     #[cfg(feature = "vorbis")]
     /// Read a vorbis encoded sample from an `hdf5::Dataset`.
     ///
@@ -1533,54 +1538,38 @@ impl Hdf5Dataset {
     ) -> Result<Array2<f32>> {
         let ds = self.ds(key)?;
         let encoded = ds.read_1d()?;
-        let mut srr = OggStreamReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
-        let ch = srr.ident_hdr.audio_channels as usize;
-        let len = if let Some(r) = r.as_ref() {
-            srr.seek_absgp_pg(r.start as u64)?;
-            r.end - r.start
+        let mut rdr = OggPacketReader::new(Cursor::new(encoded.as_slice().unwrap()));
+        let (start, end) = if let Some(r) = r.as_ref() {
+            (r.start, r.end)
         } else {
-            24000 // start with 0.5s if sr=48000
+            (0, self.sample_len_vorbis_rdr(&mut rdr)?)
         };
-        let mut pck = match srr.read_dec_packet_itl() {
-            Ok(pck) => pck,
-            Err(e) => {
-                if r.is_some() {
-                    // Undo the seek and just start from the beginning
-                    srr = OggStreamReader::new(Cursor::new(encoded.as_slice().unwrap()))?;
-                    srr.read_dec_packet_itl().unwrap()
-                } else {
-                    return Err(e.into());
-                }
-            }
-        };
-        let mut out: Vec<i16> = Vec::with_capacity(len);
+        let len = end - start;
+        rdr.seek_absgp(None, 0)?;
+        let mut srr = OggStreamReader::from_ogg_reader(rdr)?;
+        if start > 0 {
+            srr.seek_absgp_pg(start as u64)?
+        }
+        let ch = srr.ident_hdr.audio_channels as usize;
+        let mut pck = srr.read_dec_packet_itl()?;
+        let mut out: Vec<i16> = Vec::with_capacity((len + 1024) * ch); // Allocate a little extra
         while let Some(mut p) = pck {
             out.append(&mut p);
-            if let (Some(r), Some(pos)) = (r.as_ref(), srr.get_last_absgp().map(|p| p as usize)) {
-                if pos >= r.end {
-                    // In some rare circumstances the decoding start is behind r.start. Not sure
-                    // if this is an error on my end or on lewton's (probably mine). Anyways, we
-                    // just return a slightly delayed slice, therefore the max operation.
-                    out.truncate((out.len() - (pos - r.end) * ch).max((r.end - r.start) * ch));
-                    debug_assert!(out.len() >= r.end - r.start);
+            if let Some(pos) = srr.get_last_absgp().map(|p| p as usize) {
+                if pos >= end {
+                    // We might get some extra samples at the end.
+                    out.truncate((out.len() - (pos - end) * ch).max(len * ch));
+                    debug_assert!(out.len() >= len);
                     break;
                 }
             }
             pck = srr.read_dec_packet_itl()?;
         }
-        let out = if let Some(r) = r {
-            // We already have a coarse range. The start may contain more samples from its
-            // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
-            // let start_pos = out.len() - (r.end - r.start) * ch;
-            let start_pos = out.len().saturating_sub((r.end - r.start) * ch);
-            // Due to some rare bug, the slice will end up shorter than `len`. I guess similar to
-            // above, the first decoded sample starts after `r.begin`. Threrfore we needed
-            // `saturating_sub` and recalulate the length via `slice.len()`.
-            let slice = &out[start_pos..];
-            ArrayView2::from_shape((slice.len() / ch, ch), slice)?.to_owned()
-        } else {
-            Array2::from_shape_vec((out.len() / ch, ch), out)?
-        };
+        let start_pos = (out.len() / ch).saturating_sub(len);
+        let mut out = Array2::from_shape_vec((out.len() / ch, ch), out)?;
+        // We already have a coarse range. The start may contain more samples from its
+        // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
+        out.slice_axis_inplace(Axis(0), Slice::from(start_pos..(len + start_pos)));
         // Select channel
         let out = self.match_ch(out, 1, channel)?;
         // Transpose to channels first and convert to float
