@@ -495,8 +495,33 @@ pub(crate) fn gen_noise(
     num_channels: u16,
     num_samples: u32,
     sr: u32,
+) -> Result<Array2<f32>> {
+    let mut fft = RealFftPlanner::new();
+    let fft_forward = Box::new(fft.plan_fft_forward(sr as usize));
+    let fft_inverse = Box::new(fft.plan_fft_inverse(sr as usize));
+    let mut scratch_forward = fft_forward.make_scratch_vec();
+    let mut scratch_inverse = fft_inverse.make_scratch_vec();
+    gen_noise_with_scratch(
+        f_decay,
+        num_channels,
+        num_samples,
+        sr,
+        fft_forward.as_ref(),
+        fft_inverse.as_ref(),
+        &mut scratch_forward,
+        &mut scratch_inverse,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn gen_noise_with_scratch(
+    f_decay: f32,
+    num_channels: u16,
+    num_samples: u32,
+    sr: u32,
     fft_forward: &Arc<dyn RealToComplex<f32>>,
     fft_inverse: &Arc<dyn ComplexToReal<f32>>,
+    scratch_forward: &mut [Complex32],
+    scratch_inverse: &mut [Complex32],
 ) -> Result<Array2<f32>> {
     // Adopted from torch_audiomentations
     let sr = sr as usize;
@@ -505,26 +530,13 @@ pub(crate) fn gen_noise(
     let mut noise = if f_decay != 0. {
         let mut noise = Array::random((ch, sr), Normal::new(0., 1.).unwrap());
         let spec = Array2::uninit([ch, sr / 2 + 1]);
+        // Safety: Will be fully overwritten by fft transform.
         let mut spec = unsafe { spec.assume_init() };
-        for (mut input_ch, mut output_ch) in noise.outer_iter_mut().zip(spec.outer_iter_mut()) {
-            fft_forward
-                .process(
-                    input_ch.as_slice_mut().unwrap(),
-                    output_ch.as_slice_mut().unwrap(),
-                )
-                .unwrap();
-        }
+        fft_with_output(&mut noise, fft_forward.as_ref(), scratch_forward, &mut spec)?;
         let mut mask = Array::linspace(1., ((sr / 2 + 1) as f32).sqrt(), spec.len_of(Axis(1)));
         mask.mapv_inplace(|x| x.powf(f_decay));
         spec = spec / mask.to_shape([1, sr / 2 + 1]).unwrap();
-        for (mut input_ch, mut output_ch) in spec.outer_iter_mut().zip(noise.outer_iter_mut()) {
-            fft_inverse
-                .process(
-                    input_ch.as_slice_mut().unwrap(),
-                    output_ch.as_slice_mut().unwrap(),
-                )
-                .unwrap();
-        }
+        ifft_with_output(&mut spec, fft_inverse.as_ref(), scratch_inverse, &mut noise)?;
         noise
     } else {
         // Fast path for white noise
@@ -879,14 +891,11 @@ mod tests {
 
         let sr = 48000;
         let ch = 2;
-        let mut fft = RealFftPlanner::<f32>::new();
-        let forward = fft.plan_fft_forward(sr as usize);
-        let backward = fft.plan_fft_inverse(sr as usize);
-        let white_noise = gen_noise(0., ch, sr * 3, sr, &forward, &backward)?;
-        let pink_noise = gen_noise(1., ch, sr * 3, sr, &forward, &backward)?;
-        let brown_noise = gen_noise(2., ch, sr * 3, sr, &forward, &backward)?;
-        let blue_noise = gen_noise(-1., ch, sr * 3, sr, &forward, &backward)?;
-        let violet_noise = gen_noise(-1., ch, sr * 3, sr, &forward, &backward)?;
+        let white_noise = gen_noise(0., ch, sr * 3, sr)?;
+        let pink_noise = gen_noise(1., ch, sr * 3, sr)?;
+        let brown_noise = gen_noise(2., ch, sr * 3, sr)?;
+        let blue_noise = gen_noise(-1., ch, sr * 3, sr)?;
+        let violet_noise = gen_noise(-1., ch, sr * 3, sr)?;
         write_wav_iter("../out/white_noise.wav", white_noise.iter(), sr, ch)?;
         write_wav_iter("../out/pink_noise.wav", pink_noise.iter(), sr, ch)?;
         write_wav_iter("../out/brown_noise.wav", brown_noise.iter(), sr, ch)?;

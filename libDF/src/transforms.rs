@@ -69,8 +69,18 @@ pub fn fft(
     fft_transform: &dyn RealToComplex<f32>,
     scratch: &mut [Complex32],
 ) -> Result<Array2<Complex32>> {
-    debug_assert_eq!(fft_transform.len(), input.len_of(Axis(1)));
     let mut output = Array2::zeros((input.len_of(Axis(0)), fft_transform.len() / 2 + 1));
+    fft_with_output(input, fft_transform, scratch, &mut output)?;
+    Ok(output)
+}
+
+pub fn fft_with_output(
+    input: &mut Array2<f32>,
+    fft_transform: &dyn RealToComplex<f32>,
+    scratch: &mut [Complex32],
+    output: &mut Array2<Complex32>,
+) -> Result<()> {
+    debug_assert_eq!(fft_transform.len(), input.len_of(Axis(1)));
     for (mut input_ch, mut output_ch) in input.outer_iter_mut().zip(output.outer_iter_mut()) {
         let i = input_ch.as_slice_mut().unwrap();
         let o = output_ch.as_slice_mut().unwrap();
@@ -78,7 +88,7 @@ pub fn fft(
             .process_with_scratch(i, o, scratch)
             .map_err(|e| TransformError::DfError(format!("Error in fft(): {:?}", e)))?;
     }
-    Ok(output)
+    Ok(())
 }
 
 pub fn ifft(
@@ -87,6 +97,16 @@ pub fn ifft(
     scratch: &mut [Complex32],
 ) -> Result<Array2<f32>> {
     let mut output = Array2::zeros((input.len_of(Axis(0)), (fft_transform.len() - 1) * 2));
+    ifft_with_output(input, fft_transform, scratch, &mut output)?;
+    Ok(output)
+}
+
+pub fn ifft_with_output(
+    input: &mut Array2<Complex32>,
+    fft_transform: &dyn ComplexToReal<f32>,
+    scratch: &mut [Complex32],
+    output: &mut Array2<f32>,
+) -> Result<()> {
     for (mut input_ch, mut output_ch) in input.outer_iter_mut().zip(output.outer_iter_mut()) {
         let i = input_ch.as_slice_mut().unwrap();
         let o = output_ch.as_slice_mut().unwrap();
@@ -94,7 +114,7 @@ pub fn ifft(
             .process_with_scratch(i, o, scratch)
             .map_err(|e| TransformError::DfError(format!("Error in ifft(): {:?}", e)))?;
     }
-    Ok(output)
+    Ok(())
 }
 
 pub fn stft(input: ArrayView2<f32>, state: &mut DFState, reset: bool) -> Array3<Complex32> {
