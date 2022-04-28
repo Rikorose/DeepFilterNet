@@ -606,6 +606,10 @@ impl DatasetBuilder {
         }
         let reverb = RandReverbSim::new(p_reverb, self.sr);
         let seed = self.seed.unwrap_or(0);
+        // 5% of noises used for mixing will contain randomly generated noise.
+        // This has the advantage that the noise will actually contain frequencies up 24 kHz.
+        let noise_generator =
+            NoiseGenerator::new(self.sr, if ds_split == Split::Train { 0.05 } else { 0.0 });
         Ok(TdDataset {
             config,
             hdf5_handles,
@@ -622,6 +626,7 @@ impl DatasetBuilder {
             sp_augmentations,
             sp_distortions,
             ns_augmentations,
+            noise_generator,
             reverb,
             seed,
             ds_len,
@@ -823,9 +828,10 @@ pub struct TdDataset {
     sp_keys: Vec<(usize, String)>, // Pair of hdf5 index and dataset keys. Will be generated at each epoch start
     ns_keys: Vec<(usize, String)>,
     rir_keys: Vec<(usize, String)>,
-    snrs: Vec<i8>,             // in dB; SNR to sample from
-    gains: Vec<i8>,            // in dB; Speech (loudness) to sample from
+    snrs: Vec<i8>,                   // in dB; SNR to sample from
+    gains: Vec<i8>,                  // in dB; Speech (loudness) to sample from
     p_fill_speech: f32, // Probability to completely fill the speech signal to `max_samples` with a different speech sample
+    noise_generator: NoiseGenerator, // Create random noises
     sp_augmentations: Compose, // Transforms to augment speech samples
     sp_distortions: Compose, // Transforms to distort speech samples for used generating the mixture
     ns_augmentations: Compose, // Transforms to augment noise samples
@@ -1001,6 +1007,14 @@ impl Dataset<f32> for TdDataset {
         let mut noises = Vec::with_capacity(n_noises);
         let mut noise_gains = Vec::with_capacity(n_noises);
         for (ns_idx, ns_key) in &ns_ids {
+            // In 5% us a randomly generated noise signal instead of a real noise.
+            if let Some(ns) =
+                self.noise_generator.generate_random_noise(-2., 2., 1, self.max_samples)?
+            {
+                noises.push(ns);
+                noise_gains.push([-24, -12, -6, 0].choose(&mut rng).unwrap());
+                continue;
+            }
             let mut ns = match self.read_max_len(*ns_idx, ns_key) {
                 Err(e) => {
                     log::warn!("Error during noise reading get_sample(): {}", e);
@@ -1008,7 +1022,7 @@ impl Dataset<f32> for TdDataset {
                 }
                 Ok(n) => n,
             };
-            if ns.len_of(Axis(1)) < 10 {
+            if ns.len_of(Axis(1)) < 100 {
                 continue;
             }
             self.ns_augmentations.transform(&mut ns)?;
