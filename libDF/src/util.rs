@@ -5,11 +5,11 @@ use std::thread_local;
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use log::{Level, Metadata, Record};
-use rand::distributions::{
+use ndarray_rand::rand::distributions::{
     uniform::{SampleUniform, Uniform},
     Distribution,
 };
-use rand::{Rng, RngCore};
+use ndarray_rand::rand::{Rng, RngCore};
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use thiserror::Error;

@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crossbeam_channel::unbounded;
 use ndarray::prelude::*;
-use rand::prelude::SliceRandom;
+use ndarray_rand::rand::prelude::SliceRandom;
 use rayon;
 use rayon::{current_num_threads, prelude::*};
 use thiserror::Error;

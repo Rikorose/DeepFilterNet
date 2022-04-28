@@ -34,9 +34,9 @@ transforms = ["thiserror", "ndarray"]
 dataset = [
   "thiserror",
   "ndarray",
-  "hdf5",
-  "rand",
+  "ndarray-rand",
   "rand_xoshiro",
+  "hdf5",
   "rayon",
   "crossbeam-channel",
   "serde_json",
@@ -57,7 +57,6 @@ rustfft = "^6.0.1"
 realfft = "^3.0.0"
 num-complex = { version = "^0.4", features = ["serde"] }
 log = { version = "0.4", features = ["std"], optional = true }
-rand = { version = "0.8", optional = true }
 rubato = { version = "0.11", optional = true }
 roots = { version = "0.0.7", optional = true }
 rand_xoshiro = { version = "0.6", optional = true }
@@ -67,6 +66,7 @@ ctrlc = { version = "3.2", optional = true }
 hound = { version = "3.4", optional = true }
 hdf5 = { version = "^0.8", optional = true, git = "https://github.com/aldanor/hdf5-rust/" }
 ndarray = { version = "^0.15", optional = true, features = ["serde"] }
+ndarray-rand = { version = "^0.14", optional = true }
 rayon = { version = "1.5", optional = true }
 crossbeam-channel = { version = "^0.5", optional = true }
 serde_json = { version = "1.0", optional = true }

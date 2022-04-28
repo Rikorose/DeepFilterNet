@@ -4,7 +4,8 @@ use std::ops::Range;
 use std::time::Instant;
 
 use ndarray::{prelude::*, Slice};
-use rand::{distributions::uniform::Uniform, Rng};
+use ndarray_rand::rand::{distributions::uniform::Uniform, Rng};
+use ndarray_rand::{rand_distr::Normal as NdNormal, RandomExt};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
