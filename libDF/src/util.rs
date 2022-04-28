@@ -9,7 +9,7 @@ use ndarray_rand::rand::distributions::{
     uniform::{SampleUniform, Uniform},
     Distribution,
 };
-use ndarray_rand::rand::{Rng, RngCore, Error as RandError};
+use ndarray_rand::rand::{Error as RandError, Rng, RngCore};
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use thiserror::Error;

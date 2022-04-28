@@ -697,18 +697,18 @@ impl RandReverbSim {
         if apply_speech {
             self.pad(speech, fft_size)?; // Pad since STFT will truncate at the end
             speech_rev =
-                Some(self.convolve(speech, rir_noise.view(), &mut state, Some(orig_len))?);
+                Some(self.convolve(speech, rir_noise.clone(), &mut state, Some(orig_len))?);
             // Speech should be a slightly dereverberant signal as target
             // TODO: Make dereverberation parameters configurable.
             let rir_speech = self.supress_late(rir_noise.clone(), self.sr, 5., 0.2, false)?;
-            *speech = self.convolve(speech, rir_speech.view(), &mut state, Some(orig_len))?;
+            *speech = self.convolve(speech, rir_speech, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.shape(), speech_rev.as_ref().unwrap().shape());
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
         if apply_noise {
             // Noisy contains reverberant noise
             self.pad(noise, fft_size)?;
-            *noise = self.convolve(noise, rir_noise.view(), &mut state, Some(orig_len))?;
+            *noise = self.convolve(noise, rir_noise, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
         Ok(speech_rev)
@@ -716,12 +716,20 @@ impl RandReverbSim {
     fn convolve(
         &self,
         x: &Array2<f32>,
-        rir: ArrayView2<f32>,
+        mut rir: Array2<f32>,
         state: &mut DFState,
         truncate: Option<usize>,
     ) -> Result<Array2<f32>> {
         let mut x_ = stft(x.as_standard_layout().view(), state, true);
-        let rir = fft(rir.view(), state)?;
+        let len = state.fft_forward.get_scratch_len();
+        if len < state.analysis_scratch.len() {
+            state.analysis_scratch.resize(len, Complex32::default())
+        }
+        let rir = fft(
+            &mut rir,
+            state.fft_forward.as_ref(),
+            &mut state.analysis_scratch,
+        )?;
         let rir: ArrayView3<Complex32> = match rir.broadcast(x_.shape()) {
             Some(r) => r.into_dimensionality()?,
             None => {
