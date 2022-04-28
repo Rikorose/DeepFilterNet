@@ -56,6 +56,8 @@ pub enum DfDatasetError {
     CacheError(#[from] crate::cache::DfCacheError),
     #[error("DF Utils Error")]
     UtilsError(#[from] crate::util::UtilsError),
+    #[error("Error Detail")]
+    ErrorDetail { source: Box<Self>, msg: String },
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Hdf5 Error")]
@@ -864,10 +866,20 @@ impl TdDataset {
             None
         };
         let mut x = if let Some(slc) = slc {
-            h.read_slc(key, slc)?
+            h.read_slc(key, slc)
         } else {
-            h.read(key)?
-        };
+            h.read(key)
+        }
+        .map_err(move |e: DfDatasetError| -> DfDatasetError {
+            DfDatasetError::ErrorDetail {
+                source: Box::new(e),
+                msg: format!(
+                    "Error reading sample '{}' from dataset {}",
+                    key,
+                    self.ds_name(idx)
+                ),
+            }
+        })?;
         if sr != self.sr {
             x = resample(&x, sr, self.sr, None)?;
             if let Some(l) = max_len {
