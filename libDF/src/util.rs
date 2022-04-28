@@ -9,7 +9,7 @@ use ndarray_rand::rand::distributions::{
     uniform::{SampleUniform, Uniform},
     Distribution,
 };
-use ndarray_rand::rand::{Rng, RngCore};
+use ndarray_rand::rand::{Rng, RngCore, Error as RandError};
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use thiserror::Error;
@@ -51,7 +51,7 @@ impl RngCore for SeededRng {
     fn fill_bytes(&mut self, slice: &mut [u8]) {
         unsafe { (*self.rng.get()).fill_bytes(slice) }
     }
-    fn try_fill_bytes(&mut self, slice: &mut [u8]) -> std::result::Result<(), rand::Error> {
+    fn try_fill_bytes(&mut self, slice: &mut [u8]) -> std::result::Result<(), RandError> {
         unsafe { (*self.rng.get()).try_fill_bytes(slice) }
     }
 }
