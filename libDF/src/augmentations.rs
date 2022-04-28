@@ -497,8 +497,8 @@ pub(crate) fn gen_noise(
     sr: u32,
 ) -> Result<Array2<f32>> {
     let mut fft = RealFftPlanner::new();
-    let fft_forward = Box::new(fft.plan_fft_forward(sr as usize));
-    let fft_inverse = Box::new(fft.plan_fft_inverse(sr as usize));
+    let fft_forward = fft.plan_fft_forward(sr as usize);
+    let fft_inverse = fft.plan_fft_inverse(sr as usize);
     let mut scratch_forward = fft_forward.make_scratch_vec();
     let mut scratch_inverse = fft_inverse.make_scratch_vec();
     gen_noise_with_scratch(
@@ -518,8 +518,8 @@ fn gen_noise_with_scratch(
     num_channels: u16,
     num_samples: u32,
     sr: u32,
-    fft_forward: &Arc<dyn RealToComplex<f32>>,
-    fft_inverse: &Arc<dyn ComplexToReal<f32>>,
+    fft_forward: &dyn RealToComplex<f32>,
+    fft_inverse: &dyn ComplexToReal<f32>,
     scratch_forward: &mut [Complex32],
     scratch_inverse: &mut [Complex32],
 ) -> Result<Array2<f32>> {
@@ -532,11 +532,11 @@ fn gen_noise_with_scratch(
         let spec = Array2::uninit([ch, sr / 2 + 1]);
         // Safety: Will be fully overwritten by fft transform.
         let mut spec = unsafe { spec.assume_init() };
-        fft_with_output(&mut noise, fft_forward.as_ref(), scratch_forward, &mut spec)?;
+        fft_with_output(&mut noise, fft_forward, scratch_forward, &mut spec)?;
         let mut mask = Array::linspace(1., ((sr / 2 + 1) as f32).sqrt(), spec.len_of(Axis(1)));
         mask.mapv_inplace(|x| x.powf(f_decay));
         spec = spec / mask.to_shape([1, sr / 2 + 1]).unwrap();
-        ifft_with_output(&mut spec, fft_inverse.as_ref(), scratch_inverse, &mut noise)?;
+        ifft_with_output(&mut spec, fft_inverse, scratch_inverse, &mut noise)?;
         noise
     } else {
         // Fast path for white noise
@@ -550,6 +550,85 @@ fn gen_noise_with_scratch(
     )?;
     noises.slice_axis_inplace(Axis(1), Slice::from(..n));
     Ok(noises)
+}
+
+pub(crate) struct NoiseGenerator {
+    sr: u32,
+    fft_forward: Arc<dyn RealToComplex<f32>>,
+    fft_inverse: Arc<dyn ComplexToReal<f32>>,
+}
+
+impl NoiseGenerator {
+    pub fn new(sr: usize) -> Self {
+        let mut fft = RealFftPlanner::new();
+        let fft_forward = fft.plan_fft_forward(sr);
+        let fft_inverse = fft.plan_fft_inverse(sr);
+        NoiseGenerator {
+            sr: sr as u32,
+            fft_forward,
+            fft_inverse,
+        }
+    }
+    /// Generate a random noise signal.
+    ///
+    /// # Arguments
+    ///
+    /// * `f_decay`: Decay variable. Typical values for common noises are:
+    ///     - white: `0.0`
+    ///     - pink: `1.0`
+    ///     - brown: `2.0`
+    ///     - blue: `-1.0`
+    ///     - purple: `-2.0`
+    /// * `num_channels`: Number of output channels.
+    /// * `num_samples`: Number of output samples.
+    ///
+    /// # Returns
+    ///
+    /// * `noise`: 2D array of shape `(num_channels, num_samples)`.
+    pub fn generate(
+        &self,
+        f_decay: f32,
+        num_channels: u16,
+        num_samples: u32,
+    ) -> Result<Array2<f32>> {
+        self.generate_with_scratch(
+            f_decay,
+            num_channels,
+            num_samples,
+            &mut self.fft_forward.make_scratch_vec(),
+            &mut self.fft_inverse.make_scratch_vec(),
+        )
+    }
+    pub fn generate_with_scratch(
+        &self,
+        f_decay: f32,
+        num_channels: u16,
+        num_samples: u32,
+        scratch_forward: &mut [Complex32],
+        scratch_inverse: &mut [Complex32],
+    ) -> Result<Array2<f32>> {
+        gen_noise_with_scratch(
+            f_decay,
+            num_channels,
+            num_samples,
+            self.sr,
+            self.fft_forward.as_ref(),
+            self.fft_inverse.as_ref(),
+            scratch_forward,
+            scratch_inverse,
+        )
+    }
+    pub fn generate_random_noise(
+        &self,
+        f_decay_min: f32,
+        f_decay_max: f32,
+        num_channels: u16,
+        num_samples: u32,
+    ) -> Result<Array2<f32>> {
+        debug_assert!(f_decay_min < f_decay_max);
+        let f_decay = thread_rng()?.uniform(f_decay_min, f_decay_max);
+        self.generate(f_decay, num_channels, num_samples)
+    }
 }
 
 pub(crate) struct RandReverbSim {
