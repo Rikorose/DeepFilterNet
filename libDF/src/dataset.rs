@@ -578,24 +578,25 @@ impl DatasetBuilder {
         let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
         let ds_split = datasets.split;
-        let mut sp_transforms = Compose::new(vec![
+        let mut sp_augmentations = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.1).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
+        let mut sp_distortions = Compose::new(Vec::new());
         if ds_split == Split::Train {
-            sp_transforms.push(Box::new(
+            sp_distortions.push(Box::new(
                 RandClipping::default_with_prob(0.05).with_c(0.05..0.9),
             ))
         }
-        let ns_transforms = Compose::new(vec![
+        let ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.25).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
         ]);
         if ds_split == Split::Train {
-            sp_transforms.push(Box::new(
+            sp_augmentations.push(Box::new(
                 RandClipping::default_with_prob(0.1).with_c(0.01..0.5),
             ))
         }
@@ -618,8 +619,9 @@ impl DatasetBuilder {
             snrs,
             gains,
             p_fill_speech,
-            sp_transforms,
-            ns_transforms,
+            sp_augmentations,
+            sp_distortions,
+            ns_augmentations,
             reverb,
             seed,
             ds_len,
@@ -821,11 +823,12 @@ pub struct TdDataset {
     sp_keys: Vec<(usize, String)>, // Pair of hdf5 index and dataset keys. Will be generated at each epoch start
     ns_keys: Vec<(usize, String)>,
     rir_keys: Vec<(usize, String)>,
-    snrs: Vec<i8>,          // in dB; SNR to sample from
-    gains: Vec<i8>,         // in dB; Speech (loudness) to sample from
+    snrs: Vec<i8>,             // in dB; SNR to sample from
+    gains: Vec<i8>,            // in dB; Speech (loudness) to sample from
     p_fill_speech: f32, // Probability to completely fill the speech signal to `max_samples` with a different speech sample
-    sp_transforms: Compose, // Transforms to augment speech samples
-    ns_transforms: Compose, // Transforms to augment noise samples
+    sp_augmentations: Compose, // Transforms to augment speech samples
+    sp_distortions: Compose, // Transforms to distort speech samples for used generating the mixture
+    ns_augmentations: Compose, // Transforms to augment noise samples
     reverb: RandReverbSim, // Separate reverb transform that may be applied to both speech and noise
     seed: u64,
     ds_len: usize,
@@ -955,7 +958,7 @@ impl Dataset<f32> for TdDataset {
         let mut rng = thread_rng()?;
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
-        self.sp_transforms.transform(&mut speech)?;
+        self.sp_augmentations.transform(&mut speech)?;
         let mut max_freq = self.max_freq(*sp_idx)?;
         while speech.len_of(Axis(1)) < self.max_sample_len()
             && self.p_fill_speech > 0.0
@@ -964,7 +967,7 @@ impl Dataset<f32> for TdDataset {
             // If too short, maybe sample another speech sample
             let (sp_idx, sp_key) = &self.sp_keys.choose(&mut rng).unwrap();
             let mut another_speech = self.read_max_len(*sp_idx, sp_key)?;
-            self.sp_transforms.transform(&mut another_speech)?;
+            self.sp_augmentations.transform(&mut another_speech)?;
             speech.append(Axis(1), another_speech.view())?;
             max_freq = max_freq.min(self.max_freq(*sp_idx)?);
         }
@@ -1008,7 +1011,7 @@ impl Dataset<f32> for TdDataset {
             if ns.len_of(Axis(1)) < 10 {
                 continue;
             }
-            self.ns_transforms.transform(&mut ns)?;
+            self.ns_augmentations.transform(&mut ns)?;
             if ns.len_of(Axis(1)) > self.max_samples {
                 ns.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
             }
@@ -1023,19 +1026,27 @@ impl Dataset<f32> for TdDataset {
         let &gain = self.gains.choose(&mut rng).unwrap();
         // Truncate to speech len, combine noises and mix to noisy
         let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains_f32.as_slice()))?;
+        // Optionally we may also introduce some distortions to the speech signal.
+        // These distortions will be only present in the noisy mixture, with the aim to reconstruce
+        // the original undistorted signal. Example distortions are reverberation, or clipping.
+        // TODO: Think about codec distortions or filters like low-pass.
+        let mut speech_distorted = None;
         // Apply reverberation using a randomly sampled RIR
-        let speech_rev = if !self.rir_keys.is_empty() {
-            self.reverb.transform(&mut speech, &mut noise, || {
+        if !self.rir_keys.is_empty() {
+            speech_distorted = self.reverb.transform(&mut speech, &mut noise, || {
                 let (rir_idx, rir_key) = self.rir_keys.iter().choose(&mut rng).unwrap();
                 let rir = self.read(*rir_idx, rir_key)?;
                 Ok(rir)
             })?
-        } else {
-            None
-        };
+        }
+        if !self.sp_distortions.is_empty() {
+            let mut d = speech_distorted.unwrap_or_else(|| speech.clone());
+            self.sp_distortions.transform(&mut d)?;
+            speech_distorted = Some(d);
+        }
         let (speech, noise, noisy) = mix_audio_signal(
             speech,
-            speech_rev,
+            speech_distorted,
             noise,
             snr as f32,
             gain as f32,
@@ -1674,10 +1685,10 @@ fn combine_noises(
 /// Arguments
 ///
 /// * `clean` - A clean speech signal of shape `[C, N]`.
-/// * `clean_rev` - A optional reverberant speech signal of shape `[C, N]`. If provided, this signal
-///                 will be used for creating the noisy mixture. `clean` may be used as a training
-///                 target and usually contains no or less reverberation. This can be used to learn
-///                 some dereverberation.
+/// * `clean_dist` - An optional distorted speech signal of shape `[C, N]`. If provided, this signal
+///                  will be used for creating the noisy mixture. `clean` may be used as a training
+///                  target and usually contains no or less distortions. This can be used to learn
+///                  some dereverberation or declipping.
 /// * `noise` - A noise signal of shape `[C, N]`. Will be modified in place.
 /// * `snr_db` - Signal to noise ratio in decibel used for mixing.
 /// * `gain_db` - Gain to apply to the clean signal in decibel before mixing.
@@ -1687,7 +1698,7 @@ fn combine_noises(
 ///                     same sampling rate.
 fn mix_audio_signal(
     clean: Array2<f32>,
-    clean_rev: Option<Array2<f32>>,
+    clean_dist: Option<Array2<f32>>,
     mut noise: Array2<f32>,
     snr_db: f32,
     gain_db: f32,
@@ -1702,8 +1713,8 @@ fn mix_audio_signal(
     // Apply gain to speech
     let g = 10f32.powf(gain_db / 20.);
     let mut clean_out = &clean * g;
-    // clean_mix may contain reverberant speech
-    let clean_mix = clean_rev.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
+    // clean_mix may contain distorted speech
+    let clean_mix = clean_dist.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
     // For energy calculation use clean speech to also consider direct-to-reverberant ratio
     noise *= mix_f(clean_out.view(), noise.view(), snr_db);
     let mut mixture = clean_mix + &noise;

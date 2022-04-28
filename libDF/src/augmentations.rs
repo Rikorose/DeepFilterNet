@@ -100,6 +100,12 @@ impl Compose {
         }
         Ok(())
     }
+    pub fn len(&self) -> usize {
+        self.transforms.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.transforms.is_empty()
+    }
 }
 impl Clone for Compose {
     fn clone(&self) -> Self {
