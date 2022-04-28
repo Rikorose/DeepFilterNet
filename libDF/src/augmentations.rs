@@ -3,9 +3,9 @@ use std::ops::Range;
 #[cfg(feature = "dataset_timings")]
 use std::time::Instant;
 
-use ndarray::{prelude::*, Slice};
-use ndarray_rand::rand::{distributions::uniform::Uniform, Rng};
-use ndarray_rand::{rand_distr::Normal as NdNormal, RandomExt};
+use ndarray::{concatenate, prelude::*, Slice};
+use ndarray_rand::rand::Rng;
+use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
@@ -416,7 +416,7 @@ impl Transform for RandClipping {
         let c = if let Some(db_range) = self.db_range.as_ref() {
             let target_snr = rng.uniform(db_range.start, db_range.end);
             if let Some(c) = self.find_root(x.view(), target_snr, Some(max)) {
-                dbg!(c)
+                c
             } else {
                 return Ok(());
             }
@@ -488,6 +488,56 @@ pub fn low_pass(x: &mut Array2<f32>, freq: f32, sr: usize, q: Option<f32>) -> Re
         biquad_inplace(x_ch, &mut mem, &[b0, b1, b2], &[a0, a1, a2]);
     }
     Ok(())
+}
+
+pub(crate) fn gen_noise(
+    f_decay: f32,
+    num_channels: u16,
+    num_samples: u32,
+    sr: u32,
+    fft_forward: &Arc<dyn RealToComplex<f32>>,
+    fft_inverse: &Arc<dyn ComplexToReal<f32>>,
+) -> Result<Array2<f32>> {
+    // Adopted from torch_audiomentations
+    let sr = sr as usize;
+    let ch = num_channels as usize;
+    let n = num_samples as usize;
+    let mut noise = if f_decay != 0. {
+        let mut noise = Array::random((ch, sr), Normal::new(0., 1.).unwrap());
+        let spec = Array2::uninit([ch, sr / 2 + 1]);
+        let mut spec = unsafe { spec.assume_init() };
+        for (mut input_ch, mut output_ch) in noise.outer_iter_mut().zip(spec.outer_iter_mut()) {
+            fft_forward
+                .process(
+                    input_ch.as_slice_mut().unwrap(),
+                    output_ch.as_slice_mut().unwrap(),
+                )
+                .unwrap();
+        }
+        let mut mask = Array::linspace(1., ((sr / 2 + 1) as f32).sqrt(), spec.len_of(Axis(1)));
+        mask.mapv_inplace(|x| x.powf(f_decay));
+        spec = spec / mask.to_shape([1, sr / 2 + 1]).unwrap();
+        for (mut input_ch, mut output_ch) in spec.outer_iter_mut().zip(noise.outer_iter_mut()) {
+            fft_inverse
+                .process(
+                    input_ch.as_slice_mut().unwrap(),
+                    output_ch.as_slice_mut().unwrap(),
+                )
+                .unwrap();
+        }
+        noise
+    } else {
+        // Fast path for white noise
+        Array::random((ch, sr), Normal::new(-1., 1.).unwrap())
+    };
+    let max = find_max(&noise)? * 1.1;
+    noise /= max;
+    let mut noises = concatenate(
+        Axis(1),
+        &vec![noise.view(); (num_samples as f32 / sr as f32).ceil() as usize],
+    )?;
+    noises.slice_axis_inplace(Axis(1), Slice::from(..n));
+    Ok(noises)
 }
 
 pub(crate) struct RandReverbSim {
@@ -715,6 +765,9 @@ mod tests {
 
     /// Setup function that is only run once, even if called multiple times.
     fn setup() {
+        seed_from_u64(42);
+        create_out_dir().expect("Could not create output directory");
+
         INIT.call_once(|| {
             let _ = env_logger::builder()
                 // Include all events in tests
@@ -736,7 +789,6 @@ mod tests {
     #[test]
     pub fn test_rand_resample() -> Result<()> {
         setup();
-        create_out_dir().expect("Could not create output directory");
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let mut test_sample = reader.samples_arr2()?;
@@ -751,7 +803,6 @@ mod tests {
     #[test]
     pub fn test_low_pass() -> Result<()> {
         setup();
-        create_out_dir().expect("Could not create output directory");
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let mut test_sample = reader.samples_arr2()?;
@@ -768,8 +819,6 @@ mod tests {
     #[test]
     pub fn test_reverb() -> Result<()> {
         setup();
-        create_out_dir().expect("Could not create output directory");
-        seed_from_u64(42);
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr;
         let len = 4 * sr;
@@ -792,8 +841,6 @@ mod tests {
     #[test]
     pub fn test_clipping() -> Result<()> {
         setup();
-        create_out_dir().expect("Could not create output directory");
-        seed_from_u64(42);
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let test_sample = reader.samples_arr2()?;
@@ -815,6 +862,28 @@ mod tests {
         let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(c, resulting_snr);
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_gen_noise() -> Result<()> {
+        setup();
+
+        let sr = 48000;
+        let ch = 2;
+        let mut fft = RealFftPlanner::<f32>::new();
+        let forward = fft.plan_fft_forward(sr as usize);
+        let backward = fft.plan_fft_inverse(sr as usize);
+        let white_noise = gen_noise(0., ch, sr * 3, sr, &forward, &backward)?;
+        let pink_noise = gen_noise(1., ch, sr * 3, sr, &forward, &backward)?;
+        let brown_noise = gen_noise(2., ch, sr * 3, sr, &forward, &backward)?;
+        let blue_noise = gen_noise(-1., ch, sr * 3, sr, &forward, &backward)?;
+        let violet_noise = gen_noise(-1., ch, sr * 3, sr, &forward, &backward)?;
+        write_wav_iter("../out/white_noise.wav", white_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/pink_noise.wav", pink_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/brown_noise.wav", brown_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/blue_noise.wav", blue_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/violet_noise.wav", violet_noise.iter(), sr, ch)?;
         Ok(())
     }
 }
