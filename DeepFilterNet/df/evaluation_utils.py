@@ -149,7 +149,6 @@ def evaluation_loop_dns(
         for m in metrics:
             for k, v in m.mean().items():
                 out_dict[k] = v
-        print(f"pesq mean: {np.mean(pesqs)}")
         return out_dict
 
 
