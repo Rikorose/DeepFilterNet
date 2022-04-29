@@ -24,16 +24,35 @@ jobs:
       matrix:
         python: ["3.9"]
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        is_pr:
+          - ${{ github.event_name == 'pull_request' }}
         include:
-          - os: "windows-latest"
-            extra: "-E soundfile"  # Soundfile backend for torchaudio
           - os: "ubuntu-latest"
-            extra: "-E semetrics"  # Aditionally test against original matlab composite metrics
+          #   extra: "-E semetrics"  # Aditionally test against original matlab composite metrics
+          #   is_pr: true
+          # - os: "windows-latest"
+          #   extra: "-E soundfile"  # Soundfile backend for torchaudio
+          # - os: "macos-latest"
+        exclude:
+          - os: "macos-latest"
+          - is_pr: true  # Run only linux on PR
+          - os: "windows-latest"
+          - is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v2
+      # Aditionally test against original matlab composite metrics
+      - name: Set Extra Dependency Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "EXTRA=-E semetrics" >> $GITHUB_ENV
+      # Soundfile backend for torchaudio
+      - name: Set Extra Dependency Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "EXTRA=-E soundfile" >> $GITHUB_ENV
       - name: Rust cache
         uses: actions/cache@v2
         with:
@@ -68,7 +87,7 @@ jobs:
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          poetry install --no-interaction -E eval ${{matrix.extra}}
+          poetry install --no-interaction -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
