@@ -15,8 +15,8 @@ from df.evaluation_utils import composite, si_sdr_speechmetrics, stoi
 __a_tol = 1e-4
 
 
-def eval_composite(clean, enhanced, sr, m_target: List[float]):  # type: ignore
-    logger.info("Computing composite metrics")
+def eval_composite(clean, enhanced, sr, m_target: List[float], prefix: str = ""):  # type: ignore
+    logger.info(prefix + "Computing composite metrics")
     try:
         m_enh_octave = torch.as_tensor(
             composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr, use_octave=True)
@@ -27,35 +27,37 @@ def eval_composite(clean, enhanced, sr, m_target: List[float]):  # type: ignore
     m_enh = torch.as_tensor(
         composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr)
     ).to(torch.float32)
-    logger.info(f"Got {m_enh}")
+    logger.info(prefix + f"Got {m_enh}")
     m_target: torch.Tensor = torch.as_tensor(m_target)
-    assert torch.isclose(
-        m_enh, m_target, atol=__a_tol
-    ).all(), f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    assert torch.isclose(m_enh, m_target, atol=__a_tol).all(), (
+        prefix
+        + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    )
     if m_enh_octave is not None:
-        assert torch.isclose(
-            m_enh_octave, m_target, atol=__a_tol
-        ).all(), (
-            f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+        assert torch.isclose(m_enh_octave, m_target, atol=__a_tol).all(), (
+            prefix
+            + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
         )
 
 
-def eval_pystoi(clean, enhanced, sr, m_target: float):
-    logger.info("Computing STOI")
+def eval_pystoi(clean, enhanced, sr, m_target: float, prefix: str = ""):
+    logger.info(prefix + "Computing STOI")
     m_enh = stoi(clean.squeeze(0), enhanced.squeeze(0), sr)
-    logger.info(f"Got {m_enh}")
-    assert np.isclose(
-        [m_enh], [m_target], atol=__a_tol
-    ), f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    logger.info(prefix + f"Got {m_enh}")
+    assert np.isclose([m_enh], [m_target], atol=__a_tol), (
+        prefix
+        + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    )
 
 
-def eval_sdr(clean, enhanced, m_target: float):
-    logger.info("Computing SI-SDR")
+def eval_sdr(clean, enhanced, m_target: float, prefix: str = ""):
+    logger.info(prefix + "Computing SI-SDR")
     m_enh = si_sdr_speechmetrics(clean.numpy(), enhanced.numpy())
-    logger.info(f"Got {m_enh}")
-    assert np.isclose(
-        [m_enh], [m_target]
-    ), f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    logger.info(prefix + f"Got {m_enh}")
+    assert np.isclose([m_enh], [m_target]), (
+        prefix
+        + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
+    )
 
 
 TARGET_METRICS = {
@@ -115,6 +117,7 @@ class TestDfModels(unittest.TestCase):
         model: torch.nn.Module,
         df_state: DF,
         target_metrics: Dict[str, Union[float, List[float]]],
+        prefix: str = "",
     ):
         sr = df_state.sr()
         logger.info("Loading audios")
@@ -125,21 +128,21 @@ class TestDfModels(unittest.TestCase):
             os.path.join(self.df_dir, os.path.pardir, "assets", "clean_freesound_33711.wav"), sr
         )
         enhanced = enhance(model, df_state, noisy, pad=True)
-        eval_composite(clean, enhanced, sr, target_metrics["composite"])  # type: ignore
-        eval_pystoi(clean, enhanced, sr, m_target=target_metrics["stoi"])  # type: ignore
-        eval_sdr(clean, enhanced, m_target=target_metrics["sdr"])  # type: ignore
+        eval_composite(clean, enhanced, sr, target_metrics["composite"], prefix=prefix)  # type: ignore
+        eval_pystoi(clean, enhanced, sr, m_target=target_metrics["stoi"], prefix=prefix)  # type: ignore
+        eval_sdr(clean, enhanced, m_target=target_metrics["sdr"], prefix=prefix)  # type: ignore
 
     def test_deepfilternet(self):
         model = "DeepFilterNet"
-        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model])
+        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
     def test_deepfilternet2a(self):
         model = "DeepFilterNet2a"
-        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model])
+        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
     def test_deepfilternet2(self):
         model = "DeepFilterNet2b"
-        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model])
+        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
 
 if __name__ == "__main__":

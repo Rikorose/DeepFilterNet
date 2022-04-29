@@ -28,11 +28,6 @@ jobs:
           - ${{ github.event_name == 'pull_request' }}
         include:
           - os: "ubuntu-latest"
-          #   extra: "-E semetrics"  # Aditionally test against original matlab composite metrics
-          #   is_pr: true
-          # - os: "windows-latest"
-          #   extra: "-E soundfile"  # Soundfile backend for torchaudio
-          # - os: "macos-latest"
         exclude:
           - os: "macos-latest"
           - is_pr: true  # Run only linux on PR
