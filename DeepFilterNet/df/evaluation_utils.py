@@ -8,7 +8,6 @@ from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import pystoi
-import requests
 import torch
 import torch.multiprocessing as mp
 from loguru import logger
@@ -22,6 +21,11 @@ from df.enhance import df_features, load_audio, save_audio
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
 from libdf import DF
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 RESAMPLE_METHOD = "sinc_fast"
 
@@ -79,6 +83,7 @@ def evaluation_loop(
         "composite": partial(CompositeMetric, sr=sr),
         "composite-octave": partial(CompositeMetric, sr=sr, use_octave=True),
         "pesq": partial(PesqMetric, sr=sr),
+        "pesq-nb": partial(PesqMetric, sr=sr, nb=True),
     }
     if n_workers >= 1:
         pool_fn = mp.Pool
@@ -93,8 +98,8 @@ def evaluation_loop(
             noisy, _ = load_audio(noisyfn, 16000)
             clean, _ = load_audio(cleanfn, 16000)
             pesqs.append(pesq_(clean, noisy, 16000))
-            noisy, _ = load_audio(noisyfn, sr)
-            clean, _ = load_audio(cleanfn, sr)
+            noisy, _ = load_audio(noisyfn, sr, method="kaiser_best")
+            clean, _ = load_audio(cleanfn, sr, method="kaiser_best")
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
             enh = enhance(model, df_state, noisy)[0]
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
@@ -127,25 +132,25 @@ def evaluation_loop_dns(
         "p808": partial(DnsMosP808ApiMetric, sr=sr),
         "p835": partial(DnsMosP835ApiMetric, sr=sr),
     }
-    pesqs = []
-    metrics: List[NoisyMetric] = [metrics_dict[m.lower()]() for m in metrics]
-    for noisyfn in log_progress(noisy_files, len(noisy_files), log_percent):
-        noisy, _ = load_audio(noisyfn, sr)
-        logger.debug(f"Processing {os.path.basename(noisyfn)}")
-        enh = enhance(model, df_state, noisy)[0]
-        noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
+    with DummyPool(processes=max(1, n_workers)) as pool:
+        metrics: List[NoisyMetric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
+        for noisyfn in log_progress(noisy_files, len(noisy_files), log_percent):
+            noisy, _ = load_audio(noisyfn, sr)
+            logger.debug(f"Processing {os.path.basename(noisyfn)}")
+            enh = enhance(model, df_state, noisy)[0]
+            noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
+            for m in metrics:
+                m.add(enhanced=enh, noisy=noisy)
+            if save_audio_callback is not None:
+                enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
+                save_audio_callback(noisyfn, enh)
+        logger.info("Waiting for metrics computation completion. This could take a few minutes.")
+        out_dict = {}
         for m in metrics:
-            m.add(enhanced=enh, noisy=noisy)
-        if save_audio_callback is not None:
-            enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
-            save_audio_callback(noisyfn, enh)
-    logger.info("Waiting for metrics computation completion. This could take a few minutes.")
-    out_dict = {}
-    for m in metrics:
-        for k, v in m.mean().items():
-            out_dict[k] = v
-    print(f"pesq mean: {np.mean(pesqs)}")
-    return out_dict
+            for k, v in m.mean().items():
+                out_dict[k] = v
+        print(f"pesq mean: {np.mean(pesqs)}")
+        return out_dict
 
 
 def stoi(clean, degraded, sr, extended=False):
@@ -264,7 +269,7 @@ class Metric(ABC):
         self._add_values_enh(values_enh)
         if noisy is not None:
             noisy = self.maybe_resample(noisy).squeeze(0)
-            values_noisy = self.compute_metric(clean=clean, degraded=enhanced)
+            values_noisy = self.compute_metric(clean=clean, degraded=noisy)
             self._add_values_noisy(values_noisy)
 
     def mean(self) -> Dict[str, float]:
@@ -345,12 +350,20 @@ class StoiMetric(MPMetric):
 
 
 class PesqMetric(MPMetric):
-    def __init__(self, sr: int, pool: Pool):
-        super().__init__(name="PESQ", pool=pool, source_sr=sr, target_sr=16000)
+    def __init__(self, sr: int, pool: Pool, nb: bool = False):
+        if nb:
+            name = "PESQ-NB"
+            self.mode = "nb"
+            target_sr = 8000
+        else:
+            name = "PESQ"
+            self.mode = "wb"
+            target_sr = 16000
+        super().__init__(name=name, pool=pool, source_sr=sr, target_sr=target_sr)
 
     def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        return pesq(self.sr, as_numpy(clean), as_numpy(degraded), "wb")
+        return pesq(self.sr, as_numpy(clean), as_numpy(degraded), self.mode)
 
 
 class CompositeMetric(MPMetric):
@@ -370,14 +383,14 @@ class CompositeMetric(MPMetric):
         return c
 
 
-class NoisyMetric(Metric):
+class NoisyMetric(MPMetric):
     def add(self, enhanced, noisy):
         enhanced = self.maybe_resample(enhanced).squeeze(0)
         values_enh = self.compute_metric(degraded=enhanced)
         self._add_values_enh(values_enh)
         if noisy is not None:
             noisy = self.maybe_resample(noisy).squeeze(0)
-            values_noisy = self.compute_metric(degraded=enhanced)
+            values_noisy = self.compute_metric(degraded=noisy)
             self._add_values_noisy(values_noisy)
 
     @abstractmethod
@@ -385,89 +398,56 @@ class NoisyMetric(Metric):
         pass
 
 
+def mos_api_req(url: str, key: str, audio: Tensor) -> Dict[str, float]:
+    assert requests is not None
+    # Set the content type
+    headers = {"Content-Type": "application/json"}
+    # If authentication is enabled, set the authorization header
+    headers["Authorization"] = f"Basic {key}"
+
+    data = {"data": audio.tolist(), "filename": "audio.wav"}
+    input_data = json.dumps(data)
+
+    tries = 0
+    e = ""
+    while tries < 20:
+        try:
+            resp = requests.post(url, data=input_data, headers=headers, timeout=50)
+            score_dict = resp.json()
+            print(score_dict)
+            return score_dict
+        except Exception as e:
+            print(e)
+            tries += 1
+            print("retry_1")
+            continue
+    raise ValueError("Error gettimg mos:", e)
+
+
 class DnsMosP808ApiMetric(NoisyMetric):
-    def __init__(self, sr: int):
-        super().__init__(name="MOS", source_sr=sr, target_sr=16000)
+    def __init__(self, sr: int, pool: Pool):
+        super().__init__(name="MOS", pool=pool, source_sr=sr, target_sr=16000)
         self.url = "https://dnsmos.azurewebsites.net/score"
         self.key = os.environ["DNS_AUTH_KEY"]
 
-    def mos(self, audio) -> Union[float, np.ndarray]:
-        # Set the content type
-        headers = {"Content-Type": "application/json"}
-        # If authentication is enabled, set the authorization header
-        headers["Authorization"] = f"Basic {self.key}"
-
-        data = {"data": audio.tolist(), "filename": "audio.wav"}
-        input_data = json.dumps(data)
-
-        try_flag = 1
-        e = ""
-        while try_flag:
-            try:
-                resp = requests.post(self.url, data=input_data, headers=headers, timeout=50)
-                try_flag = 0
-                score_dict = resp.json()
-            except Exception as e:
-                print(e)
-                try_flag = 1
-                print("retry_1")
-                continue
-            try:
-                print(score_dict)
-                return float(score_dict["mos"])
-            except Exception as e:
-                print(e)
-                try_flag = 1
-                print("retry_2")
-                continue
-        raise ValueError("Error gettimg mos:", e)
-
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        return self.mos(degraded)
+        score_dict = mos_api_req(self.url, self.key, degraded)
+        return float(score_dict["mos"])
 
 
 class DnsMosP835ApiMetric(NoisyMetric):
-    def __init__(self, sr: int):
-        super().__init__(name=["SIGMOS", "BAKMOS", "OVLMOS"], source_sr=sr, target_sr=16000)
+    def __init__(self, sr: int, pool: Pool):
+        super().__init__(
+            name=["SIGMOS", "BAKMOS", "OVLMOS"], pool=pool, source_sr=sr, target_sr=16000
+        )
         self.url = "https://dnsmos.azurewebsites.net/v1/dnsmosp835/score"
         self.key = os.environ["DNS_AUTH_KEY"]
 
-    def mos(self, audio) -> Union[float, np.ndarray]:
-        # Set the content type
-        headers = {"Content-Type": "application/json"}
-        # If authentication is enabled, set the authorization header
-        headers["Authorization"] = f"Basic {self.key}"
-
-        data = {"data": audio.tolist(), "filename": "audio.wav"}
-        input_data = json.dumps(data)
-
-        try_flag = 1
-        e = ""
-        while try_flag:
-            try:
-                resp = requests.post(self.url, data=input_data, headers=headers, timeout=50)
-                try_flag = 0
-                score_dict = resp.json()
-            except Exception as e:
-                print(e)
-                try_flag = 1
-                print("retry_1")
-                continue
-            try:
-                print(score_dict)
-                c = np.asarray([float(score_dict[c]) for c in ("mos_sig", "mos_bak", "mos_ovr")])
-                return c
-            except Exception as e:
-                print(e)
-                try_flag = 1
-                print("retry_2")
-                continue
-        raise ValueError("Error gettimg mos:", e)
-
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        return self.mos(degraded)
+        score_dict = mos_api_req(self.url, self.key, degraded)
+        return np.asarray([float(score_dict[c]) for c in ("mos_sig", "mos_bak", "mos_ovr")])
 
 
 def as_numpy(x) -> np.ndarray:
