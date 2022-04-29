@@ -975,11 +975,12 @@ mod tests {
 
         let sr = 48000;
         let ch = 2;
-        let white_noise = gen_noise(0., ch, sr * 3, sr)?;
-        let pink_noise = gen_noise(1., ch, sr * 3, sr)?;
-        let brown_noise = gen_noise(2., ch, sr * 3, sr)?;
-        let blue_noise = gen_noise(-1., ch, sr * 3, sr)?;
-        let violet_noise = gen_noise(-1., ch, sr * 3, sr)?;
+        let n = sr as usize * 3; // 3 seconds
+        let white_noise = gen_noise(0., ch, n, sr)?;
+        let pink_noise = gen_noise(1., ch, n, sr)?;
+        let brown_noise = gen_noise(2., ch, n, sr)?;
+        let blue_noise = gen_noise(-1., ch, n, sr)?;
+        let violet_noise = gen_noise(-1., ch, n, sr)?;
         write_wav_iter("../out/white_noise.wav", white_noise.iter(), sr, ch)?;
         write_wav_iter("../out/pink_noise.wav", pink_noise.iter(), sr, ch)?;
         write_wav_iter("../out/brown_noise.wav", brown_noise.iter(), sr, ch)?;
