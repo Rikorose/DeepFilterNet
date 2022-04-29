@@ -43,8 +43,8 @@ def main(args):
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
-        rtf = t_audio / t
-        logger.info(f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.1f})")
+        rtf = t / t_audio
+        logger.info(f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.3f})")
         audio = resample(audio, df_sr, meta.sample_rate)
         save_audio(
             file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=True
