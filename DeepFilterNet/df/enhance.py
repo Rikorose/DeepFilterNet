@@ -153,7 +153,8 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
     Args:
         file (str): Path to an audio file.
         sr (int): Target sampling rate. May resample the audio.
-        **kwargs: Passed to torchaudio.load(). Depend on the backend.
+        **kwargs: Passed to torchaudio.load(). Depends on the backend. `method` is passed to
+            `resample()`.
 
     Returns:
         audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
@@ -162,6 +163,9 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
     ikwargs = {}
     if "format" in kwargs:
         ikwargs["format"] = kwargs["format"]
+    rkwargs = {}
+    if "method" in kwargs:
+        rkwargs["method"] = kwargs.pop("method")
     info = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
     if orig_sr != sr:
@@ -169,7 +173,7 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
             f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
             "Resampling..."
         )
-        audio = resample(audio, orig_sr, sr)
+        audio = resample(audio, orig_sr, sr, **rkwargs)
     return audio, info
 
 
