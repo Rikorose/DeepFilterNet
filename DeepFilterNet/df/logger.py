@@ -1,5 +1,6 @@
 import os
 import sys
+import warnings
 from collections import defaultdict
 from copy import deepcopy
 from typing import Dict, Optional, Tuple
@@ -164,7 +165,11 @@ _duplicate_filter = DuplicateFilter()
 
 
 def log_model_summary(model: torch.nn.Module, verbose=False):
-    import ptflops
+    try:
+        import ptflops
+    except ImportError:
+        logger.debug("Failed to import ptflops. Cannot print model summary.")
+        return
 
     from df.model import ModelParams
 
@@ -181,6 +186,7 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
     feat_erb = torch.randn([b, 1, t, p.nb_erb]).to(device)
     feat_spec = torch.randn([b, 1, t, p.nb_df, 2]).to(device)
 
+    warnings.filterwarnings("ignore", "RNN module weights", category=UserWarning, module="torch")
     macs, params = ptflops.get_model_complexity_info(
         deepcopy(model),
         (t,),
