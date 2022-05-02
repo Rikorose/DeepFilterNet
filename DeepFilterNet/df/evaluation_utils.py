@@ -1,10 +1,11 @@
+import csv
 import json
 import os
 from abc import ABC, abstractmethod
-from collections import deque
+from collections import defaultdict, deque
 from functools import partial
 from multiprocessing.dummy import Pool as DummyPool
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pystoi
@@ -75,6 +76,8 @@ def evaluation_loop(
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
     n_workers: int = 4,
     log_percent: int = 25,
+    csv_path_enh: Optional[str] = None,
+    csv_path_noisy: Optional[str] = None,
 ) -> Dict[str, float]:
     sr = df_state.sr()
     metrics_dict = {
@@ -105,7 +108,7 @@ def evaluation_loop(
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
             for m in metrics:
-                m.add(clean=clean, enhanced=enh, noisy=noisy)
+                m.add(clean=clean, enhanced=enh, noisy=noisy, fn=os.path.basename(noisyfn))
             if save_audio_callback is not None:
                 enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
                 save_audio_callback(cleanfn, enh)
@@ -115,6 +118,18 @@ def evaluation_loop(
             for k, v in m.mean().items():
                 out_dict[k] = v
         print(f"pesq mean: {np.mean(pesqs)}")
+        if csv_path_enh is not None:
+            enh = defaultdict(dict)  # {filename: {metric_name: metric_value}}
+            for m in metrics:
+                for fn, values in m.flattend().items():
+                    enh[fn] = {**enh[fn], **values}
+            write_csv(csv_path_enh, enh)
+        if csv_path_noisy is not None:
+            noisy = defaultdict(dict)  # {filename: {metric_name: metric_value}}
+            for m in metrics:
+                for fn, values in m.flattend(noisy=True).items():
+                    noisy[fn] = {**noisy[fn], **values}
+            write_csv(csv_path_noisy, noisy)
         return out_dict
 
 
@@ -124,8 +139,8 @@ def evaluation_loop_dns(
     noisy_files: List[str],
     metrics: List[str] = ["p808"],  # type: ignore
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
-    n_workers: int = 4,
-    log_percent: int = 25,
+    n_workers: int = 8,
+    log_percent: int = 10,
 ) -> Dict[str, float]:
     sr = df_state.sr()
     metrics_dict = {
@@ -140,7 +155,7 @@ def evaluation_loop_dns(
             enh = enhance(model, df_state, noisy)[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
             for m in metrics:
-                m.add(enhanced=enh, noisy=noisy)
+                m.add(enhanced=enh, noisy=noisy, fn=os.path.basename(noisyfn))
             if save_audio_callback is not None:
                 enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
                 save_audio_callback(noisyfn, enh)
@@ -219,6 +234,21 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
     return sisdr
 
 
+def write_csv(path: str, flattend: Dict[str, Dict[str, float]]):
+    """Write metrics to a csv file of format file_name,metric_a,metric_b,...
+
+    Args:
+        path (str): Path to csv file to write. Will be overwritten if existing.
+        flattend (dict): Dictionary with structure `{filename: {metric_name, metric_value}}`.
+    """
+    metric_names = list(iter(flattend.values()).__next__().keys())
+    with open(path, mode="w", newline="") as csvfile:
+        csvwriter = csv.writer(csvfile, delimiter=",", quoting=csv.QUOTE_MINIMAL)
+        csvwriter.writerow(["filename"] + metric_names)
+        for fn, m in flattend.items():
+            csvwriter.writerow([fn] + [str(m[n]) for n in metric_names])
+
+
 class Metric(ABC):
     def __init__(
         self,
@@ -233,10 +263,10 @@ class Metric(ABC):
         if source_sr is not None and target_sr is not None and source_sr != target_sr:
             params = get_resample_params(RESAMPLE_METHOD)
             self.resampler = Resample(source_sr, target_sr, **params).to(device)
-        self.enh_values: Dict[str, List[float]] = (
+        self.enh_values: Dict[str, List[Tuple[Optional[str], float]]] = (
             {name: []} if isinstance(name, str) else {n: [] for n in name}
         )
-        self.noisy_values: Dict[str, List[float]] = (
+        self.noisy_values: Dict[str, List[Tuple[Optional[str], float]]] = (
             {name: []} if isinstance(name, str) else {n: [] for n in name}
         )
 
@@ -244,40 +274,55 @@ class Metric(ABC):
     def compute_metric(self, clean, degraded) -> Union[float, np.ndarray]:
         pass
 
-    def _add_values_enh(self, values_enh: Union[float, np.ndarray]):
+    def _add_values_enh(self, values_enh: Union[float, np.ndarray], fn: Optional[str] = None):
         if isinstance(values_enh, float):
             values_enh = np.asarray([values_enh])
         for k, v in zip(self.enh_values.keys(), values_enh):
-            self.enh_values[k].append(v)
+            self.enh_values[k].append((fn, v))
 
-    def _add_values_noisy(self, values_noisy: Union[float, np.ndarray]):
+    def _add_values_noisy(self, values_noisy: Union[float, np.ndarray], fn: Optional[str] = None):
         if isinstance(values_noisy, float):
             values_noisy = np.asarray([values_noisy])
         for k, v in zip(self.noisy_values.keys(), values_noisy):
-            self.noisy_values[k].append(v)
+            self.noisy_values[k].append((fn, v))
 
     def maybe_resample(self, x) -> Tensor:
         if self.resampler is not None:
             x = self.resampler.forward(torch.as_tensor(x))
         return x
 
-    def add(self, clean, enhanced, noisy):
+    def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
         clean = self.maybe_resample(clean).squeeze(0)
         enhanced = self.maybe_resample(enhanced).squeeze(0)
         values_enh = self.compute_metric(clean=clean, degraded=enhanced)
-        self._add_values_enh(values_enh)
+        self._add_values_enh(values_enh, fn)
         if noisy is not None:
             noisy = self.maybe_resample(noisy).squeeze(0)
             values_noisy = self.compute_metric(clean=clean, degraded=noisy)
-            self._add_values_noisy(values_noisy)
+            self._add_values_noisy(values_noisy, fn)
 
     def mean(self) -> Dict[str, float]:
         out = {}
-        for k in self.enh_values.keys():
-            if k in self.noisy_values and len(self.noisy_values[k]) > 0:
-                out[f"Noisy    {k}"] = np.mean(self.noisy_values[k])
-            out[f"Enhanced {k}"] = np.mean(self.enh_values[k])
+        for n in self.enh_values.keys():
+            if n in self.noisy_values and len(self.noisy_values[n]) > 0:
+                out[f"Noisy    {n}"] = np.mean([v[1] for v in self.noisy_values[n]])
+            out[f"Enhanced {n}"] = np.mean([v[1] for v in self.enh_values[n]])
         return out
+
+    def flattend(self, noisy: bool = False) -> Dict[str, Dict[str, float]]:
+        """{filename: {metric_name: metric_value}}"""
+        enh_flat: Dict[str, Dict[str, float]] = {}
+        noisy_flat = {}
+        names = list(self.enh_values.keys())
+        for n in names:
+            if n in self.noisy_values and len(self.noisy_values[n]) > 0:
+                for fn, v in self.noisy_values[n]:
+                    noisy_flat[fn or ""][n] = v
+            for fn, v in self.enh_values[n]:
+                enh_flat[fn or ""][n] = v
+        if noisy:
+            return noisy_flat
+        return enh_flat
 
 
 # Multiprocessing Metric
@@ -293,13 +338,13 @@ class MPMetric(Metric):
         self.pool = pool
         self.worker_results = deque()
 
-    def add(self, clean, enhanced, noisy):
+    def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
         clean = self.maybe_resample(torch.as_tensor(clean)).squeeze(0)
         enhanced = self.maybe_resample(torch.as_tensor(enhanced)).squeeze(0)
         h = self.pool.apply_async(
             self.compute_metric,
             (clean, enhanced),
-            callback=self._add_values_enh,
+            callback=lambda x: self._add_values_enh(x, fn),
             error_callback=logger.error,
         )
         h.get()
@@ -308,7 +353,7 @@ class MPMetric(Metric):
             h = self.pool.apply_async(
                 self.compute_metric,
                 (clean, noisy),
-                callback=self._add_values_noisy,
+                callback=lambda x: self._add_values_noisy(x, fn),
                 error_callback=logger.error,
             )
             self.worker_results.append(h)
@@ -383,14 +428,24 @@ class CompositeMetric(MPMetric):
 
 
 class NoisyMetric(MPMetric):
-    def add(self, enhanced, noisy):
-        enhanced = self.maybe_resample(enhanced).squeeze(0)
-        values_enh = self.compute_metric(degraded=enhanced)
-        self._add_values_enh(values_enh)
+    def add(self, enhanced, noisy, fn: Optional[str] = None):
+        enhanced = self.maybe_resample(torch.as_tensor(enhanced)).squeeze(0)
+        h = self.pool.apply_async(
+            self.compute_metric,
+            enhanced,
+            callback=lambda x: self._add_values_enh(x, fn),
+            error_callback=logger.error,
+        )
+        h.get()
         if noisy is not None:
-            noisy = self.maybe_resample(noisy).squeeze(0)
-            values_noisy = self.compute_metric(degraded=noisy)
-            self._add_values_noisy(values_noisy)
+            noisy = self.maybe_resample(torch.as_tensor(noisy)).squeeze(0)
+            h = self.pool.apply_async(
+                self.compute_metric,
+                noisy,
+                callback=lambda x: self._add_values_noisy(x, fn),
+                error_callback=logger.error,
+            )
+            self.worker_results.append(h)
 
     @abstractmethod
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:

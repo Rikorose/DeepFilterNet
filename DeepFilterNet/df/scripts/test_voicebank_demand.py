@@ -36,6 +36,8 @@ def main(args):
         n_workers=args.metric_workers,
         save_audio_callback=save_audio_callback if args.output_dir is not None else None,
         metrics=["stoi", "composite", "sisdr"],
+        csv_path_enh=args.csv_path_enh,
+        csv_path_noisy=args.csv_path_noisy,
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
@@ -54,6 +56,18 @@ if __name__ == "__main__":
         type=int,
         default=4,
         help="Number of worker processes for metric calculation.",
+    )
+    parser.add_argument(
+        "--csv-path-enh",
+        type=str,
+        default=None,
+        help="Path to csv score file containing metrics of enhanced audios.",
+    )
+    parser.add_argument(
+        "--csv-path-noisy",
+        type=str,
+        default=None,
+        help="Path to csv score file containing metrics of noisy audios.",
     )
     args = parser.parse_args()
     main(args)
