@@ -24,8 +24,10 @@ def main(args):
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
     clean_files = glob.glob(clean_dir + "/*.wav")
     noisy_files = glob.glob(noisy_dir + "/*.wav")
+    if args.output_dir is not None:
+        os.makedirs(args.output_dir, exist_ok=True)
 
-    def save_audio_callback(cleanfn: str, enh):
+    def save_audio_callback(cleanfn: str, enh: Tensor, sr: int):
         save_audio(os.path.basename(cleanfn), enh, sr, output_dir=args.output_dir, suffix=suffix)
 
     metrics = evaluation_loop(
