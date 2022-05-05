@@ -30,9 +30,9 @@ jobs:
           - os: "ubuntu-latest"
         exclude:
           - os: "macos-latest"
-          - is_pr: true  # Run only linux on PR
+            is_pr: true  # Run only linux on PR
           - os: "windows-latest"
-          - is_pr: true  # Run only linux on PR
+            is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
@@ -73,7 +73,7 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ~/.local
-          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ matrix.pytorch }}-${{ hashFiles('.github/workflows/test_df.yml') }}
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('.github/workflows/test_df.yml') }}
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
@@ -82,6 +82,7 @@ jobs:
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
+          poetry env use ${{matrix.python}}
           poetry install --no-interaction -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
       - name: Install Octave
