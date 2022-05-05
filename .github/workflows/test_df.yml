@@ -63,10 +63,10 @@ jobs:
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
       - name: Install Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python }}
-          cache: 'pip'
+          cache: 'poetry'
           cache-dependency-path: '**/pyproject.toml'
       - name: Load cached Poetry installation
         if: matrix.os != 'windows-latest'
