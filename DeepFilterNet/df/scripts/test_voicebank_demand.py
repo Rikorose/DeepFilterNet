@@ -2,10 +2,10 @@ import glob
 import os
 
 from loguru import logger
+from torch import Tensor
 
 from df.enhance import init_df, save_audio, setup_df_argument_parser
 from df.evaluation_utils import evaluation_loop
-from df.model import ModelParams
 
 
 def main(args):
@@ -18,7 +18,6 @@ def main(args):
         epoch=args.epoch,
     )
     assert os.path.isdir(args.dataset_dir)
-    sr = ModelParams().sr
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
@@ -27,7 +26,7 @@ def main(args):
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    def save_audio_callback(cleanfn: str, enh: Tensor, sr: int):
+    def save_audio_callback(cleanfn: str, enh: Tensor):
         save_audio(os.path.basename(cleanfn), enh, sr, output_dir=args.output_dir, suffix=suffix)
 
     metrics = evaluation_loop(

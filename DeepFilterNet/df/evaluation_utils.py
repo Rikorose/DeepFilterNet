@@ -173,7 +173,6 @@ def evaluation_loop_dns(
         out_dict = {}
         for m in metrics:
             if assert_output_length is not None:
-                ic(len(m.enh_values), assert_output_length)
                 assert len(m.enh_values) == assert_output_length
             for k, v in m.mean().items():
                 out_dict[k] = v
@@ -188,11 +187,9 @@ def write_csv(path: str, flat_metrics: Dict[str, Dict[str, float]]):
         flat_metrics (dict): Dictionary with structure `{filename: {metric_name, metric_value}}`.
     """
     metric_names = list(iter(flat_metrics.values()).__next__().keys())
-    ic(metric_names)
     with open(path, mode="w", newline="") as csvfile:
         csvwriter = csv.writer(csvfile, delimiter=",", quoting=csv.QUOTE_MINIMAL)
         csvwriter.writerow(["filename"] + metric_names)
-        ic(len(flat_metrics))
         for fn, m in flat_metrics.items():
             csvwriter.writerow([fn] + [str(m[n]) for n in metric_names])
 
