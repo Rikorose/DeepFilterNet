@@ -580,7 +580,7 @@ impl DatasetBuilder {
         let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
         let ds_split = datasets.split;
-        let mut sp_augmentations = Compose::new(vec![
+        let sp_augmentations = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.1).with_sr(self.sr)),
@@ -592,13 +592,13 @@ impl DatasetBuilder {
                 RandClipping::default_with_prob(0.05).with_c(0.05..0.9),
             ))
         }
-        let ns_augmentations = Compose::new(vec![
+        let mut ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandEQ::default_with_prob(0.25).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
         ]);
         if ds_split == Split::Train {
-            sp_augmentations.push(Box::new(
+            ns_augmentations.push(Box::new(
                 RandClipping::default_with_prob(0.1).with_c(0.01..0.5),
             ))
         }
