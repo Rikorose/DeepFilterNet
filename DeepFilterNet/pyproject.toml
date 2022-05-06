@@ -41,7 +41,7 @@ semetrics = ["semetrics"]
 soundfile = ["soundfile"]
 
 [tool.poetry.scripts]
-deepFilter = "df.enhance:main"
+deepFilter = "df.enhance:run"
 
 [tool.poetry.dev-dependencies]
 poethepoet = "^0.11"
