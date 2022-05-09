@@ -1,6 +1,10 @@
+import os
 import sys
 
 import h5py
+
+assert len(sys.argv) == 2
+assert os.path.exists(sys.argv[1]), sys.argv[1]
 
 with h5py.File(sys.argv[1], "r", libver="latest", swmr=True) as h5f:
     for n, k in h5f.attrs.items():
