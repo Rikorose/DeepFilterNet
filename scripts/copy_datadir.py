@@ -4,9 +4,9 @@ import json
 import os
 import shutil
 import subprocess
-import warnings
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from sys import stderr
 from time import sleep
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
@@ -45,10 +45,10 @@ def cp(src, tgt, verbose=0):
     try:
         subprocess.check_call(["rsync", "-aL", *info, src, tgt])
     except subprocess.CalledProcessError as e:
-        print(f"Failed to copy file {src}: {e.returncode}")
+        print(f"Failed to copy file {src}: {e.returncode}", file=stderr)
         if os.path.exists(tgt):
             os.remove(tgt)
-        print("Linking instead")
+        print("Linking instead", file=stderr, flush=True)
         ln(src, tgt)
 
 
@@ -60,19 +60,25 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
     if os.path.isfile(lock_f):
         tries = 1
         while True:
-            have_write_locks = any(
-                line.strip().endswith(".write")
-                and (lock is not None and not line.strip().startswith(lock))
-                for line in open(lock_f)
-            )
+            have_write_locks = False
+            for line in open(lock_f):
+                line = line.strip()
+                if line.endswith(".write") and not line.startswith(lock):
+                    print("Directory currently locked:", line, file=stderr)
+                    have_write_locks = True
+                    break
             if not have_write_locks or not wait_write_lock:
                 break
             # Wait until the current write lock is released
-            warnings.warn(f"<copy_datadir.py>: Could not lock directory {directory}")
+            print(
+                f"Warning: Could not lock directory {directory}",
+                file=stderr,
+            )
+            if tries > 2**8:  # ~ 5 minutes
+                break
+            print(f"Retrying in {tries} s ...", file=stderr, flush=True)
             sleep(tries)
             tries *= 2
-            if tries > 2**11:  # 2**11 ~ 34 minutes
-                break
         have_read_locks = False
         cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
         for line in open(lock_f):
@@ -83,10 +89,10 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
                 lock_timestamp = line.split(".")[1]
                 lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
             except Exception as e:
-                print(e)
+                print(e, file=stderr)
                 continue
             if cur_timestamp - lock_timestamp < timedelta(days=1):
-                print("Found existing lock", line.strip())
+                print("Found existing lock", line.strip(), file=stderr)
                 have_read_locks = True
                 break
     return have_read_locks, have_write_locks
@@ -116,7 +122,13 @@ def copy_datasets(
         datasets: Dict[str, List[Tuple[str, float]]] = DefaultDict(list)
         for entry in cfg[split]:
             fn = entry[0]
-            dstype = list(h5py.File(os.path.join(src_dir, fn)).keys())[0]
+            path = os.path.join(src_dir, fn)
+            try:
+                dstype = list(h5py.File(path).keys())[0]
+            except OSError as e:
+                print(f"Error: Could not open hdf5 dataset {fn}")
+                print("Caused by:", e)
+                dstype = "noise"  # just assume noise, is only used for copying anyways
             datasets[dstype].append((fn, float(entry[1])))
         for dstype in datasets.keys():
             datasets[dstype] = sorted(datasets[dstype], key=lambda e: e[1], reverse=True)

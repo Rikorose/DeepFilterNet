@@ -33,7 +33,8 @@ DATA_CFG=${DATA_CFG:-$DATA_DIR/datasets.cfg} # Default dataset configuration
 DATA_CFG=$(readlink -f "$DATA_CFG")
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
 COPY_DATA=${COPY_DATA:-1}                    # Copy data
-COPY_MAX_GB=${COPY_MAX_GB:-50}               # Max amount to copy hdf5 datasets, rest will be linked
+COPY_MAX_GB=${COPY_MAX_GB:-150}              # Max amount to copy hdf5 datasets, rest will be linked
+DF_CACHE_MAX_GB=${DF_CACHE_MAX_GB:-100}      # Max GB for validation dataset caching
 DEBUG=${DEBUG:-0}                            # Debug mode passed to the python train script
 EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 
@@ -124,6 +125,13 @@ if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
     --lock "$MODEL_NAME" --max-gb "$COPY_MAX_GB"
   DATA_DIR="$NEW_DATA_DIR"
 fi
+
+# Double check there is enough space for validation dataset caching
+FREE_GB=$(($(stat -f --format="%a*%S/1024/1024/1024" "$DATA_DIR")))
+echo $DF_CACHE_MAX_GB
+echo $FREE_GB
+export DF_CACHE_MAX_GB=$(( FREE_GB < DF_CACHE_MAX_GB ? FREE_GB : DF_CACHE_MAX_GB ))
+echo $DF_CACHE_MAX_GB
 
 # Signal handlers.
 # This is used to indicate that maximum training time will be exceeded.
