@@ -36,7 +36,7 @@ class DfParams:
         # Pad mode. By default, padding will be handled on the input side:
         # - `input`, which pads the input features passed to the model
         # - `output`, which pads the output spectrogram corresponding to `df_lookahead`
-        self.pad_mode: str = config("PAD_MODE", default="input_legacy", section="DF")
+        self.pad_mode: str = config("PAD_MODE", default="input_specf", section="DF")
 
 
 class Config:

@@ -273,7 +273,6 @@ class DfOutputReshapeMF(nn.Module):
         # [B, T, F, O*2] -> [B, O, T, F, 2]
         coefs = coefs.view(*coefs.shape[:-1], -1, 2)
         coefs = coefs.permute(0, 3, 1, 2, 4)
-        # coefs = coefs.unflatten(-1, (-1, 2)).permute(0, 3, 1, 2, 4)
         return coefs
 
 
@@ -355,6 +354,7 @@ class DfDecoder(nn.Module):
 
 class DfNet(nn.Module):
     run_df: Final[bool]
+    pad_specf: Final[bool]
 
     def __init__(
         self,
@@ -377,10 +377,11 @@ class DfNet(nn.Module):
             self.pad_feat = nn.ConstantPad2d((0, 0, -p.conv_lookahead, p.conv_lookahead), 0.0)
         else:
             self.pad_feat = nn.Identity()
-        if p.df_lookahead > 0 and p.pad_mode.endswith("spec"):
+        self.pad_specf = p.pad_mode.endswith("specf")
+        if p.df_lookahead > 0 and self.pad_specf:
             self.pad_spec = nn.ConstantPad3d((0, 0, 0, 0, -p.df_lookahead, p.df_lookahead), 0.0)
         else:
-            self.pad_spec = None
+            self.pad_spec = nn.Identity()
         if (p.conv_lookahead > 0 or p.df_lookahead > 0) and p.pad_mode.startswith("output"):
             assert p.conv_lookahead == p.df_lookahead
             pad = (0, 0, 0, 0, -p.conv_lookahead, p.conv_lookahead)
@@ -442,8 +443,8 @@ class DfNet(nn.Module):
             df_coefs, df_alpha = self.df_dec(emb, c0)
             df_coefs = self.pad_out(df_coefs)
 
-            if self.pad_legacy:
-                # Legacy mode only pads the lower part of the spectrum.
+            if self.pad_specf:
+                # Only pad the lower part of the spectrum.
                 spec_f = self.pad_spec(spec)
                 spec_f = self.df_op(spec_f, df_coefs)
                 spec[..., : self.nb_df, :] = spec_f[..., : self.nb_df, :]
