@@ -33,10 +33,10 @@ class DfParams:
         self.df_order: int = config("DF_ORDER", cast=int, default=5, section="DF")
         # Deep Filtering look-ahead
         self.df_lookahead: int = config("DF_LOOKAHEAD", cast=int, default=0, section="DF")
-        # Pad mode. By default, padding will be handled by the model. Other options are
-        # - `features`/`input`, which pads the input features passed to the model
+        # Pad mode. By default, padding will be handled on the input side:
+        # - `input`, which pads the input features passed to the model
         # - `output`, which pads the output spectrogram corresponding to `df_lookahead`
-        self.pad_mode: str = config("PAD_MODE", default="model", section="DF")
+        self.pad_mode: str = config("PAD_MODE", default="input_legacy", section="DF")
 
 
 class Config:
@@ -155,7 +155,7 @@ class Config:
         section = self.DEFAULT_SECTION if section is None else section
         assert self.parser.has_section(section)
         assert self.parser.has_option(section, option)
-        return cast(self.parser.get(section, option))
+        return self.cast(self.parser.get(section, option), cast)
 
     def read_from_section(
         self, section: str, option: str, default: Any = None, cast: Type = str, save: bool = True

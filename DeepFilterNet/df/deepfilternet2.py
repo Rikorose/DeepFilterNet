@@ -6,7 +6,6 @@ from loguru import logger
 from torch import Tensor, nn
 
 from df.config import Csv, DfParams, config
-from df.logger import log_deprecated
 from df.modules import (
     Conv2dNormAct,
     ConvTranspose2dNormAct,
@@ -259,21 +258,6 @@ class ErbDecoder(nn.Module):
         return m
 
 
-class DfOutputReshapeOld(nn.Module):
-    """Coefficients output reshape for moudles/DfOp"""
-
-    def __init__(self, df_order: int, df_bins: int):
-        super().__init__()
-        self.df_order = df_order
-        self.df_bins = df_bins
-
-    def forward(self, coefs: Tensor) -> Tensor:
-        # [B, T, F, O*2] -> [B, T, O, F, 2]
-        b, t = coefs.shape[:2]
-        coefs = coefs.view(b, t, self.df_order, 2, self.df_bins).transpose(3, 4)
-        return coefs
-
-
 class DfOutputReshapeMF(nn.Module):
     """Coefficients output reshape for multiframe/MultiFrameModule
 
@@ -287,7 +271,9 @@ class DfOutputReshapeMF(nn.Module):
 
     def forward(self, coefs: Tensor) -> Tensor:
         # [B, T, F, O*2] -> [B, O, T, F, 2]
-        coefs = coefs.unflatten(-1, (-1, 2)).permute(0, 3, 1, 2, 4)
+        coefs = coefs.view(*coefs.shape[:-1], -1, 2)
+        coefs = coefs.permute(0, 3, 1, 2, 4)
+        # coefs = coefs.unflatten(-1, (-1, 2)).permute(0, 3, 1, 2, 4)
         return coefs
 
 
@@ -302,7 +288,6 @@ class DfDecoder(nn.Module):
         self.df_n_layers = p.df_num_layers
         self.df_order = p.df_order
         self.df_bins = p.nb_df
-        self.df_lookahead = p.df_lookahead
         self.gru_groups = p.gru_groups
         self.df_out_ch = out_channels if out_channels > 0 else p.df_order * 2
 
@@ -353,11 +338,7 @@ class DfDecoder(nn.Module):
             raise NotImplementedError
         self.df_out = nn.Sequential(df_out, nn.Tanh())
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
-        self.out_transform = (
-            DfOutputReshapeOld(self.df_order, self.df_bins)
-            if p.dfop_method == "real_unfold"
-            else DfOutputReshapeMF(self.df_order, self.df_bins)
-        )
+        self.out_transform = DfOutputReshapeMF(self.df_order, self.df_bins)
 
     def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
@@ -372,54 +353,8 @@ class DfDecoder(nn.Module):
         return c, alpha
 
 
-class DfDecoderLinear(nn.Module):
-    # For compat
-    def __init__(self):
-        super().__init__()
-        log_deprecated("Use of `linear` for `df_ouput_layer` is marked as deprecated.")
-        p = ModelParams()
-        layer_width = p.conv_ch
-        self.emb_dim = p.emb_hidden_dim
-
-        self.df_n_hidden = p.df_hidden_dim
-        self.df_n_layers = p.df_num_layers
-        self.df_order = p.df_order
-        self.df_bins = p.nb_df
-        self.df_lookahead = p.df_lookahead
-        self.gru_groups = p.gru_groups
-
-        conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
-        kt = p.df_pathway_kernel_size_t
-        self.df_convp = conv_layer(layer_width, self.df_order * 2, fstride=1, kernel_size=(kt, 1))
-        self.df_gru = GroupedGRU(
-            p.emb_hidden_dim,
-            self.df_n_hidden,
-            num_layers=self.df_n_layers,
-            batch_first=True,
-            groups=p.gru_groups,
-            shuffle=p.group_shuffle,
-            add_outputs=True,
-        )
-        assert p.df_output_layer == "linear"
-        self.df_fc_out = nn.Sequential(
-            nn.Linear(self.df_n_hidden, self.df_bins * self.df_order * 2), nn.Tanh()
-        )
-        self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
-
-    def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
-        b, t, _ = emb.shape
-        c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
-        c0 = self.df_convp(c0).transpose(1, 2)  # [B, T, O*2, F], channels_last
-        alpha = self.df_fc_a(c)  # [B, T, 1]
-        c = self.df_fc_out(c)  # [B, T, F*O*2], O: df_order
-        c = c.view(b, t, self.df_order * 2, self.df_bins)  # [B, T, O*2, F]
-        c = c.add(c0).view(b, t, self.df_order, 2, self.df_bins).transpose(3, 4)  # [B, T, O, F, 2]
-        return c, alpha
-
-
 class DfNet(nn.Module):
     run_df: Final[bool]
-    use_alpha: Final[bool]
 
     def __init__(
         self,
@@ -432,16 +367,26 @@ class DfNet(nn.Module):
         p = ModelParams()
         layer_width = p.conv_ch
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
-        self.lookahead: int = p.conv_lookahead
+        self.df_lookahead = p.df_lookahead if p.pad_mode == "model" else 0
+        self.nb_df = p.nb_df
         self.freq_bins: int = p.fft_size // 2 + 1
         self.emb_dim: int = layer_width * p.nb_erb
         self.erb_bins: int = p.nb_erb
         self.erb_comp = MagCompression(p.nb_erb)
-        if p.conv_lookahead > 0:
-            pad = (0, 0, -p.conv_lookahead, p.conv_lookahead)
-            self.pad = nn.ConstantPad2d(pad, 0.0)
+        if p.conv_lookahead > 0 and p.pad_mode.startswith("input"):
+            self.pad_feat = nn.ConstantPad2d((0, 0, -p.conv_lookahead, p.conv_lookahead), 0.0)
         else:
-            self.pad = nn.Identity()
+            self.pad_feat = nn.Identity()
+        if p.df_lookahead > 0 and p.pad_mode.endswith("spec"):
+            self.pad_spec = nn.ConstantPad3d((0, 0, 0, 0, -p.df_lookahead, p.df_lookahead), 0.0)
+        else:
+            self.pad_spec = None
+        if (p.conv_lookahead > 0 or p.df_lookahead > 0) and p.pad_mode.startswith("output"):
+            assert p.conv_lookahead == p.df_lookahead
+            pad = (0, 0, 0, 0, -p.conv_lookahead, p.conv_lookahead)
+            self.pad_out = nn.ConstantPad3d(pad, 0.0)
+        else:
+            self.pad_out = nn.Identity()
         self.register_buffer("erb_fb", erb_fb)
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
@@ -449,35 +394,21 @@ class DfNet(nn.Module):
 
         self.df_order = p.df_order
         self.df_bins = p.nb_df
-        self.df_lookahead = p.df_lookahead
         self.df_op: Union[DfOp, MultiFrameModule]
         if p.dfop_method == "real_unfold":
-            self.df_op = DfOp(
-                p.nb_df,
-                p.df_order,
-                p.df_lookahead,
-                freq_bins=self.freq_bins,
-                method=p.dfop_method,
-            )
-            n_ch_out = p.df_order * 2
-            self.use_alpha = True
-        else:
-            assert p.df_output_layer != "linear", "Must be used with `groupedlinear`"
-            self.df_op = MF_METHODS[p.dfop_method](
-                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=p.df_lookahead
-            )
-            n_ch_out = self.df_op.num_channels()
-            self.use_alpha = False
-        if p.df_output_layer == "linear":
-            self.df_dec = DfDecoderLinear()
-        else:
-            self.df_dec = DfDecoder(out_channels=n_ch_out)
+            raise ValueError("RealUnfold DF OP is now unsupported.")
+        assert p.df_output_layer != "linear", "Must be used with `groupedlinear`"
+        self.df_op = MF_METHODS[p.dfop_method](
+            num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead
+        )
+        n_ch_out = self.df_op.num_channels()
+        self.df_dec = DfDecoder(out_channels=n_ch_out)
 
         self.run_df = run_df
         if not run_df:
             logger.warning("Runing without DF")
         self.train_mask = train_mask
-        self.df_iter = p.df_n_iter
+        assert p.df_n_iter == 1
 
     def forward(
         self,
@@ -485,20 +416,41 @@ class DfNet(nn.Module):
         feat_erb: Tensor,
         feat_spec: Tensor,  # Not used, take spec modified by mask instead
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Forward method of DeepFilterNet2.
+
+        Args:
+            spec (Tensor): Spectrum of shape [B, 1, T, F, 2]
+            feat_erb (Tensor): ERB features of shape [B, 1, T, E]
+            feat_spec (Tensor): Complex spectrogram features of shape [B, 1, T, F']
+
+        Returns:
+            spec (Tensor): Enhanced spectrum of shape [B, 1, T, F, 2]
+            m (Tensor): ERB mask estimate of shape [B, 1, T, E]
+            lsnr (Tensor): Local SNR estimate of shape [B, T, 1]
+        """
         feat_spec = feat_spec.squeeze(1).permute(0, 3, 1, 2)
 
-        feat_erb = self.pad(feat_erb)
-        feat_spec = self.pad(feat_spec)
+        feat_erb = self.pad_feat(feat_erb)
+        feat_spec = self.pad_feat(feat_spec)
         e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
         m = self.erb_dec(emb, e3, e2, e1, e0)
 
+        m = self.pad_out(m.unsqueeze(-1)).squeeze(-1)
         spec = self.mask(spec, m)
-        df_coefs, df_alpha = self.df_dec(emb, c0)
 
-        for _ in range(self.df_iter):
-            if self.use_alpha:
-                spec = self.df_op(spec, df_coefs, df_alpha)
+        if self.run_df:
+            df_coefs, df_alpha = self.df_dec(emb, c0)
+            df_coefs = self.pad_out(df_coefs)
+
+            if self.pad_legacy:
+                # Legacy mode only pads the lower part of the spectrum.
+                spec_f = self.pad_spec(spec)
+                spec_f = self.df_op(spec_f, df_coefs)
+                spec[..., : self.nb_df, :] = spec_f[..., : self.nb_df, :]
             else:
+                spec = self.pad_spec(spec)
                 spec = self.df_op(spec, df_coefs)
+        else:
+            df_alpha = torch.zeros(())
 
         return spec, m, lsnr, df_alpha
