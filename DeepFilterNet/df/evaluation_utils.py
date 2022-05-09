@@ -25,12 +25,19 @@ from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
 from libdf import DF
 
+HAS_OCTAVE = True
+RESAMPLE_METHOD = "sinc_fast"
+
 try:
     import requests
 except ImportError:
     requests = None
 
-RESAMPLE_METHOD = "sinc_fast"
+try:
+    import semetrics
+except (OSError, ImportError, ModuleNotFoundError):
+    HAS_OCTAVE = False
+    semetrics = None
 
 
 def log_progress(iterable, total: Optional[int] = None, log_freq_percent=25, desc="Progress"):
@@ -536,7 +543,7 @@ def composite(
     if use_octave:
         from tempfile import NamedTemporaryFile
 
-        import semetrics
+        assert semetrics is not None
 
         with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:
             # Note: Quantizing to int16 results in slightly modified metrics. Thus, keep f32 prec.
@@ -545,7 +552,7 @@ def composite(
             c = semetrics.composite(cf.name, nf.name)
     else:
         c = composite_py(as_numpy(clean), as_numpy(degraded), sr)
-    return np.asarray(c)
+    return np.asarray(c).astype(np.float32)
 
 
 def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
