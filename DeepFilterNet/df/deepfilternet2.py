@@ -70,7 +70,7 @@ class ModelParams(DfParams):
             "GROUP_SHUFFLE", cast=bool, default=True, section=self.section
         )
         self.dfop_method: str = config(
-            "DFOP_METHOD", cast=str, default="real_unfold", section=self.section
+            "DFOP_METHOD", cast=str, default="df", section=self.section
         )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
