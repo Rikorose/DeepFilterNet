@@ -1,6 +1,7 @@
 import glob
 import os
 
+import torch
 from loguru import logger
 
 from df.enhance import init_df, save_audio, setup_df_argument_parser
@@ -27,7 +28,14 @@ def main(args):
         os.makedirs(args.output_dir, exist_ok=True)
 
     def save_audio_callback(cleanfn: str, enh):
-        save_audio(os.path.basename(cleanfn), enh, sr, output_dir=args.output_dir, suffix=suffix)
+        save_audio(
+            os.path.basename(cleanfn),
+            enh,
+            sr,
+            output_dir=args.output_dir,
+            suffix=suffix,
+            dtype=torch.float32,
+        )
 
     methods = list(args.methods) if isinstance(args.methods, (list, tuple)) else [args.methods]
     metrics = evaluation_loop_dns(
@@ -39,6 +47,7 @@ def main(args):
         metrics=methods,
         csv_path_enh=args.csv_path_enh,
         csv_path_noisy=args.csv_path_noisy,
+        eval_noisy=False,
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
