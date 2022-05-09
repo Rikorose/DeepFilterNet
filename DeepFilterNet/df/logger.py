@@ -119,7 +119,7 @@ def _metrics_key(k_: Tuple[str, float]):
         return -101
 
 
-def log_metrics(prefix: str, metrics: Dict[str, Number]):
+def log_metrics(prefix: str, metrics: Dict[str, Number], level="INFO"):
     msg = ""
     stages = defaultdict(str)
     loss_msg = ""
@@ -136,11 +136,11 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
         else:
             msg += m
     for s, msg_s in stages.items():
-        logger.info(f"{prefix} | stage {s}" + msg_s)
+        logger.log(level, f"{prefix} | stage {s}" + msg_s)
     if len(stages) == 0:
-        logger.info(prefix + msg)
+        logger.log(level, prefix + msg)
     if len(loss_msg) > 0:
-        logger.info(prefix + loss_msg)
+        logger.log(level, prefix + loss_msg)
 
 
 class DuplicateFilter:
