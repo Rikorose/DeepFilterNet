@@ -85,10 +85,11 @@ jobs:
             .venv
             ~/.venv
             DeepFilterNet/.venv
-          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
+          poetry --version
           poetry env use ${{matrix.python}}
           poetry install --no-interaction -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
