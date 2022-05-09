@@ -20,9 +20,9 @@ from torchaudio.functional import highpass_biquad
 from torchaudio.transforms import Resample
 
 from df.enhance import df_features, load_audio, save_audio
+from df.logger import log_metrics
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
-from df.logger import log_metrics
 from libdf import DF
 
 try:
