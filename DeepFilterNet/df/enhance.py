@@ -28,13 +28,16 @@ def main(args):
         post_filter=args.pf,
         log_level=args.log_level,
         config_allow_defaults=True,
+        epoch=args.epoch,
     )
     if args.output_dir is None:
         args.output_dir = "."
     elif not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
     df_sr = ModelParams().sr
-    for file in args.noisy_audio_files:
+    n_samples = len(args.noisy_audio_files)
+    for i, file in enumerate(args.noisy_audio_files):
+        progress = (i + 1) / n_samples * 100
         audio, meta = load_audio(file, df_sr)
         t0 = time.time()
         audio = enhance(
@@ -44,10 +47,12 @@ def main(args):
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
         rtf = t / t_audio
-        logger.info(f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.3f})")
+        fn = os.path.basename(file)
+        p_str = f"{progress:2.0f}% | " if n_samples > 1 else ""
+        logger.info(f"{p_str}Enhanced noisy audio file '{fn}' in {t:.1f}s (RT factor: {rtf:.3f})")
         audio = resample(audio, df_sr, meta.sample_rate)
         save_audio(
-            file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=True
+            file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=False
         )
 
 
@@ -104,6 +109,7 @@ def init_df(
     )
     if post_filter:
         config.set("mask_pf", True, bool, ModelParams().section)
+        logger.info("Running with post-filter")
     p = ModelParams()
     df_state = DF(
         sr=p.sr,
@@ -147,14 +153,14 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     return spec, erb_feat, spec_feat
 
 
-def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
+def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMetaData]:
     """Loads an audio file using torchaudio.
 
     Args:
         file (str): Path to an audio file.
-        sr (int): Target sampling rate. May resample the audio.
-        **kwargs: Passed to torchaudio.load(). Depends on the backend. `method` is passed to
-            `resample()`.
+        sr (int): Optionally resample audio to specified target sampling rate.
+        **kwargs: Passed to torchaudio.load(). Depends on the backend. The resample method
+            may be set via `method` which is passed to `resample()`.
 
     Returns:
         audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
@@ -168,7 +174,7 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
         rkwargs["method"] = kwargs.pop("method")
     info = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
-    if orig_sr != sr:
+    if sr is not None and orig_sr != sr:
         warn_once(
             f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
             "Resampling..."
@@ -199,6 +205,8 @@ def save_audio(
         audio.unsqueeze_(0)
     if dtype == torch.int16 and audio.dtype != torch.int16:
         audio = (audio * (1 << 15)).to(torch.int16)
+    if dtype == torch.float32 and audio.dtype != torch.float32:
+        audio = audio.to(torch.float32) / (1 << 15)
     ta.save(outpath, audio, sr)
 
 
