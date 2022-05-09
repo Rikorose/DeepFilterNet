@@ -153,8 +153,10 @@ class Config:
 
     def get(self, option: str, cast: Type[T] = str, section: Optional[str] = None) -> T:
         section = self.DEFAULT_SECTION if section is None else section
-        assert self.parser.has_section(section)
-        assert self.parser.has_option(section, option)
+        if not self.parser.has_section(section):
+            raise KeyError(section)
+        if not self.parser.has_option(section, option):
+            raise KeyError(option)
         return self.cast(self.parser.get(section, option), cast)
 
     def read_from_section(

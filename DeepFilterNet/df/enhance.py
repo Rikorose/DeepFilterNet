@@ -122,7 +122,11 @@ def init_df(
     load_cp = epoch is not None and not (isinstance(epoch, str) and epoch.lower() == "none")
     if not load_cp:
         checkpoint_dir = None
-    model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch)
+    try:
+        mask_only = config.get("mask_only", cast=bool, section="train")
+    except KeyError:
+        mask_only = False
+    model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch, mask_only=mask_only)
     if epoch is None and load_cp:
         logger.error("Could not find a checkpoint")
         exit(1)
@@ -164,7 +168,7 @@ def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMet
 
     Returns:
         audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
-        info (AudioMetaData): Meta data or the original audio file. Contains the original sr.
+        info (AudioMetaData): Meta data of the original audio file. Contains the original sr.
     """
     ikwargs = {}
     if "format" in kwargs:
@@ -172,7 +176,7 @@ def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMet
     rkwargs = {}
     if "method" in kwargs:
         rkwargs["method"] = kwargs.pop("method")
-    info = ta.info(file, **ikwargs)
+    info: AudioMetaData = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
     if sr is not None and orig_sr != sr:
         warn_once(
