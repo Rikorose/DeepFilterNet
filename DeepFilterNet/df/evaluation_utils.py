@@ -3,6 +3,7 @@ import json
 import os
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
+from copy import deepcopy
 from functools import partial
 from multiprocessing.dummy import Pool as DummyPool
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -21,6 +22,7 @@ from torchaudio.transforms import Resample
 from df.enhance import df_features, load_audio, save_audio
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
+from df.logger import log_metrics
 from libdf import DF
 
 try:
@@ -67,6 +69,17 @@ def enhance(model, df_state, audio, f_hp_cutoff: Optional[int] = None):
     return audio
 
 
+def get_metrics(sr: int):
+    return {
+        "stoi": partial(StoiMetric, sr=sr),
+        "sisdr": SiSDRMetric,
+        "composite": partial(CompositeMetric, sr=sr),
+        "composite-octave": partial(CompositeMetric, sr=sr, use_octave=True),
+        "pesq": partial(PesqMetric, sr=sr),
+        "pesq-nb": partial(PesqMetric, sr=sr, nb=True),
+    }
+
+
 def evaluation_loop(
     df_state: DF,
     model,
@@ -80,25 +93,18 @@ def evaluation_loop(
     csv_path_noisy: Optional[str] = None,
 ) -> Dict[str, float]:
     sr = df_state.sr()
-    metrics_dict = {
-        "stoi": partial(StoiMetric, sr=sr),
-        "sisdr": SiSDRMetric,
-        "composite": partial(CompositeMetric, sr=sr),
-        "composite-octave": partial(CompositeMetric, sr=sr, use_octave=True),
-        "pesq": partial(PesqMetric, sr=sr),
-        "pesq-nb": partial(PesqMetric, sr=sr, nb=True),
-    }
     if n_workers >= 1:
         pool_fn = mp.Pool
     else:
         pool_fn = DummyPool
+    metrics_dict = get_metrics(sr)
     with pool_fn(processes=max(1, n_workers)) as pool:
         metrics: List[Metric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
         for noisyfn, cleanfn in log_progress(
             zip(noisy_files, clean_files), len(noisy_files), log_percent
         ):
-            noisy, _ = load_audio(noisyfn, sr, method="kaiser_best")
-            clean, _ = load_audio(cleanfn, sr, method="kaiser_best")
+            noisy, meta = load_audio(noisyfn, sr)
+            clean, _ = load_audio(cleanfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
             enh = enhance(model, df_state, noisy)[0]
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
@@ -128,6 +134,61 @@ def evaluation_loop(
         return out_dict
 
 
+def evaluation_loop_dir_only(
+    clean_files: List[str],
+    enh_files: List[str],
+    noisy_files: List[str],
+    metrics: List[str] = ["stoi", "composite", "sisdr"],  # type: ignore
+    n_workers: int = 4,
+    log_percent: int = 25,
+    csv_path_enh: Optional[str] = None,
+    csv_path_noisy: Optional[str] = None,
+) -> Dict[str, float]:
+    sr = 16_000
+    if n_workers >= 1:
+        pool_fn = mp.Pool
+    else:
+        pool_fn = DummyPool
+    metrics_dict = get_metrics(sr)
+    with pool_fn(processes=max(1, n_workers)) as pool:
+        metrics: List[Metric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
+        if noisy_files is None or len(noisy_files) == 0:
+            noisy_files = [None] * len(clean_files)
+        assert len(enh_files) == len(clean_files)
+        assert len(noisy_files) == len(clean_files)
+        noisy = None
+        for cleanfn, enhfn, noisyfn in log_progress(
+            zip(clean_files, enh_files, noisy_files), len(noisy_files), log_percent
+        ):
+            clean, _ = load_audio(cleanfn, sr)
+            enh, _ = load_audio(enhfn, sr)
+            logger.debug(f"Processing clean {cleanfn}")
+            logger.debug(f"Processing enh {enhfn}")
+            if noisyfn is not None:
+                noisy, _ = load_audio(noisyfn, sr)
+                logger.debug(f"Processing noisy {noisyfn}")
+            for m in metrics:
+                m.add(clean=clean, enhanced=enh, noisy=noisy, fn=os.path.basename(cleanfn))
+        logger.info("Waiting for metrics computation completion. This could take a few minutes.")
+        if csv_path_enh is not None:
+            enh = defaultdict(dict)  # {filename: {metric_name: metric_value}}
+            for m in metrics:
+                for fn, values in m.flattend().items():
+                    enh[fn] = {**enh[fn], **values}
+            write_csv(csv_path_enh, enh)
+        if csv_path_noisy is not None:
+            noisy = defaultdict(dict)  # {filename: {metric_name: metric_value}}
+            for m in metrics:
+                for fn, values in m.flattend(noisy=True).items():
+                    noisy[fn] = {**noisy[fn], **values}
+            write_csv(csv_path_noisy, noisy)
+        out_dict = {}
+        for m in metrics:
+            for k, v in m.mean().items():
+                out_dict[k] = v
+        return out_dict
+
+
 def evaluation_loop_dns(
     df_state: DF,
     model,
@@ -136,6 +197,7 @@ def evaluation_loop_dns(
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
     n_workers: int = 8,
     log_percent: int = 10,
+    eval_noisy: bool = True,
     csv_path_enh: Optional[str] = None,
     csv_path_noisy: Optional[str] = None,
     assert_output_length: Optional[int] = None,
@@ -148,12 +210,14 @@ def evaluation_loop_dns(
     with DummyPool(processes=max(1, n_workers)) as pool:
         metrics: List[NoisyMetric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
         for noisyfn in log_progress(noisy_files, len(noisy_files), log_percent):
-            noisy, _ = load_audio(noisyfn, sr)
+            noisy, meta = load_audio(noisyfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}")
             enh = enhance(model, df_state, noisy)[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
             for m in metrics:
-                m.add(enhanced=enh, noisy=noisy, fn=os.path.basename(noisyfn))
+                m.add(
+                    enhanced=enh, noisy=noisy if eval_noisy else None, fn=os.path.basename(noisyfn)
+                )
             if save_audio_callback is not None:
                 enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
                 save_audio_callback(noisyfn, enh)
@@ -164,7 +228,7 @@ def evaluation_loop_dns(
                 for fn, values in m.flattend().items():
                     enh[fn] = {**enh[fn], **values}
             write_csv(csv_path_enh, enh)
-        if csv_path_noisy is not None:
+        if eval_noisy and csv_path_noisy is not None:
             noisy = defaultdict(dict)  # {filename: {metric_name: metric_value}}
             for m in metrics:
                 for fn, values in m.flattend(noisy=True).items():
@@ -234,14 +298,16 @@ class Metric(ABC):
     def maybe_resample(self, x) -> Tensor:
         if self.resampler is not None:
             x = self.resampler.forward(torch.as_tensor(x))
-        return x
+        return deepcopy(x)
 
     def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
+        assert clean.shape == enhanced.shape, f"{clean.shape}, {enhanced.shape}, {fn}"
         clean = self.maybe_resample(clean).squeeze(0)
         enhanced = self.maybe_resample(enhanced).squeeze(0)
         values_enh = self.compute_metric(clean=clean, degraded=enhanced)
         self._add_values_enh(values_enh, fn)
         if noisy is not None:
+            assert clean.shape == noisy.shape, f"{clean.shape}, {noisy.shape}, {fn}"
             noisy = self.maybe_resample(noisy).squeeze(0)
             values_noisy = self.compute_metric(clean=clean, degraded=noisy)
             self._add_values_noisy(values_noisy, fn)
@@ -285,6 +351,9 @@ class MPMetric(Metric):
         self.is_joined = False
 
     def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
+        assert clean.shape == enhanced.shape, f"{clean.shape}, {enhanced.shape}, {fn}"
+        if noisy is not None:
+            assert clean.shape == noisy.shape, f"{clean.shape}, {noisy.shape}, {fn}"
         clean = self.maybe_resample(torch.as_tensor(clean)).squeeze(0)
         enhanced = self.maybe_resample(torch.as_tensor(enhanced)).squeeze(0)
         h = self.pool.apply_async(
@@ -518,14 +587,14 @@ def mos_api_req(url: str, key: str, audio: Tensor) -> Dict[str, float]:
         try:
             resp = requests.post(url, data=input_data, headers=headers, timeout=1000)
             score_dict = resp.json()
-            print(score_dict)
+            log_metrics("DNSMOS", score_dict, level="DEBUG")
             return score_dict
         except Exception as e:
             print(e)
             tries += 1
             print("retry_1")
             continue
-    raise ValueError("Error gettimg mos:", e)
+    raise ValueError(f"Error gettimg mos: {e}")
 
 
 def as_numpy(x) -> np.ndarray:
