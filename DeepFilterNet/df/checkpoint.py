@@ -50,6 +50,7 @@ def read_cp(
     epoch="latest",
     extension="ckpt",
     blacklist=[],
+    log: bool = True,
 ):
     checkpoints = []
     if isinstance(epoch, str):
@@ -71,7 +72,8 @@ def read_cp(
     else:
         latest = max(checkpoints, key=get_epoch)
         epoch = get_epoch(latest)
-    logger.info("Found checkpoint {} with epoch {}".format(latest, epoch))
+    if log:
+        logger.info("Found checkpoint {} with epoch {}".format(latest, epoch))
     latest = torch.load(latest, map_location="cpu")
     latest = {k.replace("clc", "df"): v for k, v in latest.items()}
     if blacklist:
