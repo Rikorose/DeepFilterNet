@@ -2,7 +2,7 @@
 
 import os
 import unittest
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -27,8 +27,9 @@ def eval_composite(clean, enhanced, sr, m_target: List[float], prefix: str = "")
     m_enh = torch.as_tensor(
         composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr)
     ).to(torch.float32)
-    logger.info(prefix + f"Got {m_enh}")
     m_target: torch.Tensor = torch.as_tensor(m_target)
+    logger.info(prefix + f"Expected {m_target}")
+    logger.info(prefix + f"Got      {m_enh}")
     assert torch.isclose(m_enh, m_target, atol=__a_tol).all(), (
         prefix
         + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
@@ -43,7 +44,8 @@ def eval_composite(clean, enhanced, sr, m_target: List[float], prefix: str = "")
 def eval_pystoi(clean, enhanced, sr, m_target: float, prefix: str = ""):
     logger.info(prefix + "Computing STOI")
     m_enh = stoi(clean.squeeze(0), enhanced.squeeze(0), sr)
-    logger.info(prefix + f"Got {m_enh}")
+    logger.info(prefix + f"Expected {m_target}")
+    logger.info(prefix + f"Got      {m_enh}")
     assert np.isclose([m_enh], [m_target], atol=__a_tol), (
         prefix
         + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
@@ -53,7 +55,8 @@ def eval_pystoi(clean, enhanced, sr, m_target: float, prefix: str = ""):
 def eval_sdr(clean, enhanced, m_target: float, prefix: str = ""):
     logger.info(prefix + "Computing SI-SDR")
     m_enh = si_sdr_speechmetrics(clean.numpy(), enhanced.numpy())
-    logger.info(prefix + f"Got {m_enh}")
+    logger.info(prefix + f"Expected {m_target}")
+    logger.info(prefix + f"Got      {m_enh}")
     assert np.isclose([m_enh], [m_target]), (
         prefix
         + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
@@ -72,27 +75,16 @@ TARGET_METRICS = {
         "stoi": 0.9689496585281197,
         "sdr": 18.88543128967285,
     },
-    "DeepFilterNet2a": {
+    "DeepFilterNet2": {
         "composite": [
-            2.86751246452332,
-            4.03339815139771,
-            2.56429362297058,
-            3.41470885276794,
-            -2.79574084281921,
+            2.87284946441650,
+            4.17169523239136,
+            2.75626921653748,
+            3.51172018051147,
+            -0.91267710924149,
         ],
-        "stoi": 0.9707452525900906,
-        "sdr": 13.40160727500915,
-    },
-    "DeepFilterNet2b": {
-        "composite": [
-            2.87229919433594,
-            4.15724086761475,
-            2.62931561470032,
-            3.48965477943420,
-            -2.28056311607361,
-        ],
-        "stoi": 0.9733591821902137,
-        "sdr": 13.59861135482788,
+        "stoi": 0.9725977621169399,
+        "sdr": 19.41733717918396,
     },
 }
 
@@ -117,10 +109,11 @@ class TestDfModels(unittest.TestCase):
         model: torch.nn.Module,
         df_state: DF,
         target_metrics: Dict[str, Union[float, List[float]]],
-        prefix: str = "",
+        prefix: Optional[str] = None,
     ):
+        prefix = prefix + " | " if prefix is not None else ""
         sr = df_state.sr()
-        logger.info("Loading audios")
+        logger.info(prefix + "Loading audios")
         noisy, _ = load_audio(
             os.path.join(self.df_dir, os.path.pardir, "assets", "noisy_snr0.wav"), sr
         )
@@ -128,20 +121,30 @@ class TestDfModels(unittest.TestCase):
             os.path.join(self.df_dir, os.path.pardir, "assets", "clean_freesound_33711.wav"), sr
         )
         enhanced = enhance(model, df_state, noisy, pad=True)
-        eval_composite(clean, enhanced, sr, target_metrics["composite"], prefix=prefix)  # type: ignore
-        eval_pystoi(clean, enhanced, sr, m_target=target_metrics["stoi"], prefix=prefix)  # type: ignore
-        eval_sdr(clean, enhanced, m_target=target_metrics["sdr"], prefix=prefix)  # type: ignore
+        success = True
+        try:
+            eval_composite(clean, enhanced, sr, target_metrics["composite"], prefix=prefix)  # type: ignore
+        except AssertionError as e:
+            print(e)
+            success = False
+        try:
+            eval_pystoi(clean, enhanced, sr, m_target=target_metrics["stoi"], prefix=prefix)  # type: ignore
+        except AssertionError as e:
+            print(e)
+            success = False
+        try:
+            eval_sdr(clean, enhanced, m_target=target_metrics["sdr"], prefix=prefix)  # type: ignore
+        except AssertionError as e:
+            print(e)
+            success = False
+        assert success
 
     def test_deepfilternet(self):
         model = "DeepFilterNet"
         self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
-    def test_deepfilternet2a(self):
-        model = "DeepFilterNet2a"
-        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
-
     def test_deepfilternet2(self):
-        model = "DeepFilterNet2b"
+        model = "DeepFilterNet2"
         self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
 
