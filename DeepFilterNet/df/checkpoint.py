@@ -25,7 +25,7 @@ def load_model(
     mask_only: bool = False,
     train_df_only: bool = False,
     extension: str = "ckpt",
-    epoch: Union[str, int] = "latest",
+    epoch: Union[str, int, None] = "latest",
 ) -> Tuple[nn.Module, int]:
     if mask_only and train_df_only:
         raise ValueError("Only one of `mask_only` `train_df_only` can be enabled")
@@ -47,7 +47,7 @@ def read_cp(
     obj: Union[torch.optim.Optimizer, nn.Module],
     name: str,
     dirname: str,
-    epoch="latest",
+    epoch: Union[str, int, None] = "latest",
     extension="ckpt",
     blacklist=[],
     log: bool = True,
