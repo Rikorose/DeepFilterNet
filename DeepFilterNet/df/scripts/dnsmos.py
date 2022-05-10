@@ -5,7 +5,6 @@ from typing import List, Tuple
 
 import numpy as np
 import numpy.polynomial.polynomial as poly
-import onnxruntime as ort
 import requests
 import torch
 from torch import Tensor
@@ -120,6 +119,8 @@ def download_onnx_models():
 
 
 def dnsmos_local(audio: Tensor, sig: str, bak_ovr: str) -> Tuple[float, float, float]:
+    import onnxruntime as ort
+
     session_sig = ort.InferenceSession(sig, providers=ort_providers)
     session_bak_ovr = ort.InferenceSession(bak_ovr, providers=ort_providers)
     input_length = 9
