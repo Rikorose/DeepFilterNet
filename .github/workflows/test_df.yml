@@ -101,3 +101,17 @@ jobs:
         run: |
           source $VENV
           python df/scripts/test_df.py
+      - name: Test deepFilter script
+        env:
+          DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
+        run: |
+          source ./DeepFilterNet/$VENV
+          pip install requests
+          mkdir ./out
+          deepFilter ./assets/noisy_snr0.wav -m ./DeepFilterNet/pretrained_models/DeepFilterNet2/ -o out/
+          python DeepFilterNet/df/scripts/dnsmos.py assets/noisy_snr0.wav 2.982513427734375
+          python DeepFilterNet/df/scripts/dnsmos.py out/noisy_snr0_DeepFilterNet2.wav 3.7733302116394043
+      - uses: actions/upload-artifact@v2
+        with:
+          name: enhanced_noisy
+          path: out/*wav
