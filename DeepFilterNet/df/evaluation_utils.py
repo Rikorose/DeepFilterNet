@@ -493,7 +493,7 @@ class DnsMosP808ApiMetric(NoisyMetric):
 
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        score_dict = mos_api_req(self.url, self.key, degraded)
+        score_dict = dnsmos_api_req(self.url, self.key, degraded)
         return float(score_dict["mos"])
 
 
@@ -507,7 +507,7 @@ class DnsMosP835ApiMetric(NoisyMetric):
 
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        score_dict = mos_api_req(self.url, self.key, degraded)
+        score_dict = dnsmos_api_req(self.url, self.key, degraded)
         return np.asarray([float(score_dict[c]) for c in ("mos_sig", "mos_bak", "mos_ovr")])
 
 
@@ -578,7 +578,7 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
     return sisdr
 
 
-def mos_api_req(url: str, key: str, audio: Tensor) -> Dict[str, float]:
+def dnsmos_api_req(url: str, key: str, audio: Tensor, verbose=False) -> Dict[str, float]:
     assert requests is not None
     # Set the content type
     headers = {"Content-Type": "application/json"}
@@ -594,12 +594,13 @@ def mos_api_req(url: str, key: str, audio: Tensor) -> Dict[str, float]:
         try:
             resp = requests.post(url, data=input_data, headers=headers, timeout=1000)
             score_dict = resp.json()
-            log_metrics("DNSMOS", score_dict, level="DEBUG")
+            if verbose:
+                log_metrics("DNSMOS", score_dict, level="DEBUG")
             return score_dict
         except Exception as e:
-            print(e)
+            if verbose:
+                print(e)
             tries += 1
-            print("retry_1")
             continue
     raise ValueError(f"Error gettimg mos: {e}")
 

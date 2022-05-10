@@ -157,7 +157,9 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     return spec, erb_feat, spec_feat
 
 
-def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMetaData]:
+def load_audio(
+    file: str, sr: Optional[int], verbose=True, **kwargs
+) -> Tuple[Tensor, AudioMetaData]:
     """Loads an audio file using torchaudio.
 
     Args:
@@ -179,10 +181,11 @@ def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMet
     info: AudioMetaData = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
     if sr is not None and orig_sr != sr:
-        warn_once(
-            f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
-            "Resampling..."
-        )
+        if verbose:
+            warn_once(
+                f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
+                "Resampling..."
+            )
         audio = resample(audio, orig_sr, sr, **rkwargs)
     return audio, info
 
