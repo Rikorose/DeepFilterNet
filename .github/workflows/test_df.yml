@@ -108,8 +108,8 @@ jobs:
           source ./DeepFilterNet/$VENV
           mkdir ./out
           deepFilter ./assets/noisy_snr0.wav -m ./DeepFilterNet/pretrained_models/DeepFilterNet2/ -o out/
-          python DeepFilterNet/df/scripts/dnsmos.py assets/noisy_snr0.wav -t 2.982513427734375
-          python DeepFilterNet/df/scripts/dnsmos.py out/noisy_snr0_DeepFilterNet2.wav -t 3.7733302116394043
+          python DeepFilterNet/df/scripts/dnsmos.py assets/noisy_snr0.wav -t 2.9511659145355225
+          python DeepFilterNet/df/scripts/dnsmos.py out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
       - uses: actions/upload-artifact@v2
         with:
           name: enhanced_noisy
