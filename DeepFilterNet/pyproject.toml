@@ -33,12 +33,17 @@ pystoi = { version = "^0.3", optional = true }
 pesq = { version = "^0.0.3", optional = true }
 scipy = { version = "^1", optional = true }
 semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true }
+requests = { version = "^2.27", optional = true }
+appdirs = { version = "^1.4", optional = true }
+onnxruntime = { version = "^1.11", optional = true }
 
 [tool.poetry.extras]
 train = ["deepfilterdataloader", "icecream"]
 eval = ["pystoi", "pesq", "scipy"]
 semetrics = ["semetrics"]
 soundfile = ["soundfile"]
+dnsmos = ["requests"]
+dnsmos-local = ["appdirs", "onnxruntime", "requests"]
 
 [tool.poetry.scripts]
 deepFilter = "df.enhance:run"
@@ -48,8 +53,8 @@ poethepoet = "^0.11"
 pre-commit = "^2.17"
 
 [tool.poe.tasks]
-install-torch-cuda111 = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
-install-torch-cpu = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cpu/"
+install-torch-cuda111 = 'python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113/'
+install-torch-cpu = 'python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cpu/'
 
 [build-system]
 requires = ["poetry>=1.0"]
