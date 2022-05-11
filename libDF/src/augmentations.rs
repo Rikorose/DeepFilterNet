@@ -1,7 +1,11 @@
 use std::mem::MaybeUninit;
+use std::ops::Range;
+#[cfg(feature = "dataset_timings")]
+use std::time::Instant;
 
-use ndarray::{prelude::*, Slice};
-use rand::{distributions::uniform::Uniform, Rng};
+use ndarray::{concatenate, prelude::*, Slice};
+use ndarray_rand::rand::Rng;
+use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
@@ -36,6 +40,7 @@ pub trait Transform {
     where
         Self: Sized;
     fn box_clone(&self) -> Box<dyn Transform + Send>;
+    fn name(&self) -> &str;
 }
 
 impl Clone for Box<dyn Transform> {
@@ -46,26 +51,68 @@ impl Clone for Box<dyn Transform> {
 
 pub struct Compose {
     transforms: Vec<Box<dyn Transform + Send>>,
+    log_timings: bool,
 }
 unsafe impl Send for Compose {}
 unsafe impl Sync for Compose {}
 
 impl Compose {
     pub fn new(transforms: Vec<Box<dyn Transform + Send>>) -> Self {
-        Compose { transforms }
+        Compose {
+            transforms,
+            log_timings: false,
+        }
+    }
+
+    pub fn log_timings(&mut self) {
+        self.log_timings = true
+    }
+
+    pub fn push(&mut self, t: Box<dyn Transform + Send>) {
+        self.transforms.push(t);
     }
 
     pub fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
+        #[cfg(feature = "dataset_timings")]
+        let mut t0 = Instant::now();
+        #[cfg(feature = "dataset_timings")]
+        let mut timings = Vec::new();
         for t in self.transforms.iter() {
-            t.transform(x)?;
+            match t.transform(x) {
+                Ok(()) => (),
+                Err(e) => log::error!("{:?}", e),
+            };
+            #[cfg(feature = "dataset_timings")]
+            {
+                let t1 = Instant::now();
+                let d = (t1 - t0).as_micros();
+                if d > 100 {
+                    timings.push(format!("{}: {} ms", t.name(), d / 1000));
+                }
+                t0 = t1;
+            }
+        }
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) && !timings.is_empty() {
+            log::trace!(
+                "Calculated augmentation transforms in {:?}",
+                timings.join(", ")
+            );
         }
         Ok(())
+    }
+    pub fn len(&self) -> usize {
+        self.transforms.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.transforms.is_empty()
     }
 }
 impl Clone for Compose {
     fn clone(&self) -> Self {
         Compose {
             transforms: self.transforms.iter().map(|t| t.box_clone()).collect(),
+            log_timings: self.log_timings,
         }
     }
 }
@@ -87,7 +134,7 @@ impl RandLFilt {
 }
 impl Transform for RandLFilt {
     fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
-        if self.prob == 0. || (self.prob < 1. && thread_rng()?.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && thread_rng()?.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let a: [f32; 2] = self.sample_ab()?;
@@ -103,6 +150,9 @@ impl Transform for RandLFilt {
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandLFilt"
     }
 }
 
@@ -132,13 +182,13 @@ impl Transform for RandEQ {
             });
         }
         let mut rng = thread_rng()?;
-        if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         for _ in 0..self.n_freqs {
             let freq = rng.log_uniform(self.f_low as f32, self.f_high as f32);
-            let gain = rng.gen_range(-self.gain_db..=self.gain_db) as f32;
-            let q = rng.gen_range(self.q_low..self.q_high);
+            let gain = rng.uniform_inclusive(-self.gain_db, self.gain_db) as f32;
+            let q = rng.uniform(self.q_low, self.q_high);
             let w0 = 2. * std::f32::consts::PI * freq / self.sr.unwrap() as f32;
             let amp = (gain / 40. * std::f32::consts::LN_10).exp();
             let alpha = w0.sin() / 2. / q;
@@ -172,6 +222,9 @@ impl Transform for RandEQ {
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandEQ"
     }
 }
 
@@ -258,12 +311,12 @@ impl Transform for RandResample {
         }
         let mut rng = thread_rng()?;
         let sr = self.sr.unwrap();
-        if self.prob == 0. || (self.prob < 1. && rng.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let ch = x.len_of(Axis(0));
         let len = x.len_of(Axis(1));
-        let new_sr = rng.gen_range(self.r_low..=self.r_high) * sr as f32;
+        let new_sr = rng.uniform_inclusive(self.r_low, self.r_high) * sr as f32;
         // round so we get a better gcd
         let new_sr = ((new_sr / 500.).round() * 500.) as usize;
         if new_sr == sr {
@@ -291,6 +344,104 @@ impl Transform for RandResample {
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
+    fn name(&self) -> &str {
+        "RandResample"
+    }
+}
+
+#[derive(Clone)]
+pub struct RandClipping {
+    prob: f32,
+    db_range: Option<Range<f32>>,
+    c_range: Option<Range<f32>>,
+    eps: f32,
+    eps_c: f32,
+}
+impl RandClipping {
+    pub fn new(p: f32, eps: f32, convergence_eps: f32) -> Self {
+        RandClipping {
+            prob: p,
+            db_range: None,
+            c_range: None,
+            eps,
+            eps_c: convergence_eps,
+        }
+    }
+    pub fn with_snr(mut self, db_range: Range<f32>) -> Self {
+        self.db_range = Some(db_range);
+        self.c_range = None;
+        self
+    }
+    pub fn with_c(mut self, c_range: Range<f32>) -> Self {
+        self.db_range = None;
+        self.c_range = Some(c_range);
+        self
+    }
+    fn clip_inplace(&self, x: &mut Array2<f32>, c: f32) {
+        x.mapv_inplace(|x| x.max(-c).min(c))
+    }
+    fn clip(&self, x: ArrayView2<f32>, c: f32) -> Array2<f32> {
+        x.map(|x| x.max(-c).min(c))
+    }
+    pub fn sdr(&self, orig: ArrayView2<f32>, processed: ArrayView2<f32>) -> f32 {
+        debug_assert_eq!(orig.shape(), processed.shape());
+        let numel = orig.len();
+        debug_assert!(numel > 0);
+        let noise = orig.to_owned() - processed;
+        let a = orig.fold(0., |acc, x| acc + x.powi(2)) / numel as f32;
+        let b = noise.fold(0., |acc, x| acc + x.powi(2)) / numel as f32;
+        (a / (b + self.eps)).log10() * 20.
+    }
+    fn find_root(&self, x: ArrayView2<f32>, target_snr: f32, max: Option<f32>) -> Option<f32> {
+        let max = max.unwrap_or(1.0);
+        let f = |c| self.sdr(x.view(), self.clip(x.view(), c).view()) - target_snr;
+        let (a, b) = (0.01 * max, 0.99 * max);
+        match roots::find_root_brent(a, b, &f, &mut self.eps_c.clone()) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("RandClipping: Failed to find root: {:?}", e);
+                dbg!(max, f(0.01 * max), f(0.99 * max));
+                None
+            }
+        }
+    }
+}
+impl Transform for RandClipping {
+    fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
+        let mut rng = thread_rng()?;
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
+            return Ok(());
+        }
+        let max = x.fold(0.0, |acc, x| x.abs().max(acc));
+        let c = if let Some(db_range) = self.db_range.as_ref() {
+            let target_snr = rng.uniform(db_range.start, db_range.end);
+            if let Some(c) = self.find_root(x.view(), target_snr, Some(max)) {
+                c
+            } else {
+                return Ok(());
+            }
+        } else {
+            let c_range = self.c_range.as_ref().unwrap();
+            rng.uniform_inclusive(c_range.start * max, c_range.end * max)
+        };
+        self.clip_inplace(x, c);
+        Ok(())
+    }
+    fn default_with_prob(p: f32) -> Self {
+        RandClipping {
+            prob: p,
+            db_range: None,
+            c_range: Some(0.01..0.25),
+            eps: 1e-10,
+            eps_c: 0.001,
+        }
+    }
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
+        Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandClipping"
+    }
 }
 
 #[derive(Clone)]
@@ -299,7 +450,7 @@ pub struct RandRemoveDc {
 }
 impl Transform for RandRemoveDc {
     fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
-        if self.prob == 0. || (self.prob < 1. && thread_rng()?.gen_range(0f32..1f32) > self.prob) {
+        if self.prob == 0. || (self.prob < 1. && thread_rng()?.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         let mean = x.sum() / x.len() as f32;
@@ -313,6 +464,9 @@ impl Transform for RandRemoveDc {
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandRemoveDc"
     }
 }
 
@@ -334,6 +488,152 @@ pub fn low_pass(x: &mut Array2<f32>, freq: f32, sr: usize, q: Option<f32>) -> Re
         biquad_inplace(x_ch, &mut mem, &[b0, b1, b2], &[a0, a1, a2]);
     }
     Ok(())
+}
+
+pub(crate) fn gen_noise(
+    f_decay: f32,
+    num_channels: u16,
+    num_samples: usize,
+    sr: u32,
+) -> Result<Array2<f32>> {
+    let mut fft = RealFftPlanner::new();
+    let fft_forward = fft.plan_fft_forward(sr as usize);
+    let fft_inverse = fft.plan_fft_inverse(sr as usize);
+    let mut scratch_forward = fft_forward.make_scratch_vec();
+    let mut scratch_inverse = fft_inverse.make_scratch_vec();
+    gen_noise_with_scratch(
+        f_decay,
+        num_channels,
+        num_samples,
+        sr,
+        fft_forward.as_ref(),
+        fft_inverse.as_ref(),
+        &mut scratch_forward,
+        &mut scratch_inverse,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn gen_noise_with_scratch(
+    f_decay: f32,
+    num_channels: u16,
+    num_samples: usize,
+    sr: u32,
+    fft_forward: &dyn RealToComplex<f32>,
+    fft_inverse: &dyn ComplexToReal<f32>,
+    scratch_forward: &mut [Complex32],
+    scratch_inverse: &mut [Complex32],
+) -> Result<Array2<f32>> {
+    // Adopted from torch_audiomentations
+    let sr = sr as usize;
+    let ch = num_channels as usize;
+    let mut noise = if f_decay != 0. {
+        let mut noise = Array::random((ch, sr), Normal::new(0., 1.).unwrap());
+        let spec = Array2::uninit([ch, sr / 2 + 1]);
+        // Safety: Will be fully overwritten by fft transform.
+        let mut spec = unsafe { spec.assume_init() };
+        fft_with_output(&mut noise, fft_forward, scratch_forward, &mut spec)?;
+        let mut mask = Array::linspace(1., ((sr / 2 + 1) as f32).sqrt(), spec.len_of(Axis(1)));
+        mask.mapv_inplace(|x| x.powf(f_decay));
+        spec = spec / mask.to_shape([1, sr / 2 + 1]).unwrap();
+        ifft_with_output(&mut spec, fft_inverse, scratch_inverse, &mut noise)?;
+        noise
+    } else {
+        // Fast path for white noise
+        Array::random((ch, sr), Normal::new(-1., 1.).unwrap())
+    };
+    let max = find_max(&noise)? * 1.1;
+    noise /= max;
+    let mut noises = concatenate(
+        Axis(1),
+        &vec![noise.view(); (num_samples as f32 / sr as f32).ceil() as usize],
+    )?;
+    noises.slice_axis_inplace(Axis(1), Slice::from(..num_samples));
+    Ok(noises)
+}
+
+pub(crate) struct NoiseGenerator {
+    p: f32,
+    sr: u32,
+    fft_forward: Arc<dyn RealToComplex<f32>>,
+    fft_inverse: Arc<dyn ComplexToReal<f32>>,
+}
+
+impl NoiseGenerator {
+    pub fn new(sr: usize, p: f32) -> Self {
+        let mut fft = RealFftPlanner::new();
+        let fft_forward = fft.plan_fft_forward(sr);
+        let fft_inverse = fft.plan_fft_inverse(sr);
+        NoiseGenerator {
+            p,
+            sr: sr as u32,
+            fft_forward,
+            fft_inverse,
+        }
+    }
+    /// Generate a random noise signal.
+    ///
+    /// # Arguments
+    ///
+    /// * `f_decay`: Decay variable. Typical values for common noises are:
+    ///     - white: `0.0`
+    ///     - pink: `1.0`
+    ///     - brown: `2.0`
+    ///     - blue: `-1.0`
+    ///     - purple: `-2.0`
+    /// * `num_channels`: Number of output channels.
+    /// * `num_samples`: Number of output samples.
+    ///
+    /// # Returns
+    ///
+    /// * `noise`: 2D array of shape `(num_channels, num_samples)`.
+    pub fn generate(
+        &self,
+        f_decay: f32,
+        num_channels: u16,
+        num_samples: usize,
+    ) -> Result<Array2<f32>> {
+        self.generate_with_scratch(
+            f_decay,
+            num_channels,
+            num_samples,
+            &mut self.fft_forward.make_scratch_vec(),
+            &mut self.fft_inverse.make_scratch_vec(),
+        )
+    }
+    pub fn generate_with_scratch(
+        &self,
+        f_decay: f32,
+        num_channels: u16,
+        num_samples: usize,
+        scratch_forward: &mut [Complex32],
+        scratch_inverse: &mut [Complex32],
+    ) -> Result<Array2<f32>> {
+        gen_noise_with_scratch(
+            f_decay,
+            num_channels,
+            num_samples,
+            self.sr,
+            self.fft_forward.as_ref(),
+            self.fft_inverse.as_ref(),
+            scratch_forward,
+            scratch_inverse,
+        )
+    }
+    pub fn generate_random_noise(
+        &self,
+        f_decay_min: f32,
+        f_decay_max: f32,
+        num_channels: u16,
+        num_samples: usize,
+    ) -> Result<Option<Array2<f32>>> {
+        debug_assert!(f_decay_min < f_decay_max);
+        let mut rng = thread_rng()?;
+        if self.p == 0. || self.p < rng.uniform(0., 1.) {
+            return Ok(None);
+        }
+        let f_decay = rng.uniform(f_decay_min, f_decay_max);
+        Ok(Some(self.generate(f_decay, num_channels, num_samples)?))
+    }
 }
 
 pub(crate) struct RandReverbSim {
@@ -461,20 +761,20 @@ impl RandReverbSim {
             }
         };
         let mut rng = thread_rng()?;
-        let apply_speech = self.prob_speech > rng.gen_range(0f32..1f32);
-        let apply_noise = self.prob_noise > rng.gen_range(0f32..1f32);
+        let apply_speech = self.prob_speech > rng.uniform(0f32, 1f32);
+        let apply_noise = self.prob_noise > rng.uniform(0f32, 1f32);
         if !(apply_speech || apply_noise) {
             return Ok(None);
         }
         let orig_len = speech.len_of(Axis(1));
         // Maybe resample RIR as augmentation
-        if self.prob_resample > rng.gen_range(0f32..1f32) {
-            let new_sr: f32 = rng.gen_range(0.8..1.2) * self.sr as f32;
+        if self.prob_resample > rng.uniform(0f32, 1f32) {
+            let new_sr: f32 = rng.uniform(0.8, 1.2) * self.sr as f32;
             let new_sr = ((new_sr / 500.).round() * 500.) as usize;
             rir = resample(&rir, self.sr, new_sr, Some(512))?;
         }
-        if self.prob_decay > rng.gen_range(0f32..1f32) {
-            let rt60 = rng.gen_range(0.2..1.);
+        if self.prob_decay > rng.uniform(0f32, 1f32) {
+            let rt60 = rng.uniform(0.2, 1.);
             rir = self.supress_late(rir, self.sr, 0., rt60, false)?;
         }
         rir = self.trim(rir)?;
@@ -493,18 +793,18 @@ impl RandReverbSim {
         if apply_speech {
             self.pad(speech, fft_size)?; // Pad since STFT will truncate at the end
             speech_rev =
-                Some(self.convolve(speech, rir_noise.view(), &mut state, Some(orig_len))?);
+                Some(self.convolve(speech, rir_noise.clone(), &mut state, Some(orig_len))?);
             // Speech should be a slightly dereverberant signal as target
             // TODO: Make dereverberation parameters configurable.
             let rir_speech = self.supress_late(rir_noise.clone(), self.sr, 5., 0.2, false)?;
-            *speech = self.convolve(speech, rir_speech.view(), &mut state, Some(orig_len))?;
+            *speech = self.convolve(speech, rir_speech, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.shape(), speech_rev.as_ref().unwrap().shape());
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
         if apply_noise {
             // Noisy contains reverberant noise
             self.pad(noise, fft_size)?;
-            *noise = self.convolve(noise, rir_noise.view(), &mut state, Some(orig_len))?;
+            *noise = self.convolve(noise, rir_noise, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
         Ok(speech_rev)
@@ -512,12 +812,20 @@ impl RandReverbSim {
     fn convolve(
         &self,
         x: &Array2<f32>,
-        rir: ArrayView2<f32>,
+        mut rir: Array2<f32>,
         state: &mut DFState,
         truncate: Option<usize>,
     ) -> Result<Array2<f32>> {
         let mut x_ = stft(x.as_standard_layout().view(), state, true);
-        let rir = fft(rir.view(), state)?;
+        let len = state.fft_forward.get_scratch_len();
+        if len < state.analysis_scratch.len() {
+            state.analysis_scratch.resize(len, Complex32::default())
+        }
+        let rir = fft(
+            &mut rir,
+            state.fft_forward.as_ref(),
+            &mut state.analysis_scratch,
+        )?;
         let rir: ArrayView3<Complex32> = match rir.broadcast(x_.shape()) {
             Some(r) => r.into_dimensionality()?,
             None => {
@@ -552,8 +860,28 @@ impl RandReverbSim {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
     use super::*;
     use crate::wav_utils::*;
+
+    static INIT: Once = Once::new();
+
+    /// Setup function that is only run once, even if called multiple times.
+    fn setup() {
+        seed_from_u64(42);
+        create_out_dir().expect("Could not create output directory");
+
+        INIT.call_once(|| {
+            let _ = env_logger::builder()
+                // Include all events in tests
+                .filter_module("df", log::LevelFilter::max())
+                // Ensure events are captured by `cargo test`
+                .is_test(true)
+                // Ignore errors initializing the logger if tests race to configure it
+                .try_init();
+        });
+    }
 
     fn create_out_dir() -> std::io::Result<()> {
         match std::fs::create_dir("../out") {
@@ -564,7 +892,7 @@ mod tests {
 
     #[test]
     pub fn test_rand_resample() -> Result<()> {
-        create_out_dir().expect("Could not create output directory");
+        setup();
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let mut test_sample = reader.samples_arr2()?;
@@ -578,7 +906,7 @@ mod tests {
 
     #[test]
     pub fn test_low_pass() -> Result<()> {
-        create_out_dir().expect("Could not create output directory");
+        setup();
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr as u32;
         let mut test_sample = reader.samples_arr2()?;
@@ -594,8 +922,7 @@ mod tests {
 
     #[test]
     pub fn test_reverb() -> Result<()> {
-        create_out_dir().expect("Could not create output directory");
-        seed_from_u64(42);
+        setup();
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let sr = reader.sr;
         let len = 4 * sr;
@@ -612,6 +939,53 @@ mod tests {
         write_wav_arr2("../out/speech_target.wav", speech.view(), sr as u32)?;
         write_wav_arr2("../out/speech_reverb.wav", speech_rev.view(), sr as u32)?;
         write_wav_arr2("../out/noise_reverb.wav", noise.view(), sr as u32)?;
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_clipping() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
+        let sr = reader.sr as u32;
+        let test_sample = reader.samples_arr2()?;
+        let mut test_sample_c = test_sample.clone();
+        let ch = test_sample.len_of(Axis(0)) as u16;
+        let tsnr = 3.; // Test with 3dB
+        let transform = RandClipping::new(1.0, 1e-10, 0.001).with_snr(tsnr..tsnr);
+        transform.transform(&mut test_sample_c)?;
+        let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
+        write_wav_iter("../out/clipped_snr.wav", test_sample_c.iter(), sr, ch)?;
+        log::info!("Expecting target SNR {}, got SNR {}", tsnr, resulting_snr);
+        // Test relative difference
+        assert!(((resulting_snr - tsnr) / tsnr).abs() < 0.05);
+
+        let mut test_sample_c = test_sample.clone();
+        let c = 0.05;
+        let transform = RandClipping::new(1.0, 1e-10, 0.001).with_c(c..c);
+        transform.transform(&mut test_sample_c)?;
+        let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
+        write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
+        dbg!(c, resulting_snr);
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_gen_noise() -> Result<()> {
+        setup();
+
+        let sr = 48000;
+        let ch = 2;
+        let n = sr as usize * 3; // 3 seconds
+        let white_noise = gen_noise(0., ch, n, sr)?;
+        let pink_noise = gen_noise(1., ch, n, sr)?;
+        let brown_noise = gen_noise(2., ch, n, sr)?;
+        let blue_noise = gen_noise(-1., ch, n, sr)?;
+        let violet_noise = gen_noise(-1., ch, n, sr)?;
+        write_wav_iter("../out/white_noise.wav", white_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/pink_noise.wav", pink_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/brown_noise.wav", brown_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/blue_noise.wav", blue_noise.iter(), sr, ch)?;
+        write_wav_iter("../out/violet_noise.wav", violet_noise.iter(), sr, ch)?;
         Ok(())
     }
 }

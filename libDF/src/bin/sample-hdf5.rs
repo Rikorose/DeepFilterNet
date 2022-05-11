@@ -1,4 +1,5 @@
 use std::env::args;
+use std::process::exit;
 
 use anyhow::Result;
 use df::dataset::Hdf5Dataset;
@@ -7,16 +8,22 @@ use rand::seq::SliceRandom;
 
 fn main() -> Result<()> {
     let args = args().collect::<Vec<String>>();
-    let p = args.get(1).expect("HDF5 dataset path expected");
+    let p = match args.get(1) {
+        Some(p) => p,
+        None => {
+            eprintln!("HDF5 dataset path expected");
+            exit(1);
+        }
+    };
     let ds = Hdf5Dataset::new(p)?;
     let k = match args.get(2) {
         Some(k) => k.to_string(),
         None => ds.keys()?.choose(&mut rand::thread_rng()).unwrap().to_string(),
     };
     let data = ds.read(&k)?;
-    dbg!(&k, data.shape());
-    let name = "out/".to_owned() + &k;
-    println!("Sampled {:?}", k);
+    println!("Sampled '{}' with audio shape {:?}", k, data.shape());
+    let out_dir = args.get(3).cloned().unwrap_or_else(|| "out".to_owned());
+    let name = format!("{}/{}", out_dir, k);
     write_wav_arr2(&name, data.view(), ds.sr.unwrap() as u32).unwrap();
     Ok(())
 }

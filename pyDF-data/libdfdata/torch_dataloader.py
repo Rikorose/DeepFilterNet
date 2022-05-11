@@ -1,4 +1,5 @@
 import atexit
+import os
 import queue
 import threading
 import time
@@ -68,25 +69,26 @@ class PytorchDataLoader:
         sr: int,
         batch_size: int,
         max_len_s: Optional[float] = 10.0,
-        prefetch=8,
-        num_workers=None,
-        pin_memory=True,
-        drop_last=False,  # Drop the last batch if it contains fewer samples then batch_size
-        fft_size: int = None,  # FFT size for stft calcualtion
-        hop_size: int = None,  # Hop size for stft calcualtion
-        nb_erb: int = None,  # Number of ERB bands
-        nb_spec: int = None,  # Number of complex spectrogram bins
-        norm_alpha: float = None,  # Exponential normalization decay for erb_feat and spec_feat
+        prefetch: int = 8,
+        num_workers: Optional[int] = None,
+        pin_memory: bool = True,
+        drop_last: bool = False,  # Drop the last batch if it contains fewer samples then batch_size
+        fft_size: Optional[int] = None,  # FFT size for stft calcualtion
+        hop_size: Optional[int] = None,  # Hop size for stft calcualtion
+        nb_erb: Optional[int] = None,  # Number of ERB bands
+        nb_spec: Optional[int] = None,  # Number of complex spectrogram bins
+        norm_alpha: Optional[float] = None,  # Exponential normalization decay for erb/spec_feat
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
-        overfit=False,  # Overfit on one epoch
-        cache_valid=False,  # Cache validiation dataset via a hdf5 dataset
-        seed=0,
-        min_nb_erb_freqs: int = None,  # Minimum number of frequency bins per ERB band
+        overfit: bool = False,  # Overfit on one epoch
+        cache_valid: bool = False,  # Cache validiation dataset
+        seed: int = 0,
+        min_nb_erb_freqs: Optional[int] = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
-        global_sampling_factor: float = None,  # Additional over/undersampling of all datasets
+        global_sampling_factor: Optional[float] = None,  # Additional over/undersampling of all ds
         snrs=None,  # Signal to noise ratios (SNRs) to generate. Defaults to [-5,0,5,10,20,40] dB
         gains=None,  # Additional gains applied to speech. Defaults to [-6,0,6] dB
+        log_level: Optional[str] = None,  # Log level for dataloader logging
     ):
         self.fft_size = fft_size
         self.batch_size = batch_size
@@ -117,9 +119,9 @@ class PytorchDataLoader:
             global_sampling_factor=global_sampling_factor,
             snrs=snrs,
             gains=gains,
+            log_level=log_level,
         )
-        for message in self.loader.get_log_messages():
-            logger.log(message[0], "Dataloader: " + message[1])
+        self.log_dataloader_msgs()
         self.prefetch = prefetch
         self.pin_memory = pin_memory if torch.cuda.is_available() else False
         self.idx = 0
@@ -215,17 +217,27 @@ class PytorchDataLoader:
         if self.log_timings:
             self.timings_py.append(time.time() - t0)
             self.timings_rs.append(batch.timings)
-        for message in self.loader.get_log_messages():
-            logger.log(message[0], "Dataloader: " + message[1])
+        self.log_dataloader_msgs()
         return batch
+
+    def log_dataloader_msgs(self):
+        # message has type (level: str, message: str, module: Optional[str], lineno: Optional[int])
+        for (level, msg, module, lineno) in self.loader.get_log_messages():
+            # with logger.contextualize(module: "Dataloader", file=file, lineno=lineno):
+            def patch(r):
+                r["file"] = {"file": os.path.basename(module) + ".rs", "path": "pyDF-data/src/"}
+                r["module"] = module
+                r["function"] = module
+                r["line"] = lineno
+
+            logger.patch(patch).log(level, msg)
 
     def iter_epoch(self, split: str, seed: int) -> Iterator[Batch]:
         self.idx = 0
         # Initializes workers. This needs to be done before pin_memory thread is
         # started via setup_data_queue().
         self.loader.start_epoch(split, seed)
-        for message in self.loader.get_log_messages():
-            logger.log(message[0], "Dataloader: " + message[1])
+        self.log_dataloader_msgs()
         if self.log_timings:
             self.timings_py = []
             self.timings_rs = []

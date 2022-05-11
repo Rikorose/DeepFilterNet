@@ -1,5 +1,6 @@
 import os
 import sys
+import warnings
 from collections import defaultdict
 from copy import deepcopy
 from typing import Dict, Optional, Tuple
@@ -25,7 +26,7 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
         logger.remove()
         level = level.upper()
         if level.lower() != "none":
-            log_format = Formatter(debug=level == "DEBUG").format
+            log_format = Formatter(debug=logger.level(level).no <= logger.level("DEBUG").no).format
             logger.add(
                 sys.stdout,
                 level=level,
@@ -118,7 +119,7 @@ def _metrics_key(k_: Tuple[str, float]):
         return -101
 
 
-def log_metrics(prefix: str, metrics: Dict[str, Number]):
+def log_metrics(prefix: str, metrics: Dict[str, Number], level="INFO"):
     msg = ""
     stages = defaultdict(str)
     loss_msg = ""
@@ -135,11 +136,11 @@ def log_metrics(prefix: str, metrics: Dict[str, Number]):
         else:
             msg += m
     for s, msg_s in stages.items():
-        logger.info(f"{prefix} | stage {s}" + msg_s)
+        logger.log(level, f"{prefix} | stage {s}" + msg_s)
     if len(stages) == 0:
-        logger.info(prefix + msg)
+        logger.log(level, prefix + msg)
     if len(loss_msg) > 0:
-        logger.info(prefix + loss_msg)
+        logger.log(level, prefix + loss_msg)
 
 
 class DuplicateFilter:
@@ -164,7 +165,11 @@ _duplicate_filter = DuplicateFilter()
 
 
 def log_model_summary(model: torch.nn.Module, verbose=False):
-    import ptflops
+    try:
+        import ptflops
+    except ImportError:
+        logger.debug("Failed to import ptflops. Cannot print model summary.")
+        return
 
     from df.model import ModelParams
 
@@ -181,6 +186,7 @@ def log_model_summary(model: torch.nn.Module, verbose=False):
     feat_erb = torch.randn([b, 1, t, p.nb_erb]).to(device)
     feat_spec = torch.randn([b, 1, t, p.nb_df, 2]).to(device)
 
+    warnings.filterwarnings("ignore", "RNN module weights", category=UserWarning, module="torch")
     macs, params = ptflops.get_model_complexity_info(
         deepcopy(model),
         (t,),

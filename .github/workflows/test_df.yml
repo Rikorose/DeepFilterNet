@@ -24,16 +24,30 @@ jobs:
       matrix:
         python: ["3.9"]
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        is_pr:
+          - ${{ github.event_name == 'pull_request' }}
         include:
-          - os: "windows-latest"
-            extra: "-E soundfile"  # Soundfile backend for torchaudio
           - os: "ubuntu-latest"
-            extra: "-E semetrics"  # Aditionally test against original matlab composite metrics
+        exclude:
+          - os: "macos-latest"
+            is_pr: true  # Run only linux on PR
+          - os: "windows-latest"
+            is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v2
+      # Aditionally test against original matlab composite metrics
+      - name: Set Extra Dependency Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "EXTRA=-E semetrics" >> $GITHUB_ENV
+      # Soundfile backend for torchaudio
+      - name: Set Extra Dependency Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "EXTRA=-E soundfile" >> $GITHUB_ENV
       - name: Rust cache
         uses: actions/cache@v2
         with:
@@ -44,31 +58,39 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('.github/workflows/test_df.yml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
       - name: Install Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python }}
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
       - name: Load cached Poetry installation
         if: matrix.os != 'windows-latest'
         uses: actions/cache@v2
         with:
           path: ~/.local
-          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ matrix.pytorch }}-${{ hashFiles('.github/workflows/test_df.yml') }}
+          key: poetry-${{ runner.os }}-${{ matrix.python }}
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
           virtualenvs-create: true
           virtualenvs-in-project: true
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v2
+        with:
+          path: |
+            .venv
+            ~/.venv
+            DeepFilterNet/.venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          poetry install --no-interaction -E eval ${{matrix.extra}}
+          poetry env use ${{matrix.python}}
+          poetry install --no-interaction -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'

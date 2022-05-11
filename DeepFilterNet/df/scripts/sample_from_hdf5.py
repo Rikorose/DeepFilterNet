@@ -2,21 +2,37 @@ import argparse
 import io
 import random
 import sys
+from typing import Optional
 
 import h5py
 import numpy as np
 import torch
 import torchaudio as ta
+from icecream import ic
 
 
-def load_vorbis(buffer: np.ndarray):
-    wav, _ = ta.load(io.BytesIO(buffer[...].tobytes()), format="vorbis")
+def load_encoded(buffer: np.ndarray, codec: str):
+    # In some rare cases, torch audio failes to fully decode vorbis resulting in a way shorter signal
+    wav, _ = ta.load(io.BytesIO(buffer[...].tobytes()), format=codec.lower())
     return wav
 
 
-def load_flac(buffer: np.ndarray):
-    wav, _ = ta.load(io.BytesIO(buffer[...].tobytes()), format="flac")
-    return wav
+def save_sample(group, key: str, codec: str, out_dir: str, sr: int, n_channels: Optional[int]):
+    ds = group[key]
+    if codec == "pcm":
+        sample = torch.from_numpy(ds[...])
+    else:
+        ic(ds.shape)
+        sample = load_encoded(ds, codec)
+        ic(sample.shape)
+    outname = f"{out_dir}/{key}"
+    if not outname.endswith(".wav"):
+        outname += ".wav"
+    print(outname)
+    if n_channels is not None and n_channels > 0:
+        assert sample.dim() == 2
+        sample = sample[:n_channels]
+    ta.save(outname, sample, sample_rate=sr)
 
 
 def main():
@@ -27,6 +43,7 @@ def main():
     parser.add_argument("--out-dir", "-o", type=str, default="out")
     parser.add_argument("--n-samples", "-n", type=int, default=1)
     parser.add_argument("--n-channels", "-c", type=int, default=1)
+    parser.add_argument("--keys", "-k", type=str, nargs="*")
     args = parser.parse_args()
 
     with h5py.File(args.hdf5_file, "r", libver="latest", swmr=True) as h5f:
@@ -38,22 +55,14 @@ def main():
         i = 0
         codec = h5f.attrs.get("codec", "pcm")
         for group in h5f.values():
-            keys = list(group.keys())
-            if args.random:
-                keys = random.sample(keys, n_samples)
+            if args.keys is not None:
+                keys = args.keys
+            else:
+                keys = list(group.keys())
+                if args.random:
+                    keys = random.sample(keys, n_samples)
             for key in keys:
-                sample: np.ndarray = group[key][...]
-                if codec == "vorbis":
-                    sample = load_vorbis(sample)
-                elif codec == "flac":
-                    sample = load_flac(sample)
-                outname = f"{args.out_dir}/{key}"
-                if not outname.endswith(".wav"):
-                    outname += ".wav"
-                print(outname)
-                if args.n_channels > 0:
-                    sample = sample[: args.n_channels]
-                ta.save(outname, torch.as_tensor(sample[:]), sample_rate=sr)
+                save_sample(group, key, codec, args.out_dir, sr, args.n_channels)
                 i += 1
                 if n_samples > 0 and i >= n_samples:
                     break

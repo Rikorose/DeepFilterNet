@@ -6,7 +6,7 @@ use std::vec::Vec;
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
-pub type Complex32 = rustfft::num_complex::Complex32;
+pub type Complex32 = num_complex::Complex32;
 
 pub const MEAN_NORM_INIT: [f32; 2] = [-60., -90.];
 pub const UNIT_NORM_INIT: [f32; 2] = [0.001, 0.0001];
@@ -24,6 +24,8 @@ mod reexport_dataset_modules {
 }
 #[cfg(feature = "dataset")]
 pub use reexport_dataset_modules::*;
+#[cfg(feature = "cache")]
+mod cache;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
     9.265 * (freq_hz / (24.7 * 9.265)).ln_1p()

@@ -13,8 +13,6 @@ class ModelParams(DfParams):
 
     def __init__(self):
         super().__init__()
-        self.df_order: int = config("DF_ORDER", cast=int, default=5, section=self.section)
-        self.df_lookahead: int = config("DF_LOOKAHEAD", cast=int, default=0, section=self.section)
         self.conv_lookahead: int = config(
             "CONV_LOOKAHEAD", cast=int, default=0, section=self.section
         )

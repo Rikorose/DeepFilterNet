@@ -11,15 +11,32 @@ T = TypeVar("T")
 
 class DfParams:
     def __init__(self):
+        # Sampling rate used for training
         self.sr: int = config("SR", cast=int, default=48_000, section="DF")
+        # FFT size in samples
         self.fft_size: int = config("FFT_SIZE", cast=int, default=960, section="DF")
+        # STFT Hop size in samples
         self.hop_size: int = config("HOP_SIZE", cast=int, default=480, section="DF")
+        # Number of ERB bands
         self.nb_erb: int = config("NB_ERB", cast=int, default=32, section="DF")
+        # Number of deep filtering bins; DF is applied from 0th to nb_df-th frequency bins
         self.nb_df: int = config("NB_DF", cast=int, default=96, section="DF")
+        # Normalization decay factor; used for complex and erb features
         self.norm_tau: float = config("NORM_TAU", 1, float, section="DF")
+        # Local SNR minimum value, ground truth will be truncated
         self.lsnr_max: int = config("LSNR_MAX", 35, int, section="DF")
+        # Local SNR maximum value, ground truth will be truncated
         self.lsnr_min: int = config("LSNR_MIN", -15, int, section="DF")
+        # Minimum number of frequency bins per ERB band
         self.min_nb_freqs = config("MIN_NB_ERB_FREQS", 2, int, section="DF")
+        # Deep Filtering order
+        self.df_order: int = config("DF_ORDER", cast=int, default=5, section="DF")
+        # Deep Filtering look-ahead
+        self.df_lookahead: int = config("DF_LOOKAHEAD", cast=int, default=0, section="DF")
+        # Pad mode. By default, padding will be handled by the model. Other options are
+        # - `features`/`input`, which pads the input features passed to the model
+        # - `output`, which pads the output spectrogram corresponding to `df_lookahead`
+        self.pad_mode: str = config("PAD_MODE", default="model", section="DF")
 
 
 class Config:
@@ -50,6 +67,7 @@ class Config:
         if not self.parser.has_section(self.DEFAULT_SECTION):
             self.parser.add_section(self.DEFAULT_SECTION)
         self._fix_clc()
+        self._fix_df()
 
     def use_defaults(self):
         self.load(path=None, config_must_exist=False)
@@ -165,6 +183,18 @@ class Config:
         self.modified = True
         cast = type(value)
         return self.parser.set(section, option, self.tostr(value, cast))
+
+    def _fix_df(self):
+        """Renaming of some groups/options for compatibility with old models."""
+        if self.parser.has_section("deepfilternet") and self.parser.has_section("df"):
+            sec_deepfilternet = self.parser["deepfilternet"]
+            sec_df = self.parser["df"]
+            if "df_order" in sec_deepfilternet:
+                sec_df["df_order"] = sec_deepfilternet["df_order"]
+                del sec_deepfilternet["df_order"]
+            if "df_lookahead" in sec_deepfilternet:
+                sec_df["df_lookahead"] = sec_deepfilternet["df_lookahead"]
+                del sec_deepfilternet["df_lookahead"]
 
     def _fix_clc(self):
         """Renaming of some groups/options for compatibility with old models."""

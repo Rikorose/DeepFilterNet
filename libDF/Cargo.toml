@@ -16,47 +16,87 @@ path = "src/lib.rs"
 [[bin]]
 name = "sample-hdf5"
 path = "src/bin/sample-hdf5.rs"
-required-features = ["dataset", "anyhow", "rand"]
+required-features = ["dataset", "bin", "rand"]
 
 [[bin]]
 name = "sample-dataset"
 path = "src/bin/sample-dataset.rs"
-required-features = ["dataset", "anyhow"]
+required-features = ["dataset", "bin"]
+
+[[bin]]
+name = "fix-sample-attrs"
+path = "src/bin/fix-sample-attrs-hdf5.rs"
+required-features = ["dataset", "bin"]
 
 [features]
 default = []
 
 transforms = ["thiserror", "ndarray"]
-dataset = ["thiserror", "ndarray", "hdf5", "rand", "rand_xoshiro", "rayon", "crossbeam-channel", "serde_json", "serde", "hound", "rubato", "bincode"]
+dataset = [
+  "thiserror",
+  "ndarray",
+  "ndarray-rand",
+  "rand_xoshiro",
+  "hdf5",
+  "rayon",
+  "crossbeam-channel",
+  "serde_json",
+  "serde",
+  "hound",
+  "rubato",
+  "roots",
+  "log",
+]
+dataset_timings = []
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
+cache = ["sled", "bincode"]
+bin = ["anyhow", "ctrlc"]
 
 [dependencies]
 rustfft = "^6.0.1"
 realfft = "^3.0.0"
-rand = { version="0.8", optional=true }
-rubato = { version="0.11", optional=true }
-rand_xoshiro = { version="0.6", optional=true }
-thiserror = { version="1.0", optional=true }
-anyhow = { version="1.0", optional=true, features=["backtrace"] }
-hound = { version="3.4", optional=true }
-hdf5 = { features=["blosc"], optional=true }
-bincode = { version="^1.3", optional=true }
-ndarray = { version="^0.15", optional=true, features=["serde"] }
-rayon = { version="1.5", optional=true }
-crossbeam-channel = { version="^0.5", optional=true }
-serde_json = { version="1.0", optional=true }
-serde = { version = "1.0", features = ["derive"], optional=true }
-lewton = { version = "^0.10", optional=true }
-ogg = { version = "^0.8", optional=true }
-claxon = { version = "^0.4", optional=true }
+num-complex = { version = "^0.4", features = ["serde"] }
+log = { version = "0.4", features = ["std"], optional = true }
+rand = { version = "0.8", optional = true }
+rubato = { version = "0.11", optional = true }
+roots = { version = "0.0.7", optional = true }
+rand_xoshiro = { version = "0.6", optional = true }
+thiserror = { version = "1.0", optional = true }
+anyhow = { version = "1.0", optional = true, features = ["backtrace"] }
+ctrlc = { version = "3.2", optional = true }
+hound = { version = "3.4", optional = true }
+hdf5 = { version = "^0.8", optional = true, git = "https://github.com/aldanor/hdf5-rust/" }
+ndarray = { version = "^0.15", optional = true, features = ["serde"] }
+ndarray-rand = { version = "^0.14", optional = true }
+rayon = { version = "1.5", optional = true }
+crossbeam-channel = { version = "^0.5", optional = true }
+serde_json = { version = "1.0", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+lewton = { version = "^0.10", optional = true }
+ogg = { version = "^0.8", optional = true }
+claxon = { version = "^0.4", optional = true }
+sled = { version = "^0.34", features = ["compression"], optional = true }
+bincode = { version = "2.0.0-rc", default-features = false, features = [
+  "std",
+  "serde",
+], optional = true }
 
 [dev-dependencies]
 rand = "0.8"
 rstest = "0.12"
+env_logger = "0.9"
 
 [package.metadata.deb]
 assets = [
-  ["LICENSE-MIT", "usr/share/doc/deep_filter/", "644"],
-  ["LICENSE-APACHE", "usr/share/doc/deep_filter/", "644"],
+  [
+    "LICENSE-MIT",
+    "usr/share/doc/deep_filter/",
+    "644",
+  ],
+  [
+    "LICENSE-APACHE",
+    "usr/share/doc/deep_filter/",
+    "644",
+  ],
 ]

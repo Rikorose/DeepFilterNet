@@ -62,6 +62,12 @@ def main():
         help="Path to a host specific batch size config.",
     )
     parser.add_argument("--no-resume", action="store_false", dest="resume")
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default=None,
+        help="Logger verbosity. Can be one of (trace, debug, info, error, none)",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-debug", action="store_false", dest="debug")
     args = parser.parse_args()
@@ -73,7 +79,12 @@ def main():
     summary_dir = os.path.join(args.base_dir, "summaries")
     os.makedirs(summary_dir, exist_ok=True)
     debug = args.debug
-    log_level = "DEBUG" if debug else "INFO"
+    if args.log_level is not None:
+        if debug and args.log_level.lower() != "debug":
+            raise ValueError("Either specify debug or a manual log level")
+        log_level = args.log_level
+    else:
+        log_level = "DEBUG" if debug else "INFO"
     init_logger(file=os.path.join(args.base_dir, "train.log"), level=log_level, model=args.base_dir)
     config_file = os.path.join(args.base_dir, "config.ini")
     config.load(config_file)
@@ -146,6 +157,7 @@ def main():
         global_sampling_factor=config("GLOBAL_DS_SAMPLING_F", 1.0, float, section="train"),
         snrs=config("DATALOADER_SNRS", [-5, 0, 5, 10, 20, 40], Csv(int), section="train"),  # type: ignore
         cache_valid=config("VALIDATION_SET_CACHING", False, bool, section="train"),
+        log_level=log_level,
     )
 
     # Batch size scheduling limits the batch size for the first epochs. It will increase the batch
@@ -485,7 +497,7 @@ def load_opt(
     logger.debug(f"Training with optimizer {opt}")
     if cp_dir is not None:
         try:
-            read_cp(opt, "opt", cp_dir)
+            read_cp(opt, "opt", cp_dir, log=False)
         except ValueError as e:
             logger.error(f"Could not load optimizer state: {e}")
     for group in opt.param_groups:

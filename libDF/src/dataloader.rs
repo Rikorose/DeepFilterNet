@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crossbeam_channel::unbounded;
 use ndarray::prelude::*;
-use rand::prelude::SliceRandom;
+use ndarray_rand::rand::prelude::SliceRandom;
 use rayon;
 use rayon::{current_num_threads, prelude::*};
 use thiserror::Error;
@@ -339,7 +339,8 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
-        let mut t0 = Instant::now();
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         let bs = self.batch_size(self.current_split);
         let mut timings = Vec::with_capacity(bs);
         let mut samples = Vec::with_capacity(bs);
@@ -355,14 +356,15 @@ impl DataLoader {
             }
             Some(r) => r,
         };
+        let mut ts0 = Instant::now();
         'outer: while self.cur_out_idx < target_idx {
             // Check if we have some buffered samples
             if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
                 ids.push(self.cur_out_idx);
                 samples.push(s);
-                let t1 = Instant::now();
-                timings.push((t1 - t0).as_secs_f32());
-                t0 = t1;
+                let ts1 = Instant::now();
+                timings.push((ts1 - ts0).as_secs_f32());
+                ts0 = ts1;
                 self.cur_out_idx += 1;
             } else {
                 // Or check worker threads
@@ -383,9 +385,9 @@ impl DataLoader {
                     Ok((o_idx, Ok(s))) => {
                         if o_idx == self.cur_out_idx {
                             samples.push(s);
-                            let t1 = Instant::now();
-                            timings.push((t1 - t0).as_secs_f32());
-                            t0 = t1;
+                            let ts1 = Instant::now();
+                            timings.push((ts1 - ts0).as_secs_f32());
+                            ts0 = ts1;
                             ids.push(o_idx);
                             self.cur_out_idx += 1;
                         } else {
@@ -396,6 +398,8 @@ impl DataLoader {
             }
             tries = 0;
         }
+        #[cfg(feature = "dataset_timings")]
+        let t1 = Instant::now();
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
             assert!(self.cur_out_idx >= target_idx);
@@ -415,6 +419,15 @@ impl DataLoader {
             batch.timings = timings;
             Some(batch)
         };
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) {
+            let t2 = Instant::now();
+            log::trace!(
+                "Returning batch in {} ms, (got samples in {} ms)",
+                (t2 - t0).as_millis(),
+                (t1 - t0).as_millis()
+            );
+        }
         Ok(out)
     }
 
@@ -514,7 +527,7 @@ impl Drop for DataLoader {
     fn drop(&mut self) {
         self.join_fill_thread().unwrap(); // Stop out_receiver and join fill thread
         for split in Split::iter() {
-            let mut ds = match Arc::try_unwrap(
+            let ds = match Arc::try_unwrap(
                 match split {
                     Split::Train => self.ds_train.take(),
                     Split::Valid => self.ds_valid.take(),
@@ -525,7 +538,6 @@ impl Drop for DataLoader {
                 Ok(ds) => ds,
                 Err(_) => panic!("Could not regain ownership over dataset"),
             };
-            ds.close_cache().unwrap();
             self.set_ds(split, ds);
         }
     }

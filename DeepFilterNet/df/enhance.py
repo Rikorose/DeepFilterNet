@@ -28,13 +28,16 @@ def main(args):
         post_filter=args.pf,
         log_level=args.log_level,
         config_allow_defaults=True,
+        epoch=args.epoch,
     )
     if args.output_dir is None:
         args.output_dir = "."
     elif not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
     df_sr = ModelParams().sr
-    for file in args.noisy_audio_files:
+    n_samples = len(args.noisy_audio_files)
+    for i, file in enumerate(args.noisy_audio_files):
+        progress = (i + 1) / n_samples * 100
         audio, meta = load_audio(file, df_sr)
         t0 = time.time()
         audio = enhance(
@@ -43,11 +46,13 @@ def main(args):
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
-        rtf = t_audio / t
-        logger.info(f"Enhanced noisy audio file '{file}' in {t:.1f}s (RT factor: {rtf:.1f})")
+        rtf = t / t_audio
+        fn = os.path.basename(file)
+        p_str = f"{progress:2.0f}% | " if n_samples > 1 else ""
+        logger.info(f"{p_str}Enhanced noisy audio file '{fn}' in {t:.1f}s (RT factor: {rtf:.3f})")
         audio = resample(audio, df_sr, meta.sample_rate)
         save_audio(
-            file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=True
+            file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=False
         )
 
 
@@ -55,9 +60,9 @@ def init_df(
     model_base_dir: Optional[str] = None,
     post_filter: bool = False,
     log_level: str = "INFO",
-    log_file: str = "enhance.log",
+    log_file: Optional[str] = "enhance.log",
     config_allow_defaults: bool = False,
-    epoch: str = "best",
+    epoch: Union[str, int, None] = "best",
 ) -> Tuple[nn.Module, DF, str]:
     """Initializes and loads config, model and deep filtering state.
 
@@ -65,7 +70,11 @@ def init_df(
         model_base_dir (str): Path to the model directory containing checkpoint and config. If None,
             load the default pretrained model.
         post_filter (bool): Enable post filter for some minor, extra noise reduction.
-        log (bool): Enable logging. This initializes the logger globaly if not already initilzed.
+        log_level (str): Control amount of logging. Defaults to `INFO`.
+        log_file (str): Optional log file name. None disables it. Defaults to `enhance.log`.
+        config_allow_defaults (bool): Whether to allow initializing new config values with defaults.
+        epoch (str): Checkpoint epoch to load. Options are `best`, `latest`, `<int>`, and `none`.
+            `none` disables checkpoint loading. Defaults to `best`.
 
     Returns:
         model (nn.Modules): Intialized model, moved to GPU if available.
@@ -88,7 +97,8 @@ def init_df(
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
-    init_logger(file=os.path.join(model_base_dir, log_file), level=log_level, model=model_base_dir)
+    log_file = os.path.join(model_base_dir, log_file) if log_file is not None else None
+    init_logger(file=log_file, level=log_level, model=model_base_dir)
     if use_default_model:
         logger.info(f"Using default model at {model_base_dir}")
     config.load(
@@ -99,6 +109,7 @@ def init_df(
     )
     if post_filter:
         config.set("mask_pf", True, bool, ModelParams().section)
+        logger.info("Running with post-filter")
     p = ModelParams()
     df_state = DF(
         sr=p.sr,
@@ -108,8 +119,11 @@ def init_df(
         min_nb_erb_freqs=p.min_nb_freqs,
     )
     checkpoint_dir = os.path.join(model_base_dir, "checkpoints")
+    load_cp = epoch is not None and not (isinstance(epoch, str) and epoch.lower() == "none")
+    if not load_cp:
+        checkpoint_dir = None
     model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch)
-    if epoch is None:
+    if epoch is None and load_cp:
         logger.error("Could not find a checkpoint")
         exit(1)
     logger.debug(f"Loaded checkpoint from epoch {epoch}")
@@ -139,13 +153,14 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     return spec, erb_feat, spec_feat
 
 
-def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
+def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMetaData]:
     """Loads an audio file using torchaudio.
 
     Args:
         file (str): Path to an audio file.
-        sr (int): Target sampling rate. May resample the audio.
-        **kwargs: Passed to torchaudio.load(). Depend on the backend.
+        sr (int): Optionally resample audio to specified target sampling rate.
+        **kwargs: Passed to torchaudio.load(). Depends on the backend. The resample method
+            may be set via `method` which is passed to `resample()`.
 
     Returns:
         audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
@@ -154,14 +169,17 @@ def load_audio(file: str, sr: int, **kwargs) -> Tuple[Tensor, AudioMetaData]:
     ikwargs = {}
     if "format" in kwargs:
         ikwargs["format"] = kwargs["format"]
+    rkwargs = {}
+    if "method" in kwargs:
+        rkwargs["method"] = kwargs.pop("method")
     info = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
-    if orig_sr != sr:
+    if sr is not None and orig_sr != sr:
         warn_once(
             f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
             "Resampling..."
         )
-        audio = resample(audio, orig_sr, sr)
+        audio = resample(audio, orig_sr, sr, **rkwargs)
     return audio, info
 
 
@@ -187,6 +205,8 @@ def save_audio(
         audio.unsqueeze_(0)
     if dtype == torch.int16 and audio.dtype != torch.int16:
         audio = (audio * (1 << 15)).to(torch.int16)
+    if dtype == torch.float32 and audio.dtype != torch.float32:
+        audio = audio.to(torch.float32) / (1 << 15)
     ta.save(outpath, audio, sr)
 
 
@@ -229,7 +249,7 @@ def parse_epoch_type(value: str) -> Union[int, str]:
         return value
 
 
-def setup_df_argument_parser() -> argparse.ArgumentParser:
+def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-base-dir",
@@ -253,7 +273,7 @@ def setup_df_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level",
         type=str,
-        default="info",
+        default=default_log_level,
         help="Logger verbosity. Can be one of (debug, info, error, none)",
     )
     parser.add_argument("--debug", "-d", action="store_const", const="DEBUG", dest="log_level")

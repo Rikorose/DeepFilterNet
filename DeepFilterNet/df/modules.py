@@ -233,6 +233,14 @@ class Mask(nn.Module):
         self.eps = eps
 
     def pf(self, mask: Tensor, beta: float = 0.02) -> Tensor:
+        """Post-Filter proposed by Valin et al. [1].
+
+        Args:
+            mask (Tensor): Real valued mask, typically of shape [B, C, T, F].
+            beta: Global gain factor.
+        Refs:
+            [1]: Valin et al.: A Perceptually-Motivated Approach for Low-Complexity, Real-Time Enhancement of Fullband Speech.
+        """
         mask_sin = mask * torch.sin(np.pi * mask / 2)
         mask_pf = (1 + beta) * mask / (1 + beta * mask.div(mask_sin.clamp_min(self.eps)).pow(2))
         return mask_pf
