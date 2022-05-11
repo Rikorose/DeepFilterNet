@@ -59,7 +59,7 @@ realfft = "^3.0.0"
 num-complex = { version = "^0.4", features = ["serde"] }
 log = { version = "0.4", features = ["std"], optional = true }
 rand = { version = "0.8", optional = true }
-rubato = { version = "0.11", optional = true }
+rubato = { version = "0.12", optional = true }
 roots = { version = "0.0.7", optional = true }
 rand_xoshiro = { version = "0.6", optional = true }
 thiserror = { version = "1.0", optional = true }
