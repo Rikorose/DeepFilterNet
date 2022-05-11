@@ -30,7 +30,8 @@ jobs:
           - version: "3.10"
             tag: "310"
             abi: "310"
-        df_wheel: ["pyDF", "pyDF-data"]
+        df_wheel: ["pyDF"]
+        # df_wheel: ["pyDF", "pyDF-data"]
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         include:
           - os: ubuntu-latest
