@@ -294,7 +294,7 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
     return parser
 
 
-if __name__ == "__main__":
+def run():
     parser = setup_df_argument_parser()
     parser.add_argument(
         "--compensate-delay",
@@ -309,3 +309,7 @@ if __name__ == "__main__":
         help="List of noise files to mix with the clean speech file.",
     )
     main(parser.parse_args())
+
+
+if __name__ == "__main__":
+    run()

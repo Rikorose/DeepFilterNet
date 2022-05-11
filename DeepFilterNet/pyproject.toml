@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "DeepFilterNet"
-version = "0.1.11-pre"
+version = "0.1.12-pre"
 description = "Noise supression using deep filtering"
 authors = ["Hendrik Schröter"]
 repository = "https://github.com/Rikorose/DeepFilterNet"
@@ -41,7 +41,7 @@ semetrics = ["semetrics"]
 soundfile = ["soundfile"]
 
 [tool.poetry.scripts]
-deepFilter = "df.enhance:main"
+deepFilter = "df.enhance:run"
 
 [tool.poetry.dev-dependencies]
 poethepoet = "^0.11"
