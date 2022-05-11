@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "DeepFilterNet"
-version = "0.1.11-pre"
+version = "0.1.11"
 description = "Noise supression using deep filtering"
 authors = ["Hendrik Schröter"]
 repository = "https://github.com/Rikorose/DeepFilterNet"
@@ -21,8 +21,8 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-deepfilterlib = { path = "../pyDF/" }
-deepfilterdataloader = { path = "../pyDF-data/", optional = true }
+deepfilterlib = "0.1.11"
+deepfilterdataloader = { version = "0.1.11", optional = true }
 python = ">=3.7,<4.0"
 typing_extensions = "^4.0"
 numpy = ">=1.20,<2.0"
@@ -32,12 +32,10 @@ icecream = { version = ">=2,<3", optional = true }
 pystoi = { version = "^0.3", optional = true }
 pesq = { version = "^0.0.3", optional = true }
 scipy = { version = "^1", optional = true }
-semetrics = {git = "https://github.com/usimarit/semetrics.git", optional = true}
 
 [tool.poetry.extras]
 train = ["deepfilterdataloader", "icecream"]
 eval = ["pystoi", "pesq", "scipy"]
-semetrics = ["semetrics"]
 soundfile = ["soundfile"]
 
 [tool.poetry.scripts]

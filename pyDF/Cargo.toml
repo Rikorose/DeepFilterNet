@@ -1,6 +1,6 @@
 [package]
 name = "DeepFilterLib"
-version = "0.1.11-pre"
+version = "0.1.11"
 authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2021"
 
@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-deep_filter = { features = ["transforms"], path = "../libDF" }
+deep_filter = { features = ["transforms"], version = "0.1.11" }
 pyo3 = { version = "^0.16", features = ["extension-module"]}
 numpy = "^0.16"
 ndarray = "^0.15"
