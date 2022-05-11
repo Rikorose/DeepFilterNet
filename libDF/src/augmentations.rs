@@ -1,3 +1,4 @@
+use std::f32;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 #[cfg(feature = "dataset_timings")]
@@ -156,6 +157,90 @@ impl Transform for RandLFilt {
     }
 }
 
+fn high_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
+    let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
+    let amp = 10f32.powf(gain_db / 40.);
+    let alpha = w0.sin() / 2. / q_factor;
+
+    let b0 = amp * ((amp + 1.) + (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha);
+    let b1 = -2. * amp * ((amp - 1.) + (amp + 1.) * w0.cos());
+    let b2 = amp * ((amp + 1.) + (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha);
+    let a0 = (amp + 1.) - (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha;
+    let a1 = 2. * ((amp - 1.) - (amp + 1.) * w0.cos());
+    let a2 = (amp + 1.) - (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha;
+    ([b0, b1, b2], [a0, a1, a2])
+}
+
+fn high_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
+    let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
+    let alpha = w0.sin() / 2. / q_factor;
+
+    let b0 = (1. + w0.cos()) / 2.;
+    let b1 = -(1. + w0.cos());
+    let b2 = (1. - w0.cos()) / 2.;
+    let a0 = 1. + alpha;
+    let a1 = -2. * w0.cos();
+    let a2 = 1. - alpha;
+    ([b0, b1, b2], [a0, a1, a2])
+}
+fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
+    let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
+    let amp = 10f32.powf(gain_db / 40.);
+    let alpha = w0.sin() / 2. / q_factor;
+    dbg!(amp, alpha);
+
+    let b0 = amp * ((amp + 1.) - (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha);
+    let b1 = 2. * amp * ((amp - 1.) - (amp + 1.) * w0.cos());
+    let b2 = amp * ((amp + 1.) - (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha);
+    let a0 = (amp + 1.) + (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha;
+    let a1 = -2. * ((amp - 1.) + (amp + 1.) * w0.cos());
+    let a2 = (amp + 1.) + (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha;
+    dbg!([b0, b1, b2], [a0, a1, a2])
+}
+pub fn low_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
+    let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
+    let alpha = w0.sin() / 2. / q_factor;
+
+    let b0 = (1. - w0.cos()) / 2.;
+    let b1 = 1. - w0.cos();
+    let b2 = b0;
+    let a0 = 1. + alpha;
+    let a1 = -2. * w0.cos();
+    let a2 = 1. - alpha;
+    ([b0, b1, b2], [a0, a1, a2])
+}
+fn peaking_eq(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
+    let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
+    let amp = 10f32.powf(gain_db as f32 / 40.);
+    let alpha = w0.sin() / 2. / q_factor;
+
+    let b0 = 1. + alpha * amp;
+    let b1 = -2. * w0.cos();
+    let b2 = 1. - alpha * amp;
+    let a0 = 1. + alpha / amp;
+    let a1 = -2. * w0.cos();
+    let a2 = 1. - alpha / amp;
+    ([b0, b1, b2], [a0, a1, a2])
+}
+fn notch(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
+    let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
+    let alpha = w0.sin() / 2. / q_factor;
+
+    let b0 = 1.;
+    let b1 = -2. * w0.cos();
+    let b2 = 1.;
+    let a0 = 1. + alpha;
+    let a1 = -2. * w0.cos();
+    let a2 = 1. - alpha;
+    ([b0, b1, b2], [a0, a1, a2])
+}
+fn biquad_filter(x: &mut Array2<f32>, b: &[f32; 3], a: &[f32; 3]) {
+    for x_ch in x.axis_iter_mut(Axis(0)) {
+        let mut mem = [0.; 2];
+        biquad_inplace(x_ch, &mut mem, b, a);
+    }
+}
+
 #[derive(Clone)]
 pub struct RandEQ {
     prob: f32,
@@ -201,8 +286,8 @@ impl Transform for RandEQ {
             let a1 = -2. * w0_cos;
             let a2 = 1. - alpha / amp;
 
-            let mut mem = [0.; 2];
             for x_ch in x.axis_iter_mut(Axis(0)) {
+                let mut mem = [0.; 2];
                 biquad_inplace(x_ch, &mut mem, &[b0, b1, b2], &[a0, a1, a2]);
             }
         }
@@ -468,26 +553,6 @@ impl Transform for RandRemoveDc {
     fn name(&self) -> &str {
         "RandRemoveDc"
     }
-}
-
-pub fn low_pass(x: &mut Array2<f32>, freq: f32, sr: usize, q: Option<f32>) -> Result<()> {
-    let q = q.unwrap_or(0.707);
-    let w0 = 2. * std::f32::consts::PI * freq / sr as f32;
-    let alpha = w0.sin() / 2. / q;
-    let w0_cos = w0.cos();
-
-    let b0 = (1. - w0_cos) / 2.;
-    let b1 = 1. - w0_cos;
-    let b2 = b0;
-    let a0 = 1. + alpha;
-    let a1 = -2. * w0_cos;
-    let a2 = 1. - alpha;
-
-    for x_ch in x.axis_iter_mut(Axis(0)) {
-        let mut mem = [0.; 2];
-        biquad_inplace(x_ch, &mut mem, &[b0, b1, b2], &[a0, a1, a2]);
-    }
-    Ok(())
 }
 
 pub(crate) fn gen_noise(
@@ -913,7 +978,9 @@ mod tests {
         let mut test_sample2 = test_sample.clone();
         let ch = test_sample.len_of(Axis(0)) as u16;
         let f = 8000.;
-        low_pass(&mut test_sample, f, sr as usize, None)?;
+        let mut mem = [0.; 2];
+        let (b, a) = low_pass(f, 0.707, sr as usize);
+        biquad_inplace(&mut test_sample, &mut mem, &b, &a);
         write_wav_iter("../out/lowpass.wav", test_sample.iter(), sr, ch)?;
         test_sample2 = low_pass_resample(&test_sample2, f as usize, sr as usize)?;
         write_wav_iter("../out/lowpass_resample.wav", test_sample2.iter(), sr, ch)?;
@@ -986,6 +1053,49 @@ mod tests {
         write_wav_iter("../out/brown_noise.wav", brown_noise.iter(), sr, ch)?;
         write_wav_iter("../out/blue_noise.wav", blue_noise.iter(), sr, ch)?;
         write_wav_iter("../out/violet_noise.wav", violet_noise.iter(), sr, ch)?;
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_filters() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
+        let sr = reader.sr;
+        let s_orig = reader.samples_arr2()?;
+        let ch = s_orig.len_of(Axis(0)) as u16;
+        let f = 8000.;
+        let gain = -18.;
+        let q = 0.5;
+        // Low pass
+        let (b, a) = low_pass(f, q, sr);
+        let mut s_filt = s_orig.clone();
+        biquad_filter(&mut s_filt, &b, &a);
+        write_wav_iter("../out/filt_lowpass.wav", s_filt.iter(), sr as u32, ch)?;
+        // High pass
+        let (b, a) = high_pass(f, q, sr);
+        let mut s_filt = s_orig.clone();
+        biquad_filter(&mut s_filt, &b, &a);
+        write_wav_iter("../out/filt_higpass.wav", s_filt.iter(), sr as u32, ch)?;
+        // Low shelf
+        let (b, a) = low_shelf(f, gain, q, sr);
+        let mut s_filt = s_orig.clone();
+        biquad_filter(&mut s_filt, &b, &a);
+        write_wav_iter("../out/filt_lowshelf.wav", s_filt.iter(), sr as u32, ch)?;
+        // High shelf
+        let (b, a) = high_shelf(f, gain, q, sr);
+        let mut s_filt = s_orig.clone();
+        biquad_filter(&mut s_filt, &b, &a);
+        write_wav_iter("../out/filt_highshelf.wav", s_filt.iter(), sr as u32, ch)?;
+        // Peaking eq
+        let (b, a) = peaking_eq(f, gain, q, sr);
+        let mut s_filt = s_orig.clone();
+        biquad_filter(&mut s_filt, &b, &a);
+        write_wav_iter("../out/filt_peaking_eq.wav", s_filt.iter(), sr as u32, ch)?;
+        // Notch
+        let (b, a) = notch(f, q, sr);
+        let mut s_filt = s_orig;
+        biquad_filter(&mut s_filt, &b, &a);
+        write_wav_iter("../out/filt_notch.wav", s_filt.iter(), sr as u32, ch)?;
         Ok(())
     }
 }
