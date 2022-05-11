@@ -68,7 +68,7 @@ def init_df(
 
     Args:
         model_base_dir (str): Path to the model directory containing checkpoint and config. If None,
-            load the default pretrained model.
+            load the pretrained DeepFilterNet2 model.
         post_filter (bool): Enable post filter for some minor, extra noise reduction.
         log_level (str): Control amount of logging. Defaults to `INFO`.
         log_file (str): Optional log file name. None disables it. Defaults to `enhance.log`.
@@ -93,14 +93,14 @@ def init_df(
     if model_base_dir is None:
         use_default_model = True
         model_base_dir = os.path.join(
-            os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet"
+            os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet2"
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
     log_file = os.path.join(model_base_dir, log_file) if log_file is not None else None
     init_logger(file=log_file, level=log_level, model=model_base_dir)
     if use_default_model:
-        logger.info(f"Using default model at {model_base_dir}")
+        logger.info(f"Using DeepFilterNet2 model at {model_base_dir}")
     config.load(
         os.path.join(model_base_dir, "config.ini"),
         config_must_exist=True,
