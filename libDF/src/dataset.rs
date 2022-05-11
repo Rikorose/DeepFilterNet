@@ -2,7 +2,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{BufReader, BufWriter, Cursor, Read, Seek};
+use std::io::{BufReader, BufWriter};
+#[cfg(feature = "cache")]
+use std::io::{Cursor, Read, Seek};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
