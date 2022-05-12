@@ -111,11 +111,11 @@ class TestDfModels(unittest.TestCase):
         enhanced = enhance(model, df_state, noisy, pad=True)
         save_audio(out_n, enhanced, sr)
         is_close = True
-        for name in target_metrics.keys():
-            for m in _get_metric(name, sr=sr):
+        for n in target_metrics.keys():
+            for m in _get_metric(n, sr=sr):
                 if not isinstance(m, partial) or "use_octave" not in m.keywords or HAS_OCTAVE:
                     cur_is_close = eval_metric(
-                        m, clean, enhanced, m_target=target_metrics[name], prefix=prefix
+                        m, clean, enhanced, m_target=target_metrics[n], prefix=prefix, metric_name=n
                     )
                     is_close = cur_is_close and is_close
         assert is_close
