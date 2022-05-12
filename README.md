@@ -11,12 +11,6 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using 
 - New DeepFilterNet2 Paper
   - Paper: https://arxiv.org/abs/2205.05474
 
-([**Paper**](https://arxiv.org/abs/2110.05588)).
-Audio samples from the voice bank/DEMAND test set can be found [here](https://rikorose.github.io/DeepFilterNet-Samples/).
-
-**New Paper:** Try out DeepFilterNet with your own voice at this [HuggingFace Space](https://huggingface.co/spaces/hshr/DeepFilterNet).
-**New:** Try out DeepFilterNet with your own voice at this [HuggingFace Space](https://huggingface.co/spaces/hshr/DeepFilterNet).
-
 ## Usage
 This framework supports Linux, MacOS and Windows. Training is only tested under Linux. The framework
 is structured as follows:
