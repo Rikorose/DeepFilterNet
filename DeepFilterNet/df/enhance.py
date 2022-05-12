@@ -63,6 +63,7 @@ def init_df(
     log_file: Optional[str] = "enhance.log",
     config_allow_defaults: bool = False,
     epoch: Union[str, int, None] = "best",
+    default_model: str = "DeepFilterNet2",
 ) -> Tuple[nn.Module, DF, str]:
     """Initializes and loads config, model and deep filtering state.
 
@@ -89,7 +90,6 @@ def init_df(
         install()
     except ImportError:
         pass
-    default_model = "DeepFilterNet2"
     use_default_model = False
     if model_base_dir == "DeepFilterNet":
         default_model = "DeepFilterNet"
