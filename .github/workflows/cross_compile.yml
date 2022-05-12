@@ -1,4 +1,4 @@
-name: Rust CI
+name: Cross Compile ARM
 
 on:
   push:
