@@ -89,18 +89,26 @@ def init_df(
         install()
     except ImportError:
         pass
+    default_model = "DeepFilterNet2"
     use_default_model = False
-    if model_base_dir is None:
+    if model_base_dir == "DeepFilterNet":
+        default_model = "DeepFilterNet"
         use_default_model = True
-        model_base_dir = os.path.join(
-            os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet2"
+    elif model_base_dir == "DeepFilterNet2":
+        use_default_model = True
+    if model_base_dir is None or use_default_model:
+        use_default_model = True
+        model_base_dir = os.path.relpath(
+            os.path.join(
+                os.path.dirname(df.__file__), os.pardir, "pretrained_models", default_model
+            )
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
     log_file = os.path.join(model_base_dir, log_file) if log_file is not None else None
     init_logger(file=log_file, level=log_level, model=model_base_dir)
     if use_default_model:
-        logger.info(f"Using DeepFilterNet2 model at {model_base_dir}")
+        logger.info(f"Using {default_model} model at {model_base_dir}")
     config.load(
         os.path.join(model_base_dir, "config.ini"),
         config_must_exist=True,
@@ -263,7 +271,9 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
         "-m",
         type=str,
         default=None,
-        help="Model directory containing checkpoints and config. By default, the pretrained model is loaded.",
+        help="Model directory containing checkpoints and config. "
+        "To load a pretrained model, you may just provide the model name, e.g. `DeepFilterNet`. "
+        "By default, the pretrained DeepFilterNet2 model is loaded.",
     )
     parser.add_argument(
         "--pf",
@@ -285,13 +295,6 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
     )
     parser.add_argument("--debug", "-d", action="store_const", const="DEBUG", dest="log_level")
     parser.add_argument(
-        "--atten-lim",
-        "-a",
-        type=int,
-        default=None,
-        help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
-    )
-    parser.add_argument(
         "--epoch",
         "-e",
         default="best",
@@ -308,6 +311,13 @@ def run():
         "-D",
         action="store_true",
         help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+    )
+    parser.add_argument(
+        "--atten-lim",
+        "-a",
+        type=int,
+        default=None,
+        help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
     )
     parser.add_argument(
         "noisy_audio_files",
