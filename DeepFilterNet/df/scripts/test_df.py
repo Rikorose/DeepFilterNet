@@ -2,62 +2,42 @@
 
 import os
 import unittest
-from typing import Dict, List, Union
+from functools import partial
+from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
 from loguru import logger
+from torch import Tensor
 
 import df
-from df.enhance import DF, enhance, init_df, load_audio
-from df.evaluation_utils import composite, si_sdr_speechmetrics, stoi
+from df.enhance import DF, enhance, init_df, load_audio, save_audio
+from df.evaluation_utils import HAS_OCTAVE, composite, si_sdr_speechmetrics, stoi
 
 __a_tol = 1e-4
+__r_tol = 1e-4
 
 
-def eval_composite(clean, enhanced, sr, m_target: List[float], prefix: str = ""):  # type: ignore
-    logger.info(prefix + "Computing composite metrics")
-    try:
-        m_enh_octave = torch.as_tensor(
-            composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr, use_octave=True)
-        ).to(torch.float32)
-    except (OSError, ImportError, ModuleNotFoundError):
-        m_enh_octave = None
-        logger.warning("No octave available")
-    m_enh = torch.as_tensor(
-        composite(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy(), sr)
-    ).to(torch.float32)
-    logger.info(prefix + f"Got {m_enh}")
-    m_target: torch.Tensor = torch.as_tensor(m_target)
-    assert torch.isclose(m_enh, m_target, atol=__a_tol).all(), (
-        prefix
-        + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
-    )
-    if m_enh_octave is not None:
-        assert torch.isclose(m_enh_octave, m_target, atol=__a_tol).all(), (
-            prefix
-            + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
-        )
-
-
-def eval_pystoi(clean, enhanced, sr, m_target: float, prefix: str = ""):
-    logger.info(prefix + "Computing STOI")
-    m_enh = stoi(clean.squeeze(0), enhanced.squeeze(0), sr)
-    logger.info(prefix + f"Got {m_enh}")
-    assert np.isclose([m_enh], [m_target], atol=__a_tol), (
-        prefix
-        + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
-    )
-
-
-def eval_sdr(clean, enhanced, m_target: float, prefix: str = ""):
-    logger.info(prefix + "Computing SI-SDR")
-    m_enh = si_sdr_speechmetrics(clean.numpy(), enhanced.numpy())
-    logger.info(prefix + f"Got {m_enh}")
-    assert np.isclose([m_enh], [m_target]), (
-        prefix
-        + f"Metric output not close. Expected {m_target}, got {m_enh}, diff: {m_target-m_enh}"
-    )
+def eval_metric(
+    f: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    clean: Tensor,
+    enhanced: Tensor,
+    m_target,
+    prefix: str = "",
+    metric_name: str = "",
+) -> bool:
+    logger.info(prefix + f"Computing {metric_name} metrics")
+    m_t = torch.as_tensor(m_target)  # target metric
+    m_e = torch.as_tensor(
+        f(clean.squeeze(0).numpy(), enhanced.squeeze(0).numpy())
+    )  # enhanced metric
+    m_e = m_e.to(torch.float32)
+    logger.info(prefix + f"Expected {m_t}")
+    logger.info(prefix + f"Got      {m_e}")
+    is_close = torch.isclose(m_e, m_t, atol=__a_tol, rtol=__r_tol).all()
+    if not is_close:
+        logger.error(prefix + f"Diff     {m_t-m_e}")
+    return is_close
 
 
 TARGET_METRICS = {
@@ -72,29 +52,27 @@ TARGET_METRICS = {
         "stoi": 0.9689496585281197,
         "sdr": 18.88543128967285,
     },
-    "DeepFilterNet2a": {
+    "DeepFilterNet2": {
         "composite": [
-            2.86751246452332,
-            4.03339815139771,
-            2.56429362297058,
-            3.41470885276794,
-            -2.79574084281921,
+            2.87284946441650,
+            4.17169523239136,
+            2.75626921653748,
+            3.51172018051147,
+            -0.91267710924149,
         ],
-        "stoi": 0.9707452525900906,
-        "sdr": 13.40160727500915,
-    },
-    "DeepFilterNet2b": {
-        "composite": [
-            2.87229919433594,
-            4.15724086761475,
-            2.62931561470032,
-            3.48965477943420,
-            -2.28056311607361,
-        ],
-        "stoi": 0.9733591821902137,
-        "sdr": 13.59861135482788,
+        "stoi": 0.9725977621169399,
+        "sdr": 19.41733717918396,
     },
 }
+
+
+def _get_metric(name: str, sr: int):
+    METRICS = {
+        "composite": [partial(composite, sr=sr), partial(composite, sr=sr, use_octave=True)],
+        "stoi": [partial(stoi, sr=sr)],
+        "sdr": [si_sdr_speechmetrics],
+    }
+    return METRICS[name]
 
 
 def _load_model(df_dir: str, model_n: str):
@@ -108,6 +86,7 @@ class TestDfModels(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_printoptions(precision=14, linewidth=120)
+        os.makedirs("out", exist_ok=True)
         cls.df_dir = os.path.abspath(os.path.join(os.path.dirname(df.__file__), os.pardir))
         cls.models = {m: _load_model(cls.df_dir, m) for m in TARGET_METRICS.keys()}
         return cls
@@ -117,10 +96,12 @@ class TestDfModels(unittest.TestCase):
         model: torch.nn.Module,
         df_state: DF,
         target_metrics: Dict[str, Union[float, List[float]]],
-        prefix: str = "",
+        prefix: Optional[str] = None,
     ):
+        out_n = f"out/enhanced_{prefix}.wav"
+        prefix = prefix + " | " if prefix is not None else ""
         sr = df_state.sr()
-        logger.info("Loading audios")
+        logger.info(prefix + "Loading audios")
         noisy, _ = load_audio(
             os.path.join(self.df_dir, os.path.pardir, "assets", "noisy_snr0.wav"), sr
         )
@@ -128,20 +109,23 @@ class TestDfModels(unittest.TestCase):
             os.path.join(self.df_dir, os.path.pardir, "assets", "clean_freesound_33711.wav"), sr
         )
         enhanced = enhance(model, df_state, noisy, pad=True)
-        eval_composite(clean, enhanced, sr, target_metrics["composite"], prefix=prefix)  # type: ignore
-        eval_pystoi(clean, enhanced, sr, m_target=target_metrics["stoi"], prefix=prefix)  # type: ignore
-        eval_sdr(clean, enhanced, m_target=target_metrics["sdr"], prefix=prefix)  # type: ignore
+        save_audio(out_n, enhanced, sr)
+        is_close = True
+        for n in target_metrics.keys():
+            for m in _get_metric(n, sr=sr):
+                if not isinstance(m, partial) or "use_octave" not in m.keywords or HAS_OCTAVE:
+                    cur_is_close = eval_metric(
+                        m, clean, enhanced, m_target=target_metrics[n], prefix=prefix, metric_name=n
+                    )
+                    is_close = cur_is_close and is_close
+        assert is_close
 
     def test_deepfilternet(self):
         model = "DeepFilterNet"
         self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
-    def test_deepfilternet2a(self):
-        model = "DeepFilterNet2a"
-        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
-
     def test_deepfilternet2(self):
-        model = "DeepFilterNet2b"
+        model = "DeepFilterNet2"
         self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
 

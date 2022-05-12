@@ -25,12 +25,19 @@ from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
 from libdf import DF
 
+HAS_OCTAVE = True
+RESAMPLE_METHOD = "sinc_fast"
+
 try:
     import requests
 except ImportError:
     requests = None
 
-RESAMPLE_METHOD = "sinc_fast"
+try:
+    import semetrics
+except (OSError, ImportError, ModuleNotFoundError):
+    HAS_OCTAVE = False
+    semetrics = None
 
 
 def log_progress(iterable, total: Optional[int] = None, log_freq_percent=25, desc="Progress"):
@@ -486,7 +493,7 @@ class DnsMosP808ApiMetric(NoisyMetric):
 
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        score_dict = mos_api_req(self.url, self.key, degraded)
+        score_dict = dnsmos_api_req(self.url, self.key, degraded)
         return float(score_dict["mos"])
 
 
@@ -500,7 +507,7 @@ class DnsMosP835ApiMetric(NoisyMetric):
 
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
-        score_dict = mos_api_req(self.url, self.key, degraded)
+        score_dict = dnsmos_api_req(self.url, self.key, degraded)
         return np.asarray([float(score_dict[c]) for c in ("mos_sig", "mos_bak", "mos_ovr")])
 
 
@@ -536,7 +543,7 @@ def composite(
     if use_octave:
         from tempfile import NamedTemporaryFile
 
-        import semetrics
+        assert semetrics is not None
 
         with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:
             # Note: Quantizing to int16 results in slightly modified metrics. Thus, keep f32 prec.
@@ -545,7 +552,7 @@ def composite(
             c = semetrics.composite(cf.name, nf.name)
     else:
         c = composite_py(as_numpy(clean), as_numpy(degraded), sr)
-    return np.asarray(c)
+    return np.asarray(c).astype(np.float32)
 
 
 def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
@@ -571,7 +578,7 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
     return sisdr
 
 
-def mos_api_req(url: str, key: str, audio: Tensor) -> Dict[str, float]:
+def dnsmos_api_req(url: str, key: str, audio: Tensor, verbose=False) -> Dict[str, float]:
     assert requests is not None
     # Set the content type
     headers = {"Content-Type": "application/json"}
@@ -587,12 +594,13 @@ def mos_api_req(url: str, key: str, audio: Tensor) -> Dict[str, float]:
         try:
             resp = requests.post(url, data=input_data, headers=headers, timeout=1000)
             score_dict = resp.json()
-            log_metrics("DNSMOS", score_dict, level="DEBUG")
+            if verbose:
+                log_metrics("DNSMOS", score_dict, level="DEBUG")
             return score_dict
         except Exception as e:
-            print(e)
+            if verbose:
+                print(e)
             tries += 1
-            print("retry_1")
             continue
     raise ValueError(f"Error gettimg mos: {e}")
 

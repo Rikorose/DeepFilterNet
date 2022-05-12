@@ -68,7 +68,7 @@ def init_df(
 
     Args:
         model_base_dir (str): Path to the model directory containing checkpoint and config. If None,
-            load the default pretrained model.
+            load the pretrained DeepFilterNet2 model.
         post_filter (bool): Enable post filter for some minor, extra noise reduction.
         log_level (str): Control amount of logging. Defaults to `INFO`.
         log_file (str): Optional log file name. None disables it. Defaults to `enhance.log`.
@@ -89,18 +89,26 @@ def init_df(
         install()
     except ImportError:
         pass
+    default_model = "DeepFilterNet2"
     use_default_model = False
-    if model_base_dir is None:
+    if model_base_dir == "DeepFilterNet":
+        default_model = "DeepFilterNet"
         use_default_model = True
-        model_base_dir = os.path.join(
-            os.path.dirname(df.__file__), os.pardir, "pretrained_models", "DeepFilterNet"
+    elif model_base_dir == "DeepFilterNet2":
+        use_default_model = True
+    if model_base_dir is None or use_default_model:
+        use_default_model = True
+        model_base_dir = os.path.relpath(
+            os.path.join(
+                os.path.dirname(df.__file__), os.pardir, "pretrained_models", default_model
+            )
         )
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
     log_file = os.path.join(model_base_dir, log_file) if log_file is not None else None
     init_logger(file=log_file, level=log_level, model=model_base_dir)
     if use_default_model:
-        logger.info(f"Using default model at {model_base_dir}")
+        logger.info(f"Using {default_model} model at {model_base_dir}")
     config.load(
         os.path.join(model_base_dir, "config.ini"),
         config_must_exist=True,
@@ -122,7 +130,11 @@ def init_df(
     load_cp = epoch is not None and not (isinstance(epoch, str) and epoch.lower() == "none")
     if not load_cp:
         checkpoint_dir = None
-    model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch)
+    try:
+        mask_only = config.get("mask_only", cast=bool, section="train")
+    except KeyError:
+        mask_only = False
+    model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch, mask_only=mask_only)
     if epoch is None and load_cp:
         logger.error("Could not find a checkpoint")
         exit(1)
@@ -153,7 +165,9 @@ def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Ten
     return spec, erb_feat, spec_feat
 
 
-def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMetaData]:
+def load_audio(
+    file: str, sr: Optional[int], verbose=True, **kwargs
+) -> Tuple[Tensor, AudioMetaData]:
     """Loads an audio file using torchaudio.
 
     Args:
@@ -164,7 +178,7 @@ def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMet
 
     Returns:
         audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
-        info (AudioMetaData): Meta data or the original audio file. Contains the original sr.
+        info (AudioMetaData): Meta data of the original audio file. Contains the original sr.
     """
     ikwargs = {}
     if "format" in kwargs:
@@ -172,13 +186,14 @@ def load_audio(file: str, sr: Optional[str], **kwargs) -> Tuple[Tensor, AudioMet
     rkwargs = {}
     if "method" in kwargs:
         rkwargs["method"] = kwargs.pop("method")
-    info = ta.info(file, **ikwargs)
+    info: AudioMetaData = ta.info(file, **ikwargs)
     audio, orig_sr = ta.load(file, **kwargs)
     if sr is not None and orig_sr != sr:
-        warn_once(
-            f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
-            "Resampling..."
-        )
+        if verbose:
+            warn_once(
+                f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
+                "Resampling..."
+            )
         audio = resample(audio, orig_sr, sr, **rkwargs)
     return audio, info
 
@@ -256,7 +271,9 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
         "-m",
         type=str,
         default=None,
-        help="Model directory containing checkpoints and config. By default, the pretrained model is loaded.",
+        help="Model directory containing checkpoints and config. "
+        "To load a pretrained model, you may just provide the model name, e.g. `DeepFilterNet`. "
+        "By default, the pretrained DeepFilterNet2 model is loaded.",
     )
     parser.add_argument(
         "--pf",
@@ -278,13 +295,6 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
     )
     parser.add_argument("--debug", "-d", action="store_const", const="DEBUG", dest="log_level")
     parser.add_argument(
-        "--atten-lim",
-        "-a",
-        type=int,
-        default=None,
-        help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
-    )
-    parser.add_argument(
         "--epoch",
         "-e",
         default="best",
@@ -301,6 +311,13 @@ def run():
         "-D",
         action="store_true",
         help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+    )
+    parser.add_argument(
+        "--atten-lim",
+        "-a",
+        type=int,
+        default=None,
+        help="Attenuation limit in dB by mixing the enhanced signal with the noisy signal.",
     )
     parser.add_argument(
         "noisy_audio_files",

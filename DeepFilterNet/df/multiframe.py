@@ -20,16 +20,25 @@ class MultiFrameModule(nn.Module, ABC):
 
     num_freqs: Final[int]
     frame_size: Final[int]
-    need_pad: Final[bool]
+    need_unfold: Final[bool]
 
     def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
+        """Multi-Frame filtering module.
+
+        Args:
+            num_freqs (int): Number of frequency bins used for filtering.
+            frame_size (int): Frame size in FD domain.
+            lookahead (int): Lookahead, may be used to select the output time step. Note: This
+                module does not add additional padding according to lookahead!
+        """
         super().__init__()
         self.num_freqs = num_freqs
         self.frame_size = frame_size
-        self.pad = nn.ConstantPad2d((0, 0, frame_size - lookahead - 1, lookahead), 0.0)
-        self.need_pad = frame_size > 1 or lookahead != 0
+        self.pad = nn.ConstantPad2d((0, 0, frame_size - 1, 0), 0.0)
+        self.need_unfold = frame_size > 1
+        self.lookahead = lookahead
 
-    def pad_unfold(self, spec: Tensor):
+    def spec_unfold(self, spec: Tensor):
         """Pads and unfolds the spectrogram according to frame_size.
 
         Args:
@@ -37,7 +46,7 @@ class MultiFrameModule(nn.Module, ABC):
         Returns:
             spec (Tensor): Unfolded spectrogram of shape [B, C, T, F, N], where N: frame_size.
         """
-        if self.need_pad:
+        if self.need_unfold:
             return self.pad(spec).unfold(2, self.frame_size, 1)
         return spec.unsqueeze(-1)
 
@@ -48,7 +57,7 @@ class MultiFrameModule(nn.Module, ABC):
             spec (Tensor): Spectrogram of shape [B, C, T, F, 2]
             coefs (Tensor): Spectrogram of shape [B, C, T, F, 2]
         """
-        spec_u = self.pad_unfold(torch.view_as_complex(spec))
+        spec_u = self.spec_unfold(torch.view_as_complex(spec))
         coefs = torch.view_as_complex(coefs)
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         spec_f = self.forward_impl(spec_f, coefs)
@@ -132,7 +141,7 @@ class DF(MultiFrameModule):
         self.conj = conj
 
     def forward_impl(self, spec: Tensor, coefs: Tensor):
-        coefs = coefs.unflatten(1, (-1, self.frame_size))
+        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
         if self.conj:
             coefs = coefs.conj()
         return df(spec, coefs)
