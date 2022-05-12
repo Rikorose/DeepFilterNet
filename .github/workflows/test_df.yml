@@ -81,15 +81,12 @@ jobs:
         id: cached-poetry-dependencies
         uses: actions/cache@v2
         with:
-          path: |
-            .venv
-            ~/.venv
-            DeepFilterNet/.venv
+          path: .venv
           key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          source $VENV
+          source ../$VENV
           poetry --version
           poetry env use ${{matrix.python}}
           poetry install --no-interaction -E eval ${{env.EXTRA}}
@@ -100,5 +97,5 @@ jobs:
       - name: Run DF Test
         working-directory: DeepFilterNet
         run: |
-          source $VENV
+          source ../$VENV
           python df/scripts/test_df.py
