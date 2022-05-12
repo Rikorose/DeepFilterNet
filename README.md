@@ -1,16 +1,30 @@
 # DeepFilterNet
-A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) based on Deep Filtering ([Paper](https://arxiv.org/abs/2110.05588)).
+A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using on Deep Filtering.
+
+### News
+
+- Original DeepFilterNet Paper
+  - Paper: https://arxiv.org/abs/2110.05588
+  - Samples: https://rikorose.github.io/DeepFilterNet-Samples/
+  - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet
+
+- New DeepFilterNet2 Paper
+  - Paper: https://arxiv.org/abs/2205.05474
+
+([**Paper**](https://arxiv.org/abs/2110.05588)).
 Audio samples from the voice bank/DEMAND test set can be found [here](https://rikorose.github.io/DeepFilterNet-Samples/).
 
+**New Paper:** Try out DeepFilterNet with your own voice at this [HuggingFace Space](https://huggingface.co/spaces/hshr/DeepFilterNet).
 **New:** Try out DeepFilterNet with your own voice at this [HuggingFace Space](https://huggingface.co/spaces/hshr/DeepFilterNet).
+
+## Usage
+This framework supports Linux, MacOS and Windows. Training is only tested under Linux. The framework
+is structured as follows:
 
 * `libDF` contains Rust code used for data loading and augmentation.
 * `DeepFilterNet` contains DeepFilterNet code training, evaluation and visualization as well as pretrained model weights.
 * `pyDF` contains a Python wrapper of libDF STFT/ISTFT processing loop.
 * `pyDF-data` contains a Python wrapper of libDF dataset functionality and provides a pytorch data loader.
-
-## Usage
-This framework supports Linux, MacOS and Windows. Training is only tested under Linux.
 
 ### PyPI
 
@@ -68,16 +82,22 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   --model-base-dir MODEL_BASE_DIR, -m MODEL_BASE_DIR
-                        Model directory containing checkpoints and config. By default, the pretrained model is loaded.
+                        Model directory containing checkpoints and config.
+                        To load a pretrained model, you may just provide the model name, e.g. `DeepFilterNet`.
+                        By default, the pretrained DeepFilterNet2 model is loaded.
   --pf                  Post-filter that slightly over-attenuates very noisy sections.
   --output-dir OUTPUT_DIR, -o OUTPUT_DIR
                         Directory in which the enhanced audio files will be stored.
   --log-level LOG_LEVEL
                         Logger verbosity. Can be one of (debug, info, error, none)
-  --compensate-delay, -d
+  --compensate-delay, -D
                         Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.
 
-python DeepFilterNet/df/enhance.py -m DeepFilterNet/pretrained_models/DeepFilterNet/ path/to/noisy_audio.wav
+# Enhance audio with original DeepFilterNet
+python DeepFilterNet/df/enhance.py -m DeepFilterNet path/to/noisy_audio.wav
+
+# Enhance audio with DeepFilterNet2
+python DeepFilterNet/df/enhance.py -m DeepFilterNet2 path/to/noisy_audio.wav
 ```
 
 ### Training
@@ -178,9 +198,9 @@ for a config file.
 python df/train.py path/to/dataset.cfg path/to/data_dir/ path/to/base_dir/
 ```
 
-## Citation
+## Citation Guide
 
-This code accompanies the paper 'DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering'.
+Iy you use this framework, please cite: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
 
 ```bibtex
 @inproceedings{schroeter2022deepfilternet,
@@ -190,6 +210,19 @@ This code accompanies the paper 'DeepFilterNet: A Low Complexity Speech Enhancem
       year={2022},
       organization={IEEE}
 }
+```
+
+If you use the DeepFilterNet2 model, please cite: *DeepFilterNet2: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio*
+
+```bibtex
+@misc{schroeter2022deepfilternet2,
+  title = {{DeepFilterNet2}: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio},
+  author = {Schröter, Hendrik and Escalante-B., Alberto N. and Rosenkranz, Tobias and Maier, Andreas},
+  publisher = {arXiv},
+  year = {2022},
+  url = {https://arxiv.org/abs/2205.05474},
+}
+
 ```
 
 ## License
