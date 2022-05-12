@@ -31,8 +31,8 @@ jobs:
         exclude:
           - os: "macos-latest"
             is_pr: true  # Run only linux on PR
-          - os: "windows-latest"
-            is_pr: true  # Run only linux on PR
+          # - os: "windows-latest"
+          #   is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
@@ -71,7 +71,7 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ~/.local
-          key: poetry-${{ runner.os }}-${{ matrix.python }}
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-1
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
@@ -81,12 +81,16 @@ jobs:
         id: cached-poetry-dependencies
         uses: actions/cache@v2
         with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          path: |
+            .venv
+            DeepFilterNet/.venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}-1
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
-          source ../$VENV
+          # ls .venv || echo "not found"
+          # ls ../.venv || echo "not found"
+          source $VENV
           poetry --version
           poetry env use ${{matrix.python}}
           poetry install --no-interaction -E eval ${{env.EXTRA}}
@@ -97,5 +101,5 @@ jobs:
       - name: Run DF Test
         working-directory: DeepFilterNet
         run: |
-          source ../$VENV
+          source $VENV
           python df/scripts/test_df.py
