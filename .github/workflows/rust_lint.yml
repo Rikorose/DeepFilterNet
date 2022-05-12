@@ -22,12 +22,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {command: fmt, rust: nightly, args: '--all -- --check'}
-          - {command: build, rust: stable, args: '--no-default-features'}
-          - {command: build, rust: stable, args: '--all-features'}
-          - {command: build, rust: nightly, args: '--all-features'}
-          - {command: clippy, rust: stable, args: '--all-features -- -D warnings'}
-          - {command: test, rust: stable, args: '--all-features -p deep_filter'}
+          - {command: fmt, rust: nightly, args: '--all -- --check', hdf5: false}
+          - {command: clippy, rust: stable, args: '--all-features -- -D warnings', hdf5: false}
+          - {command: test, rust: stable, args: '--all-features -p deep_filter', hdf5: true}
+          - {command: build, rust: stable, args: '-p deep_filter', hdf5: false}
+          - {command: build, rust: stable, args: '--all-features', hdf5: true}
+          - {command: build, rust: nightly, args: '--all-features', hdf5: true}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -44,7 +44,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with: {profile: minimal, toolchain: '${{matrix.rust}}', override: true, components: 'rustfmt, clippy'}
       - name: Install HDF5
-        if: matrix.command != 'fmt'
+        if: matrix.hdf5 == true
         run: sudo apt-get install libhdf5-dev
       - name: Run cargo ${{matrix.command}}
         uses: actions-rs/cargo@v1

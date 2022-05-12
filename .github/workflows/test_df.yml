@@ -38,6 +38,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v2
+
       # Aditionally test against original matlab composite metrics
       - name: Set Extra Dependency Ubuntu
         if: matrix.os == 'ubuntu-latest'
@@ -48,6 +49,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           echo "EXTRA=-E soundfile" >> $GITHUB_ENV
+
+      # Rust installation
       - name: Rust cache
         uses: actions/cache@v2
         with:
@@ -62,6 +65,8 @@ jobs:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with: {profile: "minimal", toolchain: "stable"}
+
+      # Python and poetry install
       - name: Install Python
         uses: actions/setup-python@v3
         with:
@@ -71,21 +76,28 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ~/.local
-          key: poetry-${{ runner.os }}-${{ matrix.python }}
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-      - name: Load cached venv
-        id: cached-poetry-dependencies
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-1
+      - name: Bootstrap poetry
+        run: |
+          curl -sL https://install.python-poetry.org | python - -y
+      - name: Update PATH
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Update Path for Windows
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
+      - name: Configure poetry
+        run: poetry config virtualenvs.in-project true
+      - name: Set venv up cache
         uses: actions/cache@v2
+        id: cache
         with:
           path: |
             .venv
-            ~/.venv
             DeepFilterNet/.venv
-          key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
+          key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/pyproject.toml') }}
+
+      # Install DeepFilterNet and dependencies
       - name: Install runtime dependencies and DeepFilterNet
         working-directory: DeepFilterNet
         run: |
@@ -96,21 +108,21 @@ jobs:
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install --no-install-recommends octave
+
+      # Run tests
       - name: Run DF Test
         working-directory: DeepFilterNet
         run: |
-          source $VENV
-          python df/scripts/test_df.py
+          poetry run python df/scripts/test_df.py
+      # Test deepFilter executable
       - name: Test deepFilter script
-        env:
-          DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
+        working-directory: DeepFilterNet
         run: |
-          source ./DeepFilterNet/$VENV
-          mkdir ./out
-          deepFilter ./assets/noisy_snr0.wav -m ./DeepFilterNet/pretrained_models/DeepFilterNet2/ -o out/
-          python DeepFilterNet/df/scripts/dnsmos.py assets/noisy_snr0.wav -t 2.9511659145355225
-          python DeepFilterNet/df/scripts/dnsmos.py out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
+          mkdir ../out
+          poetry run deepFilter ../assets/noisy_snr0.wav -o ../out
+          poetry run python DeepFilterNet/df/scripts/dnsmos.py assets/noisy_snr0.wav -t 2.9511659145355225
+          poetry run python DeepFilterNet/df/scripts/dnsmos.py out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
       - uses: actions/upload-artifact@v2
         with:
-          name: enhanced_noisy
+          name: enhanced-${{ runner.os }}
           path: out/*wav
