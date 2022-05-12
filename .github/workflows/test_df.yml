@@ -102,7 +102,7 @@ jobs:
         working-directory: DeepFilterNet
         run: |
           poetry --version
-          poetry install --no-interaction -E eval ${{env.EXTRA}}
+          poetry install --no-interaction -E dnsmos -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
       - name: Install Octave
         if: matrix.os == 'ubuntu-latest'
@@ -116,11 +116,13 @@ jobs:
       # Test deepFilter executable
       - name: Test deepFilter script
         working-directory: DeepFilterNet
+        env:
+          DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
         run: |
           mkdir ../out
           poetry run deepFilter ../assets/noisy_snr0.wav -o ../out
-          poetry run python DeepFilterNet/df/scripts/dnsmos.py assets/noisy_snr0.wav -t 2.9511659145355225
-          poetry run python DeepFilterNet/df/scripts/dnsmos.py out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
+          poetry run python df/scripts/dnsmos.py ../assets/noisy_snr0.wav -t 2.9511659145355225
+          poetry run python df/scripts/dnsmos.py ../out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
       - uses: actions/upload-artifact@v2
         with:
           name: enhanced-${{ runner.os }}
