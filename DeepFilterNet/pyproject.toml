@@ -48,7 +48,7 @@ poethepoet = "^0.11"
 pre-commit = "^2.17"
 
 [tool.poe.tasks]
-install-torch-cuda111 = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
+install-torch-cuda11 = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
 install-torch-cpu = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cpu/"
 
 [build-system]

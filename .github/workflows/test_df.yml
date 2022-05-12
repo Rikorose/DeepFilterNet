@@ -93,10 +93,10 @@ jobs:
         id: cache
         with:
           path: .venv
-          key: venv-${{ runner.os }}-${{ steps.full-python-version.outputs.version }}-${{ hashFiles('**/pyproject.toml') }}
-      - name: Ensure venv cache is healthy
-        if: steps.cache.outputs.cache-hit == 'true'
-        run: timeout 10s poetry run pip --version || rm -rf .venv
+          key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/pyproject.toml') }}
+      # - name: Ensure venv cache is healthy
+      #   if: steps.cache.outputs.cache-hit == 'true'
+      #   run: timeout 10s poetry run pip --version || rm -rf .venv
 
       # Install DeepFilterNet and dependencies
       - name: Install runtime dependencies and DeepFilterNet
@@ -114,3 +114,13 @@ jobs:
         working-directory: DeepFilterNet
         run: |
           poetry run python df/scripts/test_df.py
+      # Test deepFilter executable
+      - name: Test deepFilter script
+        working-directory: DeepFilterNet
+        run: |
+          mkdir ../out
+          poetry run deepFilter ../assets/noisy_snr0.wav -o ../out
+      - uses: actions/upload-artifact@v2
+        with:
+          name: enhanced-${{ runner.os }}
+          path: out/*wav
