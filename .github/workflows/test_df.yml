@@ -31,8 +31,8 @@ jobs:
         exclude:
           - os: "macos-latest"
             is_pr: true  # Run only linux on PR
-          # - os: "windows-latest"
-          #   is_pr: true  # Run only linux on PR
+          - os: "windows-latest"
+            is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
@@ -94,9 +94,6 @@ jobs:
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/pyproject.toml') }}
-      # - name: Ensure venv cache is healthy
-      #   if: steps.cache.outputs.cache-hit == 'true'
-      #   run: timeout 10s poetry run pip --version || rm -rf .venv
 
       # Install DeepFilterNet and dependencies
       - name: Install runtime dependencies and DeepFilterNet
