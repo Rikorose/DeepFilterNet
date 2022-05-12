@@ -1,6 +1,6 @@
 [package]
 name = "DeepFilterDataLoader"
-version = "0.2.0"
+version = "0.2.1-pre"
 authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2021"
 
@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-deep_filter = { features = ["dataset"], version = "0.2.0" }
+deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
 pyo3 = { version = "^0.16", default_features = true, features = [
   "extension-module",
 ] }
