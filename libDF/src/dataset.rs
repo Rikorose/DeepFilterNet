@@ -468,9 +468,9 @@ impl DatasetBuilder {
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
+        let split = self.datasets.unwrap().split;
         #[cfg(feature = "cache")]
         let cache = {
-            let split = self.datasets.unwrap().split;
             if self.cache_valid && split == Split::Valid {
                 let ds_path = Path::new(&self.ds_dir);
                 let hash = {
@@ -804,6 +804,7 @@ impl Dataset<Complex32> for FftDataset {
     }
 
     fn need_generate_keys(&self) -> bool {
+        #[cfg(feature = "cache")]
         if let Some(cache) = self.cache.as_ref() {
             match cache.flush() {
                 Ok(_) => (),
