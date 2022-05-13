@@ -1,6 +1,6 @@
 [project]
 name = "DeepFilterLib"
-version = "0.2.3-pre"
+version = "0.2.3"
 classifiers = [
     "Programming Language :: Rust"
 ]
