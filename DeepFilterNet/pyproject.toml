@@ -18,6 +18,8 @@ packages = [{ include = "df" }]
 include = [
   { path = "pretrained_models/DeepFilterNet/config.ini" },
   { path = "pretrained_models/DeepFilterNet/checkpoints/*" },
+  { path = "pretrained_models/DeepFilterNet2/config.ini" },
+  { path = "pretrained_models/DeepFilterNet2/checkpoints/*" },
 ]
 
 [tool.poetry.dependencies]
