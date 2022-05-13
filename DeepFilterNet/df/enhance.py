@@ -135,7 +135,7 @@ def init_df(
     except KeyError:
         mask_only = False
     model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch, mask_only=mask_only)
-    if epoch is None and load_cp:
+    if (epoch is None or epoch == 0) and load_cp:
         logger.error("Could not find a checkpoint")
         exit(1)
     logger.debug(f"Loaded checkpoint from epoch {epoch}")
@@ -148,15 +148,14 @@ def init_df(
     return model, df_state, suffix
 
 
-def df_features(audio: Tensor, df: DF, device=None) -> Tuple[Tensor, Tensor, Tensor]:
-    p = ModelParams()
+def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor, Tensor, Tensor]:
     spec = df.analysis(audio.numpy())  # [C, Tf] -> [C, Tf, F]
     a = get_norm_alpha(False)
     erb_fb = df.erb_widths()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         erb_feat = torch.as_tensor(erb_norm(erb(spec, erb_fb), a)).unsqueeze(1)
-    spec_feat = as_real(torch.as_tensor(unit_norm(spec[..., : p.nb_df], a)).unsqueeze(1))
+    spec_feat = as_real(torch.as_tensor(unit_norm(spec[..., :nb_df], a)).unsqueeze(1))
     spec = as_real(torch.as_tensor(spec).unsqueeze(1))
     if device is not None:
         spec = spec.to(device)
@@ -229,16 +228,18 @@ def save_audio(
 def enhance(
     model: nn.Module, df_state: DF, audio: Tensor, pad=False, atten_lim_db: Optional[float] = None
 ):
-    p = ModelParams()
     model.eval()
     bs = audio.shape[0]
     if hasattr(model, "reset_h0"):
         model.reset_h0(batch_size=bs, device=get_device())
     orig_len = audio.shape[-1]
+    n_fft, hop = 0, 0
     if pad:
+        n_fft, hop = df_state.fft_size(), df_state.hop_size()
         # Pad audio to compensate for the delay due to the real-time STFT implementation
-        audio = F.pad(audio, (0, p.fft_size))
-    spec, erb_feat, spec_feat = df_features(audio, df_state, device=get_device())
+        audio = F.pad(audio, (0, n_fft))
+    nb_df = getattr(model, "nb_df", getattr(model, "df_bins", ModelParams().nb_df))
+    spec, erb_feat, spec_feat = df_features(audio, df_state, nb_df, device=get_device())
     enhanced = model(spec, erb_feat, spec_feat)[0].cpu()
     enhanced = as_complex(enhanced.squeeze(1))
     if atten_lim_db is not None and abs(atten_lim_db) > 0:
@@ -247,11 +248,11 @@ def enhance(
     audio = torch.as_tensor(df_state.synthesis(enhanced.numpy()))
     if pad:
         # The frame size is equal to p.hop_size. Given a new frame, the STFT loop requires e.g.
-        # ceil((p.fft_size-p.hop_size)/p.hop_size). I.e. for 50% overlap, then p.hop_size=p.fft_size//2
+        # ceil((n_fft-hop)/hop). I.e. for 50% overlap, then hop=n_fft//2
         # requires 1 additional frame lookahead; 75% requires 3 additional frames lookahead.
-        # Thus, the STFT/ISTFT loop introduces an algorithmic delay of p.fft_size - p.hop_size.
-        assert p.fft_size % p.hop_size == 0  # This is only tested for 50% and 75% overlap
-        d = p.fft_size - p.hop_size
+        # Thus, the STFT/ISTFT loop introduces an algorithmic delay of n_fft - hop.
+        assert n_fft % hop == 0  # This is only tested for 50% and 75% overlap
+        d = n_fft - hop
         audio = audio[:, d : orig_len + d]
     return audio
 
