@@ -108,7 +108,7 @@ python-versions = ">=3.5"
 
 [[package]]
 name = "DeepFilterDataLoader"
-version = "0.1.12_pre"
+version = "0.2.3_pre"
 description = ""
 category = "main"
 optional = true
@@ -124,7 +124,7 @@ url = "../pyDF-data"
 
 [[package]]
 name = "DeepFilterLib"
-version = "0.1.12_pre"
+version = "0.2.3_pre"
 description = ""
 category = "main"
 optional = false
@@ -874,14 +874,13 @@ testing = ["pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytest-
 dnsmos = ["requests"]
 dnsmos-local = ["appdirs", "onnxruntime", "requests"]
 eval = ["pystoi", "pesq", "scipy"]
-semetrics = ["semetrics"]
 soundfile = ["soundfile"]
 train = ["deepfilterdataloader", "icecream"]
 
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.7,<4.0"
-content-hash = "b7d2d4b4bdbab26c235e37603a0d907ee5a33cae73b71085425babd6f106b381"
+content-hash = "31ee79dc6bfbcc2e1ddd59187779699a39a0bc1ffee0589b9e4cc9aa7ac602a0"
 
 [metadata.files]
 appdirs = [
