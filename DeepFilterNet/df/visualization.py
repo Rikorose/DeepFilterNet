@@ -74,6 +74,7 @@ def specshow(
     xlim=None,
     ylim=None,
     kHz=False,
+    cmap="inferno",
 ):
     """Plots a spectrogram of shape [F, T]"""
     if raw_in or spec.shape[-1] == 2:
@@ -104,7 +105,7 @@ def specshow(
         f = np.arange(0, spec.shape[0]) * sr // 2 / (n_fft // 2)
         if kHz:
             f /= 1000
-    im = ax.pcolormesh(t, f, spec, rasterized=True, shading="auto", vmin=vmin, vmax=vmax)
+    im = ax.pcolormesh(t, f, spec, rasterized=True, shading="auto", vmin=vmin, vmax=vmax, cmap=cmap)
     if title is not None:
         set_title(title)
     if xlabel is not None:
