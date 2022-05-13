@@ -49,11 +49,11 @@ jobs:
       - name: Checkout DeepFilterNet
         uses: actions/checkout@v1
 
-      - name: Install HDF5 and libsz
+      - name: Install HDF5
         if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libhdf5-dev libsz2 libaec0
+          apt-get install -y --no-install-recommends libhdf5-dev
 
       - name: Install Python
         if: matrix.os != 'ubuntu-latest'
@@ -93,13 +93,13 @@ jobs:
         run: |
           maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe
 
-      - name: Repair linux pyDF-data wheel
-        if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
-        shell: bash
-        run: |
-          auditwheel repair ./target/wheels/DeepFilterDataLoader*cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}*.whl
-          rm target/wheels/*-linux_*.whl
-          mv wheelhouse/*whl target/wheels
+      # - name: Repair linux pyDF-data wheel
+      #   if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
+      #   shell: bash
+      #   run: |
+      #     auditwheel repair ./target/wheels/DeepFilterDataLoader*cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}*.whl
+      #     rm target/wheels/*-linux_*.whl
+      #     mv wheelhouse/*whl target/wheels
 
       - uses: actions/upload-artifact@v2
         with:
