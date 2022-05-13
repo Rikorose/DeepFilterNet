@@ -49,11 +49,11 @@ jobs:
       - name: Checkout DeepFilterNet
         uses: actions/checkout@v1
 
-      - name: Install HDF5
+      - name: Install HDF5 and libsz
         if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libhdf5-dev
+          apt-get install -y --no-install-recommends libhdf5-dev libsz2
 
       - name: Install Python
         if: matrix.os != 'ubuntu-latest'
