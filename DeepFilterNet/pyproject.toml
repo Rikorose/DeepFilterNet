@@ -43,6 +43,7 @@ semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true
 train = ["deepfilterdataloader", "icecream"]
 eval = ["pystoi", "pesq", "scipy"]
 soundfile = ["soundfile"]
+semetrics = ["semetrics"]
 dnsmos = ["requests"]
 dnsmos-local = ["appdirs", "onnxruntime", "requests"]
 
