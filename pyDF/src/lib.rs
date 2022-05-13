@@ -112,6 +112,18 @@ impl DF {
         self.state.sr
     }
 
+    fn fft_size(&self) -> usize {
+        self.state.window_size
+    }
+
+    fn hop_size(&self) -> usize {
+        self.state.frame_size
+    }
+
+    fn nb_erb(&self) -> usize {
+        self.state.erb.len()
+    }
+
     fn reset(&mut self) {
         self.state.reset();
     }
