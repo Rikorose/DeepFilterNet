@@ -28,8 +28,8 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
 
 )
 echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF
-cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF deep_filter
-cargo add --manifest-path ./pyDF-data/Cargo.toml --features dataset --path ./libDF deep_filter
+# cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF deep_filter
+# cargo add --manifest-path ./pyDF-data/Cargo.toml --features dataset --path ./libDF deep_filter
 
 fd "(pyproject)|(Cargo)" -t f -e toml -X git add {}
 
