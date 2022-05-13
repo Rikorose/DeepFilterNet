@@ -1,6 +1,6 @@
 [package]
 name = "DeepFilterDataLoader"
-version = "0.2.1-pre"
+version = "0.2.2"
 authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
 edition = "2021"
 
