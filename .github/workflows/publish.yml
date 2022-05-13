@@ -53,7 +53,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libhdf5-dev libsz2
+          apt-get install -y --no-install-recommends libhdf5-dev libsz2 libaec0
 
       - name: Install Python
         if: matrix.os != 'ubuntu-latest'
