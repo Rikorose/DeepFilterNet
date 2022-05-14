@@ -7,6 +7,7 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using 
   - Paper: https://arxiv.org/abs/2110.05588
   - Samples: https://rikorose.github.io/DeepFilterNet-Samples/
   - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet
+  - Video Lecture: https://youtu.be/it90gBqkY6k
 
 - New DeepFilterNet2 Paper
   - Paper: https://arxiv.org/abs/2205.05474
