@@ -93,17 +93,9 @@ jobs:
         run: |
           maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe
 
-      # - name: Repair linux pyDF-data wheel
-      #   if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
-      #   shell: bash
-      #   run: |
-      #     auditwheel repair ./target/wheels/DeepFilterDataLoader*cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}*.whl
-      #     rm target/wheels/*-linux_*.whl
-      #     mv wheelhouse/*whl target/wheels
-
       - uses: actions/upload-artifact@v2
         with:
-          name: libdf-wheels
+          name: libdf-wheels-${{github.ref_name}}
           path: target/wheels/
 
   build-deepfilternet-wheels:
@@ -124,7 +116,7 @@ jobs:
         working-directory: DeepFilterNet
       - uses: actions/upload-artifact@v2
         with:
-          name: deepfilternet-wheels
+          name: deepfilternet-wheels-${{github.ref_name}}
           path: DeepFilterNet/dist/
 
   publish-pypi-wheels:
@@ -135,12 +127,12 @@ jobs:
       - name: Get libdf wheels
         uses: actions/download-artifact@v2
         with:
-          name: libdf-wheels
+          name: libdf-wheels-${{github.ref_name}}
           path: libdf-wheels
       - name: Get deepfilternet wheels
         uses: actions/download-artifact@v2
         with:
-          name: deepfilternet-wheels
+          name: deepfilternet-wheels-${{github.ref_name}}
           path: deepfilternet-wheels
       - name: Install Maturin
         run: python -m pip install maturin
