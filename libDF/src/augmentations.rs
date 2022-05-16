@@ -327,14 +327,19 @@ impl Transform for RandBiquadFilter {
     }
 }
 
-pub(crate) fn low_pass_resample(x: &Array2<f32>, cut_off: usize, sr: usize) -> Result<Array2<f32>> {
-    let x = resample(x, sr, cut_off * 2, None)?;
-    let x = resample(&x, cut_off * 2, sr, None)?;
+/// Low pass by resampling the data to `f_cut_off*2`.
+pub(crate) fn low_pass_resample(
+    x: ArrayView2<f32>,
+    f_cut_off: usize,
+    sr: usize,
+) -> Result<Array2<f32>> {
+    let x = resample(x, sr, f_cut_off * 2, None)?;
+    let x = resample(x.view(), f_cut_off * 2, sr, None)?;
     Ok(x)
 }
 
 pub(crate) fn resample(
-    x: &Array2<f32>,
+    x: ArrayView2<f32>,
     sr: usize,
     new_sr: usize,
     chunk_size: Option<usize>,
@@ -421,7 +426,7 @@ impl Transform for RandResample {
         if new_sr == sr {
             return Ok(());
         }
-        let out = resample(x, sr, new_sr, Some(self.chunk_size))?;
+        let out = resample(x.view(), sr, new_sr, Some(self.chunk_size))?;
         let new_len = out.len_of(Axis(1));
         if new_len > len {
             x.append(Axis(1), Array2::zeros((ch, new_len - len)).view())?;
@@ -850,7 +855,7 @@ impl RandReverbSim {
         if self.prob_resample > rng.uniform(0f32, 1f32) {
             let new_sr: f32 = rng.uniform(0.8, 1.2) * self.sr as f32;
             let new_sr = ((new_sr / 500.).round() * 500.) as usize;
-            rir = resample(&rir, self.sr, new_sr, Some(512))?;
+            rir = resample(rir.view(), self.sr, new_sr, Some(512))?;
         }
         if self.prob_decay > rng.uniform(0f32, 1f32) {
             let rt60 = rng.uniform(0.2, 1.);
@@ -996,7 +1001,7 @@ mod tests {
         let (b, a) = low_pass(f, 0.707, sr as usize);
         biquad_inplace(&mut test_sample, &mut mem, &b, &a);
         write_wav_iter("../out/lowpass.wav", test_sample.iter(), sr, ch)?;
-        test_sample2 = low_pass_resample(&test_sample2, f as usize, sr as usize)?;
+        test_sample2 = low_pass_resample(test_sample2.view(), f as usize, sr as usize)?;
         write_wav_iter("../out/lowpass_resample.wav", test_sample2.iter(), sr, ch)?;
         Ok(())
     }

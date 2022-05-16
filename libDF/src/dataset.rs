@@ -884,7 +884,7 @@ impl TdDataset {
             }
         })?;
         if sr != self.sr {
-            x = resample(&x, sr, self.sr, None)?;
+            x = resample(x.view(), sr, self.sr, None)?;
             if let Some(l) = max_len {
                 if x.len_of(Axis(1)) > l {
                     x.slice_axis_inplace(Axis(1), Slice::from(0..l))
@@ -1736,7 +1736,7 @@ fn mix_audio_signal(
     let len = clean.len_of(Axis(1));
     if let Some(re) = noise_resample {
         // Low pass filtering via resampling
-        noise = low_pass_resample(&noise, re.cut_off, re.sr)?;
+        noise = low_pass_resample(noise.view(), re.cut_off, re.sr)?;
         noise.slice_axis_inplace(Axis(1), Slice::from(..len));
     }
     // Apply gain to speech

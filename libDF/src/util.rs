@@ -120,7 +120,7 @@ pub(crate) fn find_max<'a, I>(vals: I) -> Result<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
-    vals.into_iter().try_fold(0., |acc, v| {
+    vals.into_iter().try_fold(f32::MIN, |acc, v| {
         let nonnan: NonNan = match NonNan::new(*v) {
             None => return Err(UtilsError::NaN),
             Some(x) => x,
@@ -146,7 +146,7 @@ pub(crate) fn find_min<'a, I>(vals: I) -> Result<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
-    vals.into_iter().try_fold(0., |acc, v| {
+    vals.into_iter().try_fold(f32::MAX, |acc, v| {
         let nonnan: NonNan = match NonNan::new(*v) {
             None => return Err(UtilsError::NaN),
             Some(x) => x,
@@ -166,6 +166,12 @@ where
         };
         Ok(nonnan.get().min(acc))
     })
+}
+
+pub(crate) fn median(x: &mut [f32]) -> f32 {
+    x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = x.len() / 2;
+    x[mid]
 }
 
 pub(crate) fn argmax<'a, I>(vals: I) -> Result<usize>
