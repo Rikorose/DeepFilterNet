@@ -303,3 +303,79 @@ pub fn unit_norm(
     }
     Ok(state)
 }
+
+/// Estimate bandwidth by finding the highest frequency bin containing a sufficient amount of
+/// energy.
+pub(crate) fn estimate_bandwidth(input: ArrayView3<Complex32>) -> usize {
+    // input shape [C, T, F]
+    let f_db = input
+        .mean_axis(Axis(1))
+        .unwrap()
+        .mean_axis(Axis(0))
+        .unwrap()
+        .map(|x| (x.norm() + 1e-16).log10() * 10.);
+    let n_freqs = f_db.len();
+    let f_db_slc = f_db.slice(s![..n_freqs / 2]); // Compute median over first half of freqs
+    let median = crate::util::median(f_db_slc.to_owned().as_slice_mut().unwrap());
+    for (i, &f) in f_db.iter().enumerate().skip(1) {
+        // assume 30 dB drop
+        if f < median - 30. {
+            // Some corrections if we are at a boundary of n_freqs/2, n_freqs/3
+            if i == n_freqs - 1 {
+                return n_freqs;
+            } else if i == n_freqs / 2 || i == n_freqs / 2 + 2 {
+                return n_freqs / 2 + 1;
+            } else if i == n_freqs / 3 || i == n_freqs / 3 + 2 {
+                return n_freqs / 3 + 1;
+            }
+            return i;
+        }
+    }
+    n_freqs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::augmentations::*;
+    use crate::wav_utils::*;
+
+    /// Setup function that is only run once, even if called multiple times.
+    fn setup() {
+        create_out_dir().expect("Could not create output directory");
+    }
+
+    fn create_out_dir() -> std::io::Result<()> {
+        match std::fs::create_dir("../out") {
+            Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            r => r,
+        }
+    }
+
+    #[test]
+    fn test_estimate_bandwidth() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let mut sr = reader.sr;
+        let sample = reader.samples_arr2().unwrap();
+        let sample = resample(sample.view(), sr, sr / 2, None).unwrap();
+        sr /= 2;
+        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+
+        let fft_size = sr / 50;
+        let hop_size = fft_size / 2;
+        dbg!(fft_size);
+        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+        let x = stft(sample.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x.view()), fft_size / 2 + 1);
+        let sample_f2 = low_pass_resample(sample.view(), sr / 4, sr).unwrap();
+        write_wav_arr2("../out/resampled_f2.wav", sample_f2.view(), sr as u32).unwrap();
+        let x_f2 = stft(sample_f2.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x_f2.view()), fft_size / 4 + 1);
+        let sample_f3 = low_pass_resample(sample.view(), sr / 6, sr).unwrap();
+        write_wav_arr2("../out/resampled_f3.wav", sample_f3.view(), sr as u32).unwrap();
+        let x_f3 = stft(sample_f3.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x_f3.view()), fft_size / 6 + 1);
+        Ok(())
+    }
+}
