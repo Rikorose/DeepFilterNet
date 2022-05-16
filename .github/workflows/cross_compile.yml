@@ -20,6 +20,8 @@ jobs:
       matrix:
         rust: [stable]
         manylinux: [2014]
+        is_pr:
+          - ${{ github.event_name == 'pull_request' }}
         python:
           # CPython
           - version: "3.7"
@@ -35,6 +37,18 @@ jobs:
             arch: aarch64
           - target: armv7-unknown-linux-gnueabihf
             arch: armv7
+        exclude:
+          # Run only on latest python for PRs
+          - is_pr: true
+        include:
+          - python:
+              - version: "3.10"
+                abi: cp310-cp310
+            platform:
+              - target: aarch64-unknown-linux-gnu
+                arch: aarch64
+            rust: stable
+            manylinux: 2014
     container:
       image: docker://messense/manylinux${{matrix.manylinux}}-cross:${{matrix.platform.arch}}
     steps:

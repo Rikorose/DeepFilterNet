@@ -15,6 +15,7 @@ env:
 
 jobs:
   test:
+    name: ${{matrix.command}}-${{matrix.rust}}-${{matrix.args}}
     runs-on: ubuntu-latest
     env:
       RUST_BACKTRACE: 1
