@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter};
-#[cfg(feature = "cache")]
+#[cfg(any(feature = "cache", feature = "vorbis"))]
 use std::io::{Cursor, Read, Seek};
 use std::ops::Range;
 use std::path::Path;
