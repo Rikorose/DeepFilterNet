@@ -1,15 +1,15 @@
-use std::f32;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 #[cfg(feature = "dataset_timings")]
 use std::time::Instant;
 
 use ndarray::{concatenate, prelude::*, Slice};
-use ndarray_rand::rand::Rng;
+use ndarray_rand::rand::{seq::SliceRandom, Rng};
 use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
+use self::BiquadFilters::*;
 use crate::transforms::*;
 pub use crate::util::seed_from_u64;
 use crate::util::*;
@@ -118,6 +118,7 @@ impl Clone for Compose {
     }
 }
 
+// Adopted from RNNoise/PercepNet
 #[derive(Clone)]
 pub struct RandLFilt {
     prob: f32,
@@ -170,7 +171,6 @@ fn high_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32
     let a2 = (amp + 1.) - (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha;
     ([b0, b1, b2], [a0, a1, a2])
 }
-
 fn high_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
     let alpha = w0.sin() / 2. / q_factor;
@@ -241,24 +241,41 @@ fn biquad_filter(x: &mut Array2<f32>, b: &[f32; 3], a: &[f32; 3]) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum BiquadFilters {
+    HighShelf,
+    LowShelf,
+    HighPass,
+    LowPass,
+    PeakingEQ,
+    Notch,
+}
+impl BiquadFilters {
+    pub fn iterator() -> impl Iterator<Item = BiquadFilters> {
+        [HighShelf, LowShelf, HighPass, LowPass, PeakingEQ, Notch].iter().copied()
+    }
+}
+
 #[derive(Clone)]
-pub struct RandEQ {
+pub struct RandBiquadFilter {
     prob: f32,
     sr: Option<usize>,
     n_freqs: usize,
     f_low: usize,
     f_high: usize,
-    gain_db: i32,
+    gain_db_low: f32,
+    gain_db_high: f32,
     q_low: f32,
     q_high: f32,
+    filters: Vec<BiquadFilters>,
 }
-impl RandEQ {
+impl RandBiquadFilter {
     pub fn with_sr(mut self, sr: usize) -> Self {
         self.sr = Some(sr);
         self
     }
 }
-impl Transform for RandEQ {
+impl Transform for RandBiquadFilter {
     fn transform(&self, x: &mut Array2<f32>) -> Result<()> {
         if self.sr.is_none() {
             return Err(AugmentationError::NotInitialized {
@@ -266,50 +283,47 @@ impl Transform for RandEQ {
                 msg: "No sampling rate provided.".into(),
             });
         }
+        let sr = self.sr.unwrap();
         let mut rng = thread_rng()?;
         if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
         for _ in 0..self.n_freqs {
             let freq = rng.log_uniform(self.f_low as f32, self.f_high as f32);
-            let gain = rng.uniform_inclusive(-self.gain_db, self.gain_db) as f32;
-            let q = rng.uniform(self.q_low, self.q_high);
-            let w0 = 2. * std::f32::consts::PI * freq / self.sr.unwrap() as f32;
-            let amp = (gain / 40. * std::f32::consts::LN_10).exp();
-            let alpha = w0.sin() / 2. / q;
-            let w0_cos = w0.cos();
-
-            let b0 = 1. + alpha * amp;
-            let b1 = -2. * w0_cos;
-            let b2 = 1. - alpha * amp;
-            let a0 = 1. + alpha / amp;
-            let a1 = -2. * w0_cos;
-            let a2 = 1. - alpha / amp;
-
-            for x_ch in x.axis_iter_mut(Axis(0)) {
-                let mut mem = [0.; 2];
-                biquad_inplace(x_ch, &mut mem, &[b0, b1, b2], &[a0, a1, a2]);
-            }
+            let gain_db = rng.uniform_inclusive(self.gain_db_low, self.gain_db_high);
+            let q = rng.uniform_inclusive(self.q_low, self.q_high);
+            let (b, a) = match self.filters.choose(&mut rng) {
+                None => continue,
+                Some(HighShelf) => high_shelf(freq, gain_db, q, sr),
+                Some(LowShelf) => low_shelf(freq, gain_db, q, sr),
+                Some(HighPass) => high_pass(freq, q, sr),
+                Some(LowPass) => low_pass(freq, q, sr),
+                Some(PeakingEQ) => peaking_eq(freq, gain_db, q, sr),
+                Some(Notch) => notch(freq, q, sr),
+            };
+            biquad_filter(x, &b, &a);
         }
         Ok(())
     }
     fn default_with_prob(p: f32) -> Self {
-        RandEQ {
+        RandBiquadFilter {
             prob: p,
             sr: None,
             n_freqs: 3,
             f_low: 40,
             f_high: 8000,
-            gain_db: 15,
+            gain_db_high: 15.,
+            gain_db_low: -15.,
             q_low: 0.5,
             q_high: 1.5,
+            filters: BiquadFilters::iterator().collect(),
         }
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
         Box::new((*self).clone())
     }
     fn name(&self) -> &str {
-        "RandEQ"
+        "RandBiquadFilter"
     }
 }
 
