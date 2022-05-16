@@ -19,7 +19,6 @@ from df.modules import (
     get_device,
 )
 from df.multiframe import MF_METHODS, MultiFrameModule
-from df.multistagenet import MagCompression
 from libdf import DF
 
 
@@ -370,7 +369,6 @@ class DfNet(nn.Module):
         self.freq_bins: int = p.fft_size // 2 + 1
         self.emb_dim: int = layer_width * p.nb_erb
         self.erb_bins: int = p.nb_erb
-        self.erb_comp = MagCompression(p.nb_erb)
         if p.conv_lookahead > 0 and p.pad_mode.startswith("input"):
             self.pad_feat = nn.ConstantPad2d((0, 0, -p.conv_lookahead, p.conv_lookahead), 0.0)
         else:
