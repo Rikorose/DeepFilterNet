@@ -585,7 +585,7 @@ impl DatasetBuilder {
         let sp_augmentations = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
             Box::new(RandLFilt::default_with_prob(0.25)),
-            Box::new(RandEQ::default_with_prob(0.1).with_sr(self.sr)),
+            Box::new(RandBiquadFilter::default_with_prob(0.1).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
         let mut sp_distortions = Compose::new(Vec::new());
@@ -596,7 +596,7 @@ impl DatasetBuilder {
         }
         let mut ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
-            Box::new(RandEQ::default_with_prob(0.25).with_sr(self.sr)),
+            Box::new(RandBiquadFilter::default_with_prob(0.25).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
         ]);
         if ds_split == Split::Train {
