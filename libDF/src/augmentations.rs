@@ -346,40 +346,58 @@ pub(crate) fn resample(
 ) -> Result<Array2<f32>> {
     let channels = x.len_of(Axis(0));
     let len = x.len_of(Axis(1));
-    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size.unwrap_or(1024), channels)
+    let out_len = (len as f32 * new_sr as f32 / sr as f32).ceil() as usize;
+    let chunk_size = chunk_size.unwrap_or(2048);
+    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size, channels)
         .expect("Could not initialize resampler");
     let chunk_size = resampler.input_frames_max();
-    let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize;
-    let chunk_size_out = (chunk_size as u64 * new_sr as u64 / sr as u64) as usize;
+    // One extra to get the remaining resampler state buffer
+    let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize + 1;
+    let chunk_size_out = resampler.output_frames_max();
     let mut out = Array2::uninit((channels, chunk_size_out * num_chunks));
     let mut inbuf = vec![vec![0f32; chunk_size]; channels];
     let mut outbuf = resampler.output_buffer_allocate();
-    let mut i = 0;
-    for (chunk, mut out_chunk) in x
-        .axis_chunks_iter(Axis(1), chunk_size)
-        .zip(out.axis_chunks_iter_mut(Axis(1), chunk_size_out))
-    {
+    let mut out_chunk_iter = out.axis_chunks_iter_mut(Axis(1), chunk_size_out);
+    for chunk in x.axis_chunks_iter(Axis(1), chunk_size) {
         for (chunk_ch, buf_ch) in chunk.axis_iter(Axis(0)).zip(inbuf.iter_mut()) {
-            if chunk_ch.len() < chunk_size {
+            if chunk_ch.len() == chunk_size {
+                chunk_ch.assign_to(buf_ch);
+            } else {
                 chunk_ch.assign_to(&mut buf_ch[..chunk_ch.len()]);
                 for b in buf_ch[chunk_ch.len()..].iter_mut() {
                     *b = 0. // Zero pad
                 }
-            } else {
-                chunk_ch.assign_to(buf_ch);
             }
         }
         resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
-        for (res_ch, mut out_ch) in outbuf.iter().zip(out_chunk.axis_iter_mut(Axis(0))) {
+        for (res_ch, mut out_ch) in
+            outbuf.iter().zip(out_chunk_iter.next().unwrap().axis_iter_mut(Axis(0)))
+        {
             debug_assert_eq!(res_ch.len(), out_ch.len());
             for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
                 *y = MaybeUninit::new(x);
             }
         }
-        i += 1;
     }
-    assert_eq!(i, num_chunks);
-    Ok(unsafe { out.assume_init() })
+    // Another round with zeros to get remaining state buffer
+    for in_ch in inbuf.iter_mut() {
+        in_ch.fill(0.)
+    }
+    resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
+    for (res_ch, mut out_ch) in
+        outbuf.iter().zip(out_chunk_iter.next().unwrap().axis_iter_mut(Axis(0)))
+    {
+        debug_assert_eq!(res_ch.len(), out_ch.len());
+        for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
+            *y = MaybeUninit::new(x);
+        }
+    }
+    let mut out = unsafe { out.assume_init() };
+    out.slice_axis_inplace(
+        Axis(1),
+        Slice::from(chunk_size_out / 2..chunk_size_out / 2 + out_len),
+    );
+    Ok(out)
 }
 
 #[derive(Clone)]
