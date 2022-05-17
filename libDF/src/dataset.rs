@@ -969,14 +969,8 @@ impl TdDataset {
     fn ds_codec(&self, idx: usize) -> Codec {
         self.hdf5_handles[idx].codec.clone().unwrap_or_default()
     }
-}
 
-impl Dataset<f32> for TdDataset {
-    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
-        #[cfg(feature = "dataset_timings")]
-        let t0 = Instant::now();
-        seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
-        let mut rng = thread_rng()?;
+    fn load_aug_speech(&self, idx: usize, rng: &mut SeededRng) -> Result<(Array2<f32>, usize)> {
         let (sp_idx, sp_key) = &self.sp_keys[idx];
         let mut speech = self.read_max_len(*sp_idx, sp_key)?;
         self.sp_augmentations.transform(&mut speech)?;
@@ -986,7 +980,7 @@ impl Dataset<f32> for TdDataset {
             && self.p_fill_speech > rng.uniform(0f32, 1f32)
         {
             // If too short, maybe sample another speech sample
-            let (sp_idx, sp_key) = &self.sp_keys.choose(&mut rng).unwrap();
+            let (sp_idx, sp_key) = &self.sp_keys.choose(rng).unwrap();
             let mut another_speech = self.read_max_len(*sp_idx, sp_key)?;
             self.sp_augmentations.transform(&mut another_speech)?;
             speech.append(Axis(1), another_speech.view())?;
@@ -995,41 +989,26 @@ impl Dataset<f32> for TdDataset {
         if speech.len_of(Axis(1)) > self.max_sample_len() {
             speech.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
         }
-        #[cfg(feature = "dataset_timings")]
-        let t_sp = Instant::now();
-        // Apply low pass to the noise as well
-        let noise_low_pass = if max_freq < self.sr / 2 {
-            Some(LpParam {
-                cut_off: max_freq,
-                sr: self.sr,
-            })
-        } else {
-            None
-        };
-        let mut ch = speech.len_of(Axis(0));
-        let mut len = speech.len_of(Axis(1));
+        let ch = speech.len_of(Axis(0));
+        let len = speech.len_of(Axis(1));
         if len > self.max_samples {
             speech.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
-            len = speech.len_of(Axis(1));
         }
         if ch > 1 {
             speech.slice_axis_inplace(Axis(0), Slice::from(..1));
-            ch = 1;
         }
-        // Sample 2-5 noises and augment each
-        let n_noises = rng.uniform(2, 6);
-        let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng, n_noises);
-        let mut noises = Vec::with_capacity(n_noises);
-        let mut noise_gains = Vec::with_capacity(n_noises);
-        for (ns_idx, ns_key) in &ns_ids {
-            // In 5% us a randomly generated noise signal instead of a real noise.
-            if let Some(ns) =
-                self.noise_generator.generate_random_noise(-2., 2., 1, self.max_samples)?
-            {
-                noises.push(ns);
-                noise_gains.push([-24, -12, -6, 0].choose(&mut rng).unwrap());
-                continue;
-            }
+        Ok((speech, max_freq))
+    }
+
+    fn load_aug_noise(&self, rng: &mut SeededRng) -> Result<(Array2<f32>, f32)> {
+        // In 5% us a randomly generated noise signal instead of a real noise.
+        if let Some(ns) =
+            self.noise_generator.generate_random_noise(-2., 2., 1, self.max_samples)?
+        {
+            return Ok((ns, *[-24., -12., -6., 0.].choose(rng).unwrap()));
+        }
+        loop {
+            let (ns_idx, ns_key) = self.ns_keys.iter().choose(rng).unwrap();
             let mut ns = match self.read_max_len(*ns_idx, ns_key) {
                 Err(e) => {
                     log::warn!("Error during noise reading get_sample(): {}", e);
@@ -1044,17 +1023,47 @@ impl Dataset<f32> for TdDataset {
             if ns.len_of(Axis(1)) > self.max_samples {
                 ns.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
             }
+            return Ok((ns, *self.gains.choose(rng).unwrap() as f32));
+        }
+    }
+}
+
+impl Dataset<f32> for TdDataset {
+    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
+        seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
+        let mut rng = thread_rng()?;
+        let (mut speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
+        #[cfg(feature = "dataset_timings")]
+        let t_sp = Instant::now();
+        // Apply low pass to the noise as well
+        let mut noise_low_pass = if max_freq < self.sr / 2 {
+            Some(LpParam {
+                cut_off: max_freq,
+                sr: self.sr,
+            })
+        } else {
+            None
+        };
+        let ch = speech.len_of(Axis(0));
+        let len = speech.len_of(Axis(1));
+        // Sample 2-5 noises and augment each
+        let n_noises = rng.uniform(2, 6);
+        let mut noises = Vec::with_capacity(n_noises);
+        let mut noise_gains = Vec::with_capacity(n_noises);
+        for _ in 0..n_noises {
+            let (ns, gain) = self.load_aug_noise(&mut rng)?;
             noises.push(ns);
-            noise_gains.push(self.gains.choose(&mut rng).unwrap());
+            noise_gains.push(gain);
         }
         #[cfg(feature = "dataset_timings")]
         let t_ns = Instant::now();
-        let noise_gains_f32: Vec<f32> = noise_gains.iter().map(|x| **x as f32).collect();
         // Sample SNR and gain
         let &snr = self.snrs.choose(&mut rng).unwrap();
         let &gain = self.gains.choose(&mut rng).unwrap();
         // Truncate to speech len, combine noises and mix to noisy
-        let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains_f32.as_slice()))?;
+        let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains.as_slice()))?;
         // Optionally we may also introduce some distortions to the speech signal.
         // These distortions will be only present in the noisy mixture, with the aim to reconstruce
         // the original undistorted signal. Example distortions are reverberation, or clipping.
