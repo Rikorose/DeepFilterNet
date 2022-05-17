@@ -2,11 +2,6 @@ name: Rust CI
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   schedule:
     - cron: '0 18 * * *'
 
