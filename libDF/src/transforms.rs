@@ -123,20 +123,28 @@ pub fn stft(input: ArrayView2<f32>, state: &mut DFState, reset: bool) -> Array3<
     }
     let ch = input.len_of(Axis(0));
     let ttd = input.len_of(Axis(1));
-    let tfd = ttd / state.frame_size;
+    let n_pad = state.window_size / state.frame_size - 1;
+    let tfd = (ttd as f32 / state.frame_size as f32).ceil() as usize + n_pad;
     let mut output: Array3<Complex32> = Array3::zeros((ch, tfd, state.freq_size));
     for (input_ch, mut output_ch) in input.outer_iter().zip(output.outer_iter_mut()) {
         for (ichunk, mut ochunk) in input_ch
             .axis_chunks_iter(Axis(0), state.frame_size)
             .zip(output_ch.outer_iter_mut())
         {
-            frame_analysis(
-                ichunk.as_slice().unwrap(),
-                ochunk.as_slice_mut().unwrap(),
-                state,
-            )
+            let ichunk = ichunk.as_slice().unwrap();
+            if ichunk.len() == state.frame_size {
+                frame_analysis(ichunk, ochunk.as_slice_mut().unwrap(), state)
+            } else {
+                let pad = vec![0.; state.frame_size - ichunk.len()];
+                frame_analysis(
+                    &[ichunk, pad.as_slice()].concat(),
+                    ochunk.as_slice_mut().unwrap(),
+                    state,
+                )
+            };
         }
     }
+    output.slice_axis_inplace(Axis(1), ndarray::Slice::from(n_pad..));
     output
 }
 
@@ -318,15 +326,17 @@ pub(crate) fn estimate_bandwidth(input: ArrayView3<Complex32>) -> usize {
     let f_db_slc = f_db.slice(s![..n_freqs / 2]); // Compute median over first half of freqs
     let median = crate::util::median(f_db_slc.to_owned().as_slice_mut().unwrap());
     for (i, &f) in f_db.iter().enumerate().skip(1) {
-        // assume 30 dB drop
-        if f < median - 30. {
-            // Some corrections if we are at a boundary of n_freqs/2, n_freqs/3
+        // assume 18 dB drop
+        if f < median - 18. {
+            // Some corrections if we are at a boundary of n_freqs/2, n_freqs/3, etc.
             if i == n_freqs - 1 {
                 return n_freqs;
             } else if i == n_freqs / 2 || i == n_freqs / 2 + 2 {
                 return n_freqs / 2 + 1;
             } else if i == n_freqs / 3 || i == n_freqs / 3 + 2 {
                 return n_freqs / 3 + 1;
+            } else if i == n_freqs / 4 || i == n_freqs / 4 + 2 {
+                return n_freqs / 4 + 1;
             }
             return i;
         }
@@ -364,18 +374,24 @@ mod tests {
 
         let fft_size = sr / 50;
         let hop_size = fft_size / 2;
-        dbg!(fft_size);
         let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
         let x = stft(sample.view(), &mut state, true);
         assert_eq!(estimate_bandwidth(x.view()), fft_size / 2 + 1);
+
         let sample_f2 = low_pass_resample(sample.view(), sr / 4, sr).unwrap();
         write_wav_arr2("../out/resampled_f2.wav", sample_f2.view(), sr as u32).unwrap();
         let x_f2 = stft(sample_f2.view(), &mut state, true);
         assert_eq!(estimate_bandwidth(x_f2.view()), fft_size / 4 + 1);
+
         let sample_f3 = low_pass_resample(sample.view(), sr / 6, sr).unwrap();
         write_wav_arr2("../out/resampled_f3.wav", sample_f3.view(), sr as u32).unwrap();
         let x_f3 = stft(sample_f3.view(), &mut state, true);
         assert_eq!(estimate_bandwidth(x_f3.view()), fft_size / 6 + 1);
+
+        let sample_f4 = low_pass_resample(sample.view(), sr / 8, sr).unwrap();
+        write_wav_arr2("../out/resampled_f4.wav", sample_f4.view(), sr as u32).unwrap();
+        let x_f4 = stft(sample_f4.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x_f4.view()), fft_size / 8 + 1);
         Ok(())
     }
 }
