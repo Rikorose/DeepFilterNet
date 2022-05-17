@@ -1267,6 +1267,24 @@ mod tests {
     }
 
     #[test]
+    pub fn test_low_pass() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
+        let sr = reader.sr as u32;
+        let mut test_sample = reader.samples_arr2()?;
+        let mut test_sample2 = test_sample.clone();
+        let ch = test_sample.len_of(Axis(0)) as u16;
+        let f = 8000.;
+        let mut mem = [0.; 2];
+        let (b, a) = low_pass(f, 0.707, sr as usize);
+        biquad_inplace(&mut test_sample, &mut mem, &b, &a);
+        write_wav_iter("../out/lowpass.wav", test_sample.iter(), sr, ch)?;
+        test_sample2 = low_pass_resample(test_sample2.view(), f as usize, sr as usize)?;
+        write_wav_iter("../out/lowpass_resample.wav", test_sample2.iter(), sr, ch)?;
+        Ok(())
+    }
+
+    #[test]
     pub fn test_reverb() -> Result<()> {
         setup();
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
