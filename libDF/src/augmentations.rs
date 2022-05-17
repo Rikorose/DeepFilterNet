@@ -1,4 +1,3 @@
-use std::mem::MaybeUninit;
 use std::ops::Range;
 #[cfg(feature = "dataset_timings")]
 use std::time::Instant;
@@ -6,7 +5,6 @@ use std::time::Instant;
 use ndarray::{concatenate, prelude::*, Slice};
 use ndarray_rand::rand::{seq::SliceRandom, Rng};
 use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
-use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
 use self::BiquadFilters::*;
@@ -27,8 +25,6 @@ pub enum AugmentationError {
     NotInitialized { transform: String, msg: String },
     #[error("DF error: {0}")]
     DfError(String),
-    #[error("Resample Error")]
-    ResampleError(#[from] rubato::ResampleError),
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Wav Reader Error")]
@@ -187,7 +183,6 @@ fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32;
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
     let amp = 10f32.powf(gain_db / 40.);
     let alpha = w0.sin() / 2. / q_factor;
-    dbg!(amp, alpha);
 
     let b0 = amp * ((amp + 1.) - (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha);
     let b1 = 2. * amp * ((amp - 1.) - (amp + 1.) * w0.cos());
@@ -195,7 +190,7 @@ fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32;
     let a0 = (amp + 1.) + (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha;
     let a1 = -2. * ((amp - 1.) + (amp + 1.) * w0.cos());
     let a2 = (amp + 1.) + (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha;
-    dbg!([b0, b1, b2], [a0, a1, a2])
+    ([b0, b1, b2], [a0, a1, a2])
 }
 pub fn low_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
@@ -325,79 +320,6 @@ impl Transform for RandBiquadFilter {
     fn name(&self) -> &str {
         "RandBiquadFilter"
     }
-}
-
-/// Low pass by resampling the data to `f_cut_off*2`.
-pub(crate) fn low_pass_resample(
-    x: ArrayView2<f32>,
-    f_cut_off: usize,
-    sr: usize,
-) -> Result<Array2<f32>> {
-    let x = resample(x, sr, f_cut_off * 2, None)?;
-    let x = resample(x.view(), f_cut_off * 2, sr, None)?;
-    Ok(x)
-}
-
-pub(crate) fn resample(
-    x: ArrayView2<f32>,
-    sr: usize,
-    new_sr: usize,
-    chunk_size: Option<usize>,
-) -> Result<Array2<f32>> {
-    let channels = x.len_of(Axis(0));
-    let len = x.len_of(Axis(1));
-    let out_len = (len as f32 * new_sr as f32 / sr as f32).ceil() as usize;
-    let chunk_size = chunk_size.unwrap_or(2048);
-    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size, channels)
-        .expect("Could not initialize resampler");
-    let chunk_size = resampler.input_frames_max();
-    // One extra to get the remaining resampler state buffer
-    let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize + 1;
-    let chunk_size_out = resampler.output_frames_max();
-    let mut out = Array2::uninit((channels, chunk_size_out * num_chunks));
-    let mut inbuf = vec![vec![0f32; chunk_size]; channels];
-    let mut outbuf = resampler.output_buffer_allocate();
-    let mut out_chunk_iter = out.axis_chunks_iter_mut(Axis(1), chunk_size_out);
-    for chunk in x.axis_chunks_iter(Axis(1), chunk_size) {
-        for (chunk_ch, buf_ch) in chunk.axis_iter(Axis(0)).zip(inbuf.iter_mut()) {
-            if chunk_ch.len() == chunk_size {
-                chunk_ch.assign_to(buf_ch);
-            } else {
-                chunk_ch.assign_to(&mut buf_ch[..chunk_ch.len()]);
-                for b in buf_ch[chunk_ch.len()..].iter_mut() {
-                    *b = 0. // Zero pad
-                }
-            }
-        }
-        resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
-        for (res_ch, mut out_ch) in
-            outbuf.iter().zip(out_chunk_iter.next().unwrap().axis_iter_mut(Axis(0)))
-        {
-            debug_assert_eq!(res_ch.len(), out_ch.len());
-            for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
-                *y = MaybeUninit::new(x);
-            }
-        }
-    }
-    // Another round with zeros to get remaining state buffer
-    for in_ch in inbuf.iter_mut() {
-        in_ch.fill(0.)
-    }
-    resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
-    for (res_ch, mut out_ch) in
-        outbuf.iter().zip(out_chunk_iter.next().unwrap().axis_iter_mut(Axis(0)))
-    {
-        debug_assert_eq!(res_ch.len(), out_ch.len());
-        for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
-            *y = MaybeUninit::new(x);
-        }
-    }
-    let mut out = unsafe { out.assume_init() };
-    out.slice_axis_inplace(
-        Axis(1),
-        Slice::from(chunk_size_out / 2..chunk_size_out / 2 + out_len),
-    );
-    Ok(out)
 }
 
 #[derive(Clone)]
@@ -1003,24 +925,6 @@ mod tests {
         let rand_resample = RandResample::new(1., sr as usize, 0.8, 1.2, 1024);
         rand_resample.transform(&mut test_sample).unwrap();
         write_wav_iter("../out/resampled.wav", test_sample.iter(), sr, ch)?;
-        Ok(())
-    }
-
-    #[test]
-    pub fn test_low_pass() -> Result<()> {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
-        let sr = reader.sr as u32;
-        let mut test_sample = reader.samples_arr2()?;
-        let mut test_sample2 = test_sample.clone();
-        let ch = test_sample.len_of(Axis(0)) as u16;
-        let f = 8000.;
-        let mut mem = [0.; 2];
-        let (b, a) = low_pass(f, 0.707, sr as usize);
-        biquad_inplace(&mut test_sample, &mut mem, &b, &a);
-        write_wav_iter("../out/lowpass.wav", test_sample.iter(), sr, ch)?;
-        test_sample2 = low_pass_resample(test_sample2.view(), f as usize, sr as usize)?;
-        write_wav_iter("../out/lowpass_resample.wav", test_sample2.iter(), sr, ch)?;
         Ok(())
     }
 
