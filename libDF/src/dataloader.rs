@@ -271,8 +271,14 @@ impl DataLoader {
                     } else {
                         epoch_seed + sample_idx as u64
                     });
-                    let sample = ds.get_sample(sample_idx, seed);
-                    out_sender.send((ordering_idx as usize, sample.map_err(|e| e.into())))?;
+                    let sample = match ds.get_sample(sample_idx, seed) {
+                        Ok(s) => Ok(s),
+                        Err(e) => {
+                            eprintln!("Error during get_sample(): {:?}", e);
+                            Err(e.into())
+                        }
+                    };
+                    out_sender.send((ordering_idx as usize, sample))?;
                 }
                 Ok(())
             })
@@ -631,10 +637,11 @@ mod tests {
         let norm_alpha = None;
         let sr = 48000;
         let ds_dir = "../assets/";
+        let max_len_s = 1.0;
         let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
         let builder = DatasetBuilder::new(ds_dir, sr)
             .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
-            .max_len(1.);
+            .max_len(max_len_s);
         for dataset_size in [1, 2, 4, 17] {
             for c in cfg.train.iter_mut() {
                 c.1 = dataset_size as f32; // Set sampling factor
@@ -697,9 +704,13 @@ mod tests {
                         loader.start_epoch(split, epoch)?;
                         let mut n_samples = 0;
                         dbg!(dataset_size);
-                        while let Some(batch) = loader.get_batch::<Complex32>()? {
+                        while let Some(batch) = loader.get_batch::<Complex32>().unwrap() {
                             n_samples += batch.batch_size();
-                            dbg!(n_samples);
+                            dbg!(n_samples, batch.speech.shape());
+                            debug_assert_eq!(
+                                batch.speech.len_of(Axis(2)),
+                                (max_len_s * (sr / hop_size.unwrap()) as f32).round() as usize
+                            );
                             assert!(n_samples <= dataset_size);
                         }
                         dbg!(n_samples, dataset_size);
