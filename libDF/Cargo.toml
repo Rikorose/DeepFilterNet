@@ -30,7 +30,7 @@ required-features = ["dataset", "bin"]
 [features]
 default = []
 
-transforms = ["thiserror", "ndarray"]
+transforms = ["thiserror", "ndarray", "rubato"]
 dataset = [
   "thiserror",
   "ndarray",
