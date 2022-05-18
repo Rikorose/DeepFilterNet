@@ -80,6 +80,7 @@ class PytorchDataLoader:
         norm_alpha: Optional[float] = None,  # Exponential normalization decay for erb/spec_feat
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
+        p_bw_ext: Optional[float] = None,  # Percentage of bandwidth limited signal for extension
         overfit: bool = False,  # Overfit on one epoch
         cache_valid: bool = False,  # Cache validiation dataset
         seed: int = 0,
@@ -110,6 +111,7 @@ class PytorchDataLoader:
             nb_spec=nb_spec,
             norm_alpha=norm_alpha,
             p_reverb=p_reverb,
+            p_bw_ext=p_bw_ext,
             prefetch=prefetch_loader,
             drop_last=drop_last,
             overfit=overfit,

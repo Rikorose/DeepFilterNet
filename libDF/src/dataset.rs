@@ -760,7 +760,7 @@ impl Dataset<Complex32> for FftDataset {
         let noise = stft(sample.get_noise_view()?, &mut state, true);
         let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
         if let Some(f) = sample.downsample_freq {
-            ext_bandwidth_spectral(&mut noisy, f, sr, self.fft_size, Some(4));
+            ext_bandwidth_spectral(&mut noisy, f, sr, Some(4));
         }
 
         // Feature calculation (normalization)
@@ -1016,7 +1016,7 @@ impl TdDataset {
                 // Extend bandwidth only if max 80% are missing.
                 if max_bin < n_bins && max_bin > dbg!(n_bins as f32 * 0.8) as usize {
                     let f = max_bin * self.sr / 2 / n_bins;
-                    ext_bandwidth_spectral(&mut spec, f, self.sr, Some(12));
+                    ext_bandwidth_spectral(&mut spec, f, self.sr, Some(16));
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
                 }
             }

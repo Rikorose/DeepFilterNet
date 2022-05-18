@@ -389,8 +389,10 @@ class DfNet(nn.Module):
         self.erb_dec = ErbDecoder()
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
+        # Bandwidth extension via spectral translation
+        self.bandwidth_ext = p.bandwidth_ext
+
         self.df_order = p.df_order
-        self.df_bins = p.nb_df
         self.df_op: Union[DfOp, MultiFrameModule]
         if p.dfop_method == "real_unfold":
             raise ValueError("RealUnfold DF OP is now unsupported.")

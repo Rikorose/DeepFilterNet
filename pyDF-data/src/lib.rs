@@ -93,6 +93,7 @@ impl _FdDataLoader {
         num_threads: Option<usize>,
         prefetch: Option<usize>,
         p_reverb: Option<f32>,
+        p_bw_ext: Option<f32>,
         drop_last: Option<bool>,
         overfit: Option<bool>,
         cache_valid: Option<bool>,
@@ -129,6 +130,9 @@ impl _FdDataLoader {
         }
         if let Some(p_reverb) = p_reverb {
             ds_builder = ds_builder.prob_reverberation(p_reverb)
+        }
+        if let Some(p_bw_ext) = p_bw_ext {
+            ds_builder = ds_builder.bandwidth_extension(p_bw_ext)
         }
         if let Some(nb_freqs) = min_nb_erb_freqs {
             ds_builder = ds_builder.min_nb_erb_freqs(nb_freqs)
