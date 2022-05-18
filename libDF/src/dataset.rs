@@ -924,10 +924,16 @@ impl TdDataset {
         Ok(x)
     }
 
-    fn read_max_len(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
+    fn read_max_len(
+        &self,
+        idx: usize,
+        key: &str,
+        max_samples: Option<usize>,
+    ) -> Result<Array2<f32>> {
         #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
-        let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
+        let max_samples = max_samples.unwrap_or(self.max_samples);
+        let x = match self._read_from_hdf5(key, idx, Some(max_samples)) {
             Err(e) => {
                 log::warn!(
                     "Error during {} read_max_len() for key '{}' from dataset {}: {:?}",
@@ -946,7 +952,7 @@ impl TdDataset {
                         self.ds_name(*sp_idx),
                         e_str
                     );
-                    self.read_max_len(*sp_idx, sp_key)?
+                    self.read_max_len(*sp_idx, sp_key, Some(max_samples))?
                 } else {
                     return Err(e);
                 }
@@ -962,7 +968,7 @@ impl TdDataset {
                 (Instant::now() - t0).as_millis()
             );
         }
-        debug_assert!(x.len_of(Axis(1)) <= self.max_samples);
+        debug_assert!(x.len_of(Axis(1)) <= max_samples);
         Ok(x)
     }
 
@@ -1002,7 +1008,9 @@ impl TdDataset {
             None
         };
         while cur_len < self.max_sample_len() {
-            let mut sample = self.read_max_len(sp_idx, &sp_key)?;
+            // Read 10% more samples since augmentation might shorten the signal
+            let n_read = (self.max_samples as f32 * 1.1) as usize - cur_len;
+            let mut sample = self.read_max_len(sp_idx, &sp_key, Some(n_read))?;
             if sample.len_of(Axis(0)) > 1 {
                 sample.slice_axis_inplace(Axis(0), Slice::from(0usize..1));
             }
@@ -1012,9 +1020,8 @@ impl TdDataset {
                 let mut spec = stft(sample.view(), state.as_mut().unwrap(), false);
                 let max_bin = estimate_bandwidth(spec.view(), 8., 2);
                 let n_bins = fft_size / 2 + 1;
-                dbg!(max_bin);
                 // Extend bandwidth only if max 80% are missing.
-                if max_bin < n_bins && max_bin > dbg!(n_bins as f32 * 0.8) as usize {
+                if max_bin < n_bins && max_bin > (n_bins as f32 * 0.8) as usize {
                     let f = max_bin * self.sr / 2 / n_bins;
                     ext_bandwidth_spectral(&mut spec, f, self.sr, Some(16));
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
@@ -1026,7 +1033,12 @@ impl TdDataset {
             (sp_idx, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
         }
         let speech_views: Vec<ArrayView2<f32>> = speech_samples.iter().map(|s| s.view()).collect();
-        let speech = concatenate(Axis(1), speech_views.as_slice())?;
+        let mut speech = concatenate(Axis(1), speech_views.as_slice())?;
+        let len = speech.len_of(Axis(1));
+        if len > self.max_samples {
+            let start = rng.uniform(0, len - self.max_samples);
+            speech.slice_axis_inplace(Axis(1), Slice::from(start..(start + self.max_samples)))
+        }
         Ok((speech, max_freq))
     }
 
@@ -1039,7 +1051,7 @@ impl TdDataset {
         }
         loop {
             let (ns_idx, ns_key) = self.ns_keys.iter().choose(rng).unwrap();
-            let mut ns = match self.read_max_len(*ns_idx, ns_key) {
+            let mut ns = match self.read_max_len(*ns_idx, ns_key, None) {
                 Err(e) => {
                     log::warn!("Error during noise reading get_sample(): {}", e);
                     continue;
