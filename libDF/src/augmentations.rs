@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 #[cfg(feature = "dataset_timings")]
 use std::time::Instant;
 
 use ndarray::{concatenate, prelude::*, Slice};
-use ndarray_rand::rand::{seq::SliceRandom, Rng};
+use ndarray_rand::rand::{prelude::IteratorRandom, seq::SliceRandom, Rng};
 use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
 use thiserror::Error;
 
@@ -882,6 +883,110 @@ impl RandReverbSim {
     }
 }
 
+/// Implement a low pass filterbank in frequency domain. Adopted from audiomentations.
+/// Absorption coefs based on pyroomacoustics.
+///
+/// Absorption is given by:
+///
+///    `att = exp(- distance * absorption_coefficient)`
+pub(crate) struct AirAbsorptionAugmentation {
+    air_absorption: BTreeMap<String, [f32; 9]>,
+    center_freqs: [usize; 9],
+    distance_low: f32,
+    distance_high: f32,
+    prob: f32,
+    sr: usize,
+}
+/// Concat 3 slices into a Vec.
+pub fn concat3<T: Clone>(a: &[T], b: &[T], c: &[T]) -> Vec<T> {
+    [a, b, c].concat()
+}
+/// Linear interpolation between two points at x=0 and x=1
+fn interp_lin(x: f32, yvals: &[f32; 2]) -> f32 {
+    (1. - x) * yvals[0] + x * yvals[1]
+}
+impl AirAbsorptionAugmentation {
+    fn insert_coefs(map: &mut BTreeMap<String, [f32; 9]>, key: &str, scaled_coefs: [f32; 9]) {
+        map.insert(key.to_string(), scaled_coefs.map(|x| x * 1e-3));
+    }
+    pub fn new(sr: usize, prob: f32) -> Self {
+        let center_freqs = [125, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000];
+        let mut air_absorption = BTreeMap::new();
+        Self::insert_coefs(
+            &mut air_absorption,
+            "10C_30-50%",
+            [0.1, 0.2, 0.5, 1.1, 2.7, 9.4, 29.0, 91.5, 289.0],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "10C_50-70%",
+            [0.1, 0.2, 0.5, 0.8, 1.8, 5.9, 21.1, 76.6, 280.2],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "10C_70-90%",
+            [0.1, 0.2, 0.5, 0.7, 1.4, 4.4, 15.8, 58.0, 214.9],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "20C_30-50",
+            [0.1, 0.3, 0.6, 1.0, 1.9, 5.8, 20.3, 72.3, 259.9],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "20C_50-70%",
+            [0.1, 0.3, 0.6, 1.0, 1.7, 4.1, 13.5, 44.4, 148.7],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "20C_70-90%",
+            [0.1, 0.3, 0.6, 1.1, 1.7, 3.5, 10.6, 31.2, 93.8],
+        );
+        Self {
+            center_freqs,
+            air_absorption,
+            distance_low: 1.0,
+            distance_high: 20.0,
+            sr,
+            prob,
+        }
+    }
+    fn interp_atten(&self, atten_vals: &[f32], n_freqs: usize) -> Array1<f32> {
+        let atten_vals = concat3(&[atten_vals[0]], atten_vals, &[atten_vals[8]]);
+        let freqs = Array1::linspace(0., (self.sr / 2) as f32, n_freqs);
+        let mut atten_vals_interp = Array1::zeros(n_freqs);
+        let center_freqs = concat3(&[0], &self.center_freqs, &[self.sr / 2]);
+        let mut i = 0;
+        for (c, a) in center_freqs.windows(2).zip(atten_vals.windows(2)) {
+            let (c0, c1) = (c[0] as f32, c[1] as f32);
+            let (a0, a1) = (a[0] as f32, a[1] as f32);
+            while i < n_freqs && freqs[i] <= c1 {
+                let x = (freqs[i] - c1) / (c0 - c1);
+                atten_vals_interp[i] = a0 * x + a1 * (1. - x);
+                i += 1;
+            }
+        }
+        atten_vals_interp
+    }
+    pub fn apply(&self, spec: &mut Array3<Complex32>) -> Result<()> {
+        // Spec shape: [C, T, F]
+        let mut rng = thread_rng()?;
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
+            return Ok(());
+        }
+        let d = rng.uniform_inclusive(self.distance_low, self.distance_high);
+        let coefs = self.air_absorption.values().into_iter().choose(&mut rng).unwrap();
+        let atten_vals = coefs.map(|c| (-d * c).exp());
+        dbg!(d, coefs, atten_vals);
+        let n_freqs = spec.len_of(Axis(2));
+        let atten_vals = self.interp_atten(&atten_vals, n_freqs);
+        for (mut f, a) in spec.axis_iter_mut(Axis(2)).zip(atten_vals) {
+            f.mapv_inplace(|x| x.scale(a));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Once;
@@ -1037,6 +1142,24 @@ mod tests {
         let mut s_filt = s_orig;
         biquad_filter(&mut s_filt, &b, &a);
         write_wav_iter("../out/filt_notch.wav", s_filt.iter(), sr as u32, ch)?;
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_air_absorption() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let sr = reader.sr;
+        let sample = reader.samples_arr2().unwrap();
+        let fft_size = sr / 50;
+        let hop_size = fft_size / 2;
+        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+        let mut x = stft(sample.view(), &mut state, false);
+        let airabs = AirAbsorptionAugmentation::new(sr, 1.0);
+        airabs.apply(&mut x).unwrap();
+        let sample = istft(x.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs.wav", sample.view(), sr as u32).unwrap();
         Ok(())
     }
 }
