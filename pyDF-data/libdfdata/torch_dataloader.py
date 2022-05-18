@@ -23,7 +23,7 @@ class Batch:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             assert len(b) == 10
-            speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
+            speech, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
             if erb.size <= 1:
                 self.feat_erb = None
             if spec.size <= 1:
@@ -32,7 +32,6 @@ class Batch:
                 self.feat_erb = torch.from_numpy(erb)
                 self.feat_spec = torch.from_numpy(spec)
             self.speech = torch.from_numpy(speech)
-            self.noise = torch.from_numpy(noise)
             self.noisy = torch.from_numpy(noisy)
             self.lengths = torch.from_numpy(lengths.astype(np.int64)).long()
             self.snr = torch.from_numpy(snr)
