@@ -338,7 +338,6 @@ where
     T: Data,
 {
     pub speech: ArrayD<T>,
-    pub noise: ArrayD<T>,
     pub noisy: ArrayD<T>,
     pub feat_erb: Option<ArrayD<f32>>,
     pub feat_spec: Option<ArrayD<Complex32>>,
@@ -352,9 +351,6 @@ impl Sample<f32> {
     fn get_speech_view(&self) -> Result<ArrayView2<f32>> {
         Ok(self.speech.view().into_dimensionality()?)
     }
-    fn get_noise_view(&self) -> Result<ArrayView2<f32>> {
-        Ok(self.noise.view().into_dimensionality()?)
-    }
     fn get_noisy_view(&self) -> Result<ArrayView2<f32>> {
         Ok(self.noisy.view().into_dimensionality()?)
     }
@@ -365,9 +361,6 @@ impl Sample<f32> {
 impl Sample<Complex32> {
     fn get_speech_view(&self) -> Result<ArrayView3<Complex32>> {
         Ok(self.speech.view().into_dimensionality()?)
-    }
-    fn get_noise_view(&self) -> Result<ArrayView3<Complex32>> {
-        Ok(self.noise.view().into_dimensionality()?)
     }
     fn get_noisy_view(&self) -> Result<ArrayView3<Complex32>> {
         Ok(self.noisy.view().into_dimensionality()?)
@@ -757,7 +750,6 @@ impl Dataset<Complex32> for FftDataset {
         let sr = self.sr();
         let mut state = DFState::new(sr, self.fft_size, self.hop_size, nb_erb, 1);
         let speech = stft(sample.get_speech_view()?, &mut state, false);
-        let noise = stft(sample.get_noise_view()?, &mut state, true);
         let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
         if let Some(f) = sample.downsample_freq {
             ext_bandwidth_spectral(&mut noisy, f, sr, Some(4));
@@ -784,7 +776,6 @@ impl Dataset<Complex32> for FftDataset {
         };
         let sample = Sample {
             speech: speech.into_dyn(),
-            noise: noise.into_dyn(),
             noisy: noisy.into_dyn(),
             feat_erb: erb,
             feat_spec: spec,
@@ -1147,7 +1138,7 @@ impl Dataset<f32> for TdDataset {
             noise = low_pass_resample(noise.view(), re.cut_off, re.sr)?;
             noise.slice_axis_inplace(Axis(1), Slice::from(..len));
         }
-        let (speech, noise, noisy) =
+        let (speech, _, noisy) =
             mix_audio_signal(speech, speech_distorted, noise, snr as f32, gain as f32)?;
         #[cfg(feature = "dataset_timings")]
         if log::log_enabled!(log::Level::Trace) {
@@ -1162,7 +1153,6 @@ impl Dataset<f32> for TdDataset {
         }
         Ok(Sample {
             speech: speech.into_dyn(),
-            noise: noise.into_dyn(),
             noisy: noisy.into_dyn(),
             feat_erb: None,
             feat_spec: None,

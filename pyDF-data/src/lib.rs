@@ -62,7 +62,6 @@ struct _FdDataLoader {
 
 type FdBatch<'py> = (
     &'py PyArray4<Complex32>, // speech
-    &'py PyArray4<Complex32>, // noise
     &'py PyArray4<Complex32>, // noisy
     &'py PyArray4<f32>,       // feat_erb
     &'py PyArray4<Complex32>, // feat_spec
@@ -235,7 +234,6 @@ impl _FdDataLoader {
                 let spec = batch.feat_spec.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
                 Ok((
                     batch.speech.into_dimensionality().to_py_err()?.into_pyarray(py),
-                    batch.noise.into_dimensionality().to_py_err()?.into_pyarray(py),
                     batch.noisy.into_dimensionality().to_py_err()?.into_pyarray(py),
                     erb.into_dimensionality().to_py_err()?.into_pyarray(py),
                     spec.into_dimensionality().to_py_err()?.into_pyarray(py),

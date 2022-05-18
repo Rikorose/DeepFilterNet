@@ -466,14 +466,12 @@ impl Collate<f32> for f32 {
     fn collate(samples: &mut [Sample<f32>], len: usize) -> Result<DsBatch<f32>> {
         let lengths = samples.iter().map(|s| s.speech.len_of(Axis(1))).collect();
         let speech = unpack_pad(|s: &mut Sample<f32>| &mut s.speech, samples, len)?;
-        let noise = unpack_pad(|s: &mut Sample<f32>| &mut s.noise, samples, len)?;
         let noisy = unpack_pad(|s: &mut Sample<f32>| &mut s.noisy, samples, len)?;
         let max_freq = samples.iter().map(|s| s.max_freq).collect();
         let snr = samples.iter().map(|s| s.snr).collect();
         let gain = samples.iter().map(|s| s.gain).collect();
         Ok(DsBatch {
             speech,
-            noise,
             noisy,
             feat_erb: None,
             feat_spec: None,
@@ -490,7 +488,6 @@ impl Collate<Complex32> for Complex32 {
     fn collate(samples: &mut [Sample<Complex32>], len: usize) -> Result<DsBatch<Complex32>> {
         let lengths = samples.iter().map(|s| s.speech.len_of(Axis(1))).collect();
         let speech = unpack_pad(|s: &mut Sample<Complex32>| &mut s.speech, samples, len)?;
-        let noise = unpack_pad(|s: &mut Sample<Complex32>| &mut s.noise, samples, len)?;
         let noisy = unpack_pad(|s: &mut Sample<Complex32>| &mut s.noisy, samples, len)?;
         let feat_erb = if samples.first().unwrap().feat_erb.is_some() {
             Some(unpack_pad(
@@ -515,7 +512,6 @@ impl Collate<Complex32> for Complex32 {
         let gain = samples.iter().map(|s| s.gain).collect();
         Ok(DsBatch {
             speech,
-            noise,
             noisy,
             feat_erb,
             feat_spec,
@@ -554,7 +550,6 @@ where
     T: Data,
 {
     pub speech: ArrayD<T>,
-    pub noise: ArrayD<T>,
     pub noisy: ArrayD<T>,
     pub feat_erb: Option<ArrayD<f32>>,
     pub feat_spec: Option<ArrayD<Complex32>>,
