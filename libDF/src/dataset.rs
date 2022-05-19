@@ -1801,7 +1801,7 @@ fn mix_audio_signal(
     let mut mixture = clean_mix + &noise;
     // Guard against clipping
     let max = &([&clean_out, &noise, &mixture].iter().map(|x| find_max_abs(x.iter())))
-        .collect::<std::result::Result<Vec<f32>, crate::util::UtilsError>>()?;
+        .collect::<std::result::Result<Vec<f32>, crate::transforms::TransformError>>()?;
     let max = find_max(max)?;
     if (max - 1.) > 1e-10 {
         let f = 1. / (max + 1e-10);
