@@ -18,8 +18,6 @@ type Result<T> = std::result::Result<T, UtilsError>;
 
 #[derive(Error, Debug)]
 pub enum UtilsError {
-    #[error("NaN detected")]
-    NaN,
     #[error("Random seed is not initialized using seed_from_u64(x)")]
     SeedNotInitialized,
     #[error("Could not inititalize logger")]
@@ -99,109 +97,6 @@ where
         *x = dist.sample(&mut rng);
     }
     Ok(v)
-}
-
-pub(crate) struct NonNan(f32);
-
-impl NonNan {
-    fn new(val: f32) -> Option<NonNan> {
-        if val.is_nan() {
-            None
-        } else {
-            Some(NonNan(val))
-        }
-    }
-    fn get(&self) -> f32 {
-        self.0
-    }
-}
-
-pub(crate) fn find_max<'a, I>(vals: I) -> Result<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(f32::MIN, |acc, v| {
-        let nonnan: NonNan = match NonNan::new(*v) {
-            None => return Err(UtilsError::NaN),
-            Some(x) => x,
-        };
-        Ok(nonnan.get().max(acc))
-    })
-}
-
-pub(crate) fn find_max_abs<'a, I>(vals: I) -> Result<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(0., |acc, v| {
-        let nonnan: NonNan = match NonNan::new(v.abs()) {
-            None => return Err(UtilsError::NaN),
-            Some(x) => x,
-        };
-        Ok(nonnan.get().max(acc))
-    })
-}
-
-pub(crate) fn find_min<'a, I>(vals: I) -> Result<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(f32::MAX, |acc, v| {
-        let nonnan: NonNan = match NonNan::new(*v) {
-            None => return Err(UtilsError::NaN),
-            Some(x) => x,
-        };
-        Ok(nonnan.get().min(acc))
-    })
-}
-
-pub(crate) fn find_min_abs<'a, I>(vals: I) -> Result<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(0., |acc, v| {
-        let nonnan: NonNan = match NonNan::new(v.abs()) {
-            None => return Err(UtilsError::NaN),
-            Some(x) => x,
-        };
-        Ok(nonnan.get().min(acc))
-    })
-}
-
-pub(crate) fn median(x: &mut [f32]) -> f32 {
-    x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = x.len() / 2;
-    x[mid]
-}
-
-pub(crate) fn argmax<'a, I>(vals: I) -> Result<usize>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut index = 0;
-    let mut high = std::f32::MIN;
-    vals.into_iter().enumerate().for_each(|(i, v)| {
-        if v > &high {
-            high = *v;
-            index = i;
-        }
-    });
-    Ok(index)
-}
-
-pub(crate) fn argmax_abs<'a, I>(vals: I) -> Result<usize>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut index = 0;
-    let mut high = std::f32::MIN;
-    vals.into_iter().enumerate().for_each(|(i, v)| {
-        if v > &high {
-            high = v.abs();
-            index = i;
-        }
-    });
-    Ok(index)
 }
 
 pub type LogMessage = (Level, String, Option<String>, Option<u32>); // level, message, module, lineno
