@@ -1,5 +1,6 @@
 import argparse
 import io
+import os
 import random
 import sys
 from typing import Optional
@@ -45,6 +46,9 @@ def main():
     parser.add_argument("--n-channels", "-c", type=int, default=1)
     parser.add_argument("--keys", "-k", type=str, nargs="*")
     args = parser.parse_args()
+
+    if not os.path.isdir(args.out_dir):
+        os.makedirs(args.out_dir)
 
     with h5py.File(args.hdf5_file, "r", libver="latest", swmr=True) as h5f:
         sr = h5f.attrs.get("sr", args.sr)
