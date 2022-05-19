@@ -680,4 +680,14 @@ mod tests {
         let sample_f2 = istft(x2.view_mut(), &mut state, true);
         write_wav_arr2("../out/sample_f2_ext.wav", sample_f2.view(), sr as u32).unwrap();
     }
+
+    #[test]
+    fn test_find_max_abs() -> Result<()> {
+        let mut x = vec![vec![0f32; 10]; 1];
+        x[0][2] = 3f32;
+        x[0][5] = -10f32;
+        let max = find_max_abs(x.iter().flatten())?;
+        assert_eq!(max, 10.);
+        Ok(())
+    }
 }
