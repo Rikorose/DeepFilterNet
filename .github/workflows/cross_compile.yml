@@ -22,8 +22,6 @@ jobs:
         manylinux: [2014]
         python:
           # CPython
-          - version: "3.7"
-            abi: cp37-cp37m
           - version: "3.8"
             abi: cp38-cp38
           - version: "3.9"
