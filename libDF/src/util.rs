@@ -143,13 +143,3 @@ pub fn init_logger(logger: DfLogger) {
         log::set_max_level(level.to_level_filter());
     });
 }
-
-#[test]
-fn test_find_max_abs() -> Result<()> {
-    let mut x = vec![vec![0f32; 10]; 1];
-    x[0][2] = 3f32;
-    x[0][5] = -10f32;
-    let max = find_max_abs(x.iter().flatten())?;
-    assert_eq!(max, 10.);
-    Ok(())
-}
