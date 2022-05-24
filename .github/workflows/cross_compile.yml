@@ -16,7 +16,7 @@ jobs:
     name: Test Cross Compile
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         rust: [stable]
         manylinux: [2014]
