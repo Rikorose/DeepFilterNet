@@ -46,13 +46,14 @@ jobs:
           - os: macos-latest
             df_wheel: pyDF-data
     steps:
+      - name: Checkout DeepFilterNet
+        uses: actions/checkout@v2
+
       - name: Echo git tag
         run: |
           echo "git tag: ${{github.event.head_commit.message}}"
           echo "DF version:  $(scripts/get_version.sh)"
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
-      - name: Checkout DeepFilterNet
-        uses: actions/checkout@v1
 
       - name: Install HDF5
         if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'

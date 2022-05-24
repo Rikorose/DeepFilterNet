@@ -37,12 +37,12 @@ jobs:
       run:
         shell: bash
     steps:
+      - uses: actions/checkout@v2
       - name: Echo git tag
         run: |
           echo "git tag: ${{github.event.head_commit.message}}"
           echo "DF version:  $(scripts/get_version.sh)"
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
-      - uses: actions/checkout@v2
       # Aditionally test against original matlab composite metrics
       - name: Set Extra Dependency Ubuntu
         if: matrix.os == 'ubuntu-latest'
