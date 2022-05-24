@@ -16,6 +16,7 @@ class MultiFrameModule(nn.Module, ABC):
 
         PSD: Power spectral density, notated eg. as `Rxx` for noisy PSD.
         IFC: Inter-frame correlation vector: PSD*u, u: selection vector. Notated as `rxx`
+        RTF: Relative transfere function, also called steering vector.
     """
 
     num_freqs: Final[int]
@@ -65,6 +66,18 @@ class MultiFrameModule(nn.Module, ABC):
             spec = spec.clone()
         spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
         return spec
+
+    @staticmethod
+    def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-7) -> Tensor:
+        return torch.einsum(
+            "...nm,...m->...n", torch.inverse(_tik_reg(Rxx, diag_eps, eps)), rss
+        )  # [T, F, N]
+
+    @staticmethod
+    def apply_coefs(spec: Tensor, coefs: Tensor) -> Tensor:
+        # spec: [B, C, T, F, N]
+        # coefs: [B, C, T, F, N]
+        return torch.einsum("...n,...n->...", spec, coefs)
 
     @abstractmethod
     def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
@@ -172,12 +185,6 @@ class MfWf(MultiFrameModule):
     def num_channels(self):
         return self.num_channels
 
-    @staticmethod
-    def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-7) -> Tensor:
-        return torch.einsum(
-            "...nm,...m->...n", torch.inverse(_tik_reg(Rxx, diag_eps, eps)), rss
-        )  # [T, F, N]
-
     @abstractmethod
     def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
         """Multi-frame Wiener filter impl taking complex spectrogram and coefficients.
@@ -196,12 +203,6 @@ class MfWf(MultiFrameModule):
     def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
         coefs = self.mfwf(spec, coefs)
         return self.apply_coefs(spec, coefs)
-
-    @staticmethod
-    def apply_coefs(spec: Tensor, coefs: Tensor) -> Tensor:
-        # spec: [B, C, T, F, N]
-        # coefs: [B, C, T, F, N]
-        return torch.einsum("...n,...n->...", spec, coefs)
 
 
 class MfWfDf(MfWf):
@@ -264,6 +265,46 @@ class MfWfC(MfWf):
         return coefs
 
 
+class MfMvdr(MultiFrameModule):
+    """Multi-frame minimum variance distortionless beamformer."""
+
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
+        """Multi-frame minimum variance distortionless beamformer.
+
+        Several implementation methods are available resulting in different number of required input
+        coefficient channels. Mostly based on torchaudio's MVDR implementations.
+
+        Methods:
+            mvdr_evd: Estimate the steering vector (RTF) based on eigen value decomposition (evd) of Rss.
+            mvdr_rtf_power: Estimate the RTF based using the power method using Rss and Rnn.
+            mvdr_souden: Estimate coefs based on Rss and Rnn using the Souden method.
+        """
+        super().__init__(num_freqs, frame_size, lookahead=0)
+        self.idx = -lookahead
+
+    def num_channels(self):
+        return self.num_channels
+
+    @abstractmethod
+    def mvdr(self, spec: Tensor, coefs: Tensor) -> Tensor:
+        """Minimum variance distortionless beamformer impl taking complex spectrogram and coefficients.
+
+        Coefficients may be split into multiple parts w.g. for multiple DF coefs or PSDs.
+
+        Args:
+            spec (complex Tensor): Spectrogram of shape [B, C1, T, F, N]
+            coefs (complex Tensor): Coefficients [B, C2, T, F]
+
+        Returns:
+            c (complex Tensor): MfWf coefs of shape [B, C1, T, F, N]
+        """
+        ...
+
+    def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
+        coefs = self.mvdr(spec, coefs)
+        return self.apply_coefs(spec, coefs)
+
+
 class MvdrSouden(MultiFrameModule):
     def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
         super().__init__(num_freqs, frame_size, lookahead)
@@ -279,7 +320,7 @@ class MvdrRtfPower(MultiFrameModule):
         super().__init__(num_freqs, frame_size, lookahead)
 
 
-MF_METHODS: Dict[str, MultiFrameModule] = {
+MF_METHODS: Dict[str, MultiFrameModule] = {  # type: ignore
     "crm": CRM,
     "df": DF,
     "mfwf_df": MfWfDf,
