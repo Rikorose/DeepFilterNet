@@ -41,7 +41,9 @@ jobs:
           echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
           pip install soundfile
       - name: Install DeepFilterNet and Deps
-        run: pip install deepfilternet requests
+        run: |
+          pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install deepfilternet requests
       # Test deepFilter executable
       - name: Test deepFilter script
         working-directory: DeepFilterNet
