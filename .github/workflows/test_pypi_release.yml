@@ -1,0 +1,58 @@
+name: Test PyPi
+
+on:
+  push:
+    branches:
+      - test_windows
+  workflow_run:
+    workflows: ["publish-pypi-wheels"]
+    branches: [main]
+    types:
+      - completed
+  schedule:
+    - cron: '0 18 * * 0'
+
+jobs:
+  test-df-output:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9"]
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v3
+      # Python and poetry install
+      - name: Install Python
+        uses: actions/setup-python@v3
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/requirements.txt'
+          python-version: ${{ matrix.python }}
+      - name: Update PATH
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Update Path for Windows and install Soundfile
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
+          pip install soundfile
+      - name: Install DeepFilterNet and Deps
+        run: pip install deepfilternet requests
+      # Test deepFilter executable
+      - name: Test deepFilter script
+        working-directory: DeepFilterNet
+        env:
+          DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
+        run: |
+          mkdir ../out
+          deepFilter ../assets/noisy_snr0.wav -o ../out
+          python df/scripts/dnsmos.py ../assets/noisy_snr0.wav -t 2.9511659145355225
+          python df/scripts/dnsmos.py ../out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
+      - uses: actions/upload-artifact@v2
+        with:
+          name: enhanced-${{ runner.os }}
+          path: out/*wav
