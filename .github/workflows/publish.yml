@@ -48,9 +48,9 @@ jobs:
     steps:
       - name: Echo git tag
         run: |
-          echo 'git tag: ${{github.event.head_commit.message}}'
-          echo 'DF version:  $(scripts/get_version.sh)'
-          echo 'DF_VERSION=$(scripts/get_version.sh)' >> $GITHUB_ENV
+          echo "git tag: ${{github.event.head_commit.message}}"
+          echo "DF version:  $(scripts/get_version.sh)"
+          echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
       - name: Checkout DeepFilterNet
         uses: actions/checkout@v1
 
