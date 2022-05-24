@@ -46,6 +46,11 @@ jobs:
           - os: macos-latest
             df_wheel: pyDF-data
     steps:
+      - name: Echo git tag
+        run: |
+          echo 'git tag: ${{github.event.head_commit.message}}'
+          echo 'DF version:  $(scripts/get_version.sh)'
+          echo 'DF_VERSION=$(scripts/get_version.sh)' >> $GITHUB_ENV
       - name: Checkout DeepFilterNet
         uses: actions/checkout@v1
 
@@ -92,6 +97,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe
+          pip install delvewheel
+          delvewheel repair target/wheels/DeepFilterLib-*.whl
 
       - uses: actions/upload-artifact@v2
         with:
@@ -142,5 +149,5 @@ jobs:
           USER: ${{ secrets.PYPI_USER }}
           PW: ${{ secrets.PYPI_PW }}
         run: |
-          maturin upload -u "$USER" -p "$PW" libdf-wheels/*
-          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*
+          maturin upload -u "$USER" -p "$PW" libdf-wheels/*"DF_VERSION"*
+          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*"DF_VERSION"*
