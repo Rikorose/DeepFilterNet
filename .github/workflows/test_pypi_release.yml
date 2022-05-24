@@ -42,8 +42,9 @@ jobs:
           pip install soundfile
       - name: Install DeepFilterNet and Deps
         run: |
-          pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
           pip install deepfilternet requests
+          pip install -r DeepFilterNet/requirements_test.txt
       # Test deepFilter executable
       - name: Test deepFilter script
         working-directory: DeepFilterNet
