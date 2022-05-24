@@ -35,11 +35,12 @@ jobs:
       - name: Update PATH
         if: ${{ matrix.os != 'windows-latest' }}
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - name: Update Path for Windows and install Soundfile
+      - name: Update Path for Windows and Windows Deps
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
           echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
           pip install soundfile
+          pip install msvc-runtime
       - name: Install DeepFilterNet and Deps
         run: |
           pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
