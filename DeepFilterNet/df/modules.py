@@ -874,28 +874,29 @@ def test_grouped_gru():
 
 
 def test_erb():
-    import df
+    import libdf
     from df.config import config
 
     config.use_defaults()
     p = ModelParams()
     n_freq = p.fft_size // 2 + 1
-    df_state = df.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
+    df_state = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
     erb = erb_fb(df_state.erb_widths(), p.sr)
     erb_inverse = erb_fb(df_state.erb_widths(), p.sr, inverse=True)
     input = torch.randn((1, 1, 1, n_freq), dtype=torch.complex64)
     input_abs = input.abs().square()
-    df_erb = torch.from_numpy(df.erb(input.numpy(), p.nb_erb, False))
+    erb_widths = df_state.erb_widths()
+    df_erb = torch.from_numpy(libdf.erb(input.numpy(), erb_widths, False))
     py_erb = torch.matmul(input_abs, erb)
     assert torch.allclose(df_erb, py_erb)
-    df_out = torch.from_numpy(df.erb_inv(df_erb.numpy()))
+    df_out = torch.from_numpy(libdf.erb_inv(df_erb.numpy(), erb_widths))
     py_out = torch.matmul(py_erb, erb_inverse)
     assert torch.allclose(df_out, py_out)
 
 
 def test_unit_norm():
-    import df
     from df.config import config
+    from libdf import unit_norm
 
     config.use_defaults()
     p = ModelParams()
@@ -905,12 +906,12 @@ def test_unit_norm():
     spec = torch.randn(b, 1, t, F, 2)
     alpha = get_norm_alpha(log=False)
     # Expects complex input of shape [C, T, F]
-    norm_lib = torch.as_tensor(df.unit_norm(torch.view_as_complex(spec).squeeze(1).numpy(), alpha))
+    norm_lib = torch.as_tensor(unit_norm(torch.view_as_complex(spec).squeeze(1).numpy(), alpha))
     m = ExponentialUnitNorm(alpha, F)
     norm_torch = torch.view_as_complex(m(spec).squeeze(1))
-    torch.testing.assert_allclose(norm_lib.real, norm_torch.real)
-    torch.testing.assert_allclose(norm_lib.imag, norm_torch.imag)
-    torch.testing.assert_allclose(norm_lib.abs(), norm_torch.abs())
+    assert torch.allclose(norm_lib.real, norm_torch.real)
+    assert torch.allclose(norm_lib.imag, norm_torch.imag)
+    assert torch.allclose(norm_lib.abs(), norm_torch.abs())
 
 
 def test_dfop():
