@@ -1,9 +1,6 @@
 name: Test PyPi
 
 on:
-  push:
-    branches:
-      - test_windows
   workflow_run:
     workflows: ["publish-pypi-wheels"]
     branches: [main]

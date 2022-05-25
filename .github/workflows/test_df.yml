@@ -31,8 +31,8 @@ jobs:
         exclude:
           - os: "macos-latest"
             is_pr: true  # Run only linux on PR
-          # - os: "windows-latest"
-          #   is_pr: true  # Run only linux on PR
+          - os: "windows-latest"
+            is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
@@ -90,13 +90,6 @@ jobs:
       - name: Update Path for Windows
         if: ${{ matrix.os == 'windows-latest' }}
         run: echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
-      - name: Test Windows DLL
-        if: ${{ matrix.os == 'windows-latest' }}
-        run: |
-          pip install delvewheel maturin
-          maturin build --release -m pyDF/Cargo.toml
-          delvewheel show target/wheels/*.whl
-          delvewheel repair target/wheels/*.whl
       - name: Configure poetry
         run: poetry config virtualenvs.in-project true
       - name: Set venv up cache
