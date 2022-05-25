@@ -96,6 +96,7 @@ jobs:
           pip install delvewheel maturin
           maturin build --release -m pyDF/Cargo.toml
           delvewheel show target/wheels/*.whl
+          delvewheel repair target/wheels/*.whl
       - name: Configure poetry
         run: poetry config virtualenvs.in-project true
       - name: Set venv up cache
