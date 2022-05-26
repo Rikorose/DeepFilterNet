@@ -17,7 +17,6 @@ on:
 
 jobs:
   test-df-output:
-    if: "!contains(github.event.commits[0].message, 'v*[0-9]+.[0-9]+.[0-9]+')"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,8 +40,24 @@ jobs:
       - name: Echo git tag
         run: |
           echo "git tag: ${{github.event.head_commit.message}}"
+          echo "git tag: ${{github.event.commits[0].message}}"
           echo "DF version:  $(scripts/get_version.sh)"
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
+      - name: should it be skipped?
+        env:
+          COMMIT_FILTER: 'v[0-9]+.[0-9]+.[0-9]+'
+        run: |
+          readonly local last_commit_log=$(git log -1 --pretty=format:"%s")
+          echo "last commit log: $last_commit_log"
+          readonly local filter_count=$(echo "$last_commit_log" | grep -E -c "$COMMIT_FILTER" )
+          if ! [[ "$filter_count" -eq 0 ]]; then
+            echo "the last commit log \"$last_commit_log\" contains \"$COMMIT_FILTER\", stopping"
+            exit 78
+          fi
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
       # Soundfile backend for torchaudio
       - name: Set Extra Dependency Windows
         if: matrix.os == 'windows-latest'
