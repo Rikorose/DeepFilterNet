@@ -17,7 +17,7 @@ on:
 
 jobs:
   test-df-output:
-    if: "!contains(github.event.head_commit.message, 'v*[0-9]+.[0-9]+.[0-9]+')"
+    if: "!contains(github.event.commits[0].message, 'v*[0-9]+.[0-9]+.[0-9]+')"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,11 +43,6 @@ jobs:
           echo "git tag: ${{github.event.head_commit.message}}"
           echo "DF version:  $(scripts/get_version.sh)"
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
-      # Aditionally test against original matlab composite metrics
-      - name: Set Extra Dependency Ubuntu
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          echo "EXTRA=-E semetrics" >> $GITHUB_ENV
       # Soundfile backend for torchaudio
       - name: Set Extra Dependency Windows
         if: matrix.os == 'windows-latest'

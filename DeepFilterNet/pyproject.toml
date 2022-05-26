@@ -37,13 +37,11 @@ scipy = { version = "^1", optional = true }
 requests = { version = "^2.27", optional = true }
 appdirs = { version = "^1.4", optional = true }
 onnxruntime = { version = "^1.11", optional = true }
-semetrics = { git = "https://github.com/usimarit/semetrics.git", optional = true }
 
 [tool.poetry.extras]
 train = ["deepfilterdataloader", "icecream"]
 eval = ["pystoi", "pesq", "scipy"]
 soundfile = ["soundfile"]
-semetrics = ["semetrics"]
 dnsmos = ["requests"]
 dnsmos-local = ["appdirs", "onnxruntime", "requests"]
 
