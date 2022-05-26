@@ -17,7 +17,7 @@ from df.checkpoint import load_model as load_model_cp
 from df.logger import init_logger, warn_once
 from df.model import ModelParams
 from df.modules import get_device
-from df.utils import as_complex, as_real, download_file, get_norm_alpha, resample
+from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha, resample
 from libdf import DF, erb, erb_norm, unit_norm
 
 
@@ -97,10 +97,7 @@ def init_df(
         use_default_model = True
     if model_base_dir is None or use_default_model:
         use_default_model = True
-        cache_dir = os.path.expanduser("~/.cache/DeepFilterNet")
-        model_base_dir = os.path.join(cache_dir, default_model)
-        if not os.path.exists(model_base_dir):
-            download_model(default_model, cache_dir)
+        model_base_dir = ic(maybe_download_model(default_model))
 
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
@@ -256,7 +253,7 @@ def enhance(
     return audio
 
 
-def download_model(name: str = "DeepFilterNet") -> str:
+def maybe_download_model(name: str = "DeepFilterNet") -> str:
     """Download a DeepFilterNet model.
 
     Args:
@@ -265,14 +262,12 @@ def download_model(name: str = "DeepFilterNet") -> str:
     Returns:
         - base_dir: Return the model base directory as string.
     """
-    from appdirs import user_cache_dir
-
-    cache_dir = user_cache_dir("DeepFilterNet")
+    cache_dir = get_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
-    if not name.endswith(".zip"):
-        name += ".zip"
+    if name.endswith(".zip"):
+        name = name.removesuffix(".zip")
     url = f"https://github.com/Rikorose/DeepFilterNet/raw/feat_download_model/models/{name}"
-    download_file(url, cache_dir, extract=True)
+    download_file(url + ".zip", cache_dir, extract=True)
     return os.path.join(cache_dir, name)
 
 
