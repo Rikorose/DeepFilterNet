@@ -45,6 +45,9 @@ jobs:
             df_wheel: pyDF-data
           - os: macos-latest
             df_wheel: pyDF-data
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout DeepFilterNet
         uses: actions/checkout@v2
