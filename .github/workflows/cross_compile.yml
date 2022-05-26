@@ -40,14 +40,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
-      - uses: actions/cache@v2
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v1
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
           key: ${{matrix.manylinux}}-${{matrix.platform.arch}}
       - name: Install Rust (${{matrix.rust}})
         uses: actions-rs/toolchain@v1

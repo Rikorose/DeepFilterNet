@@ -51,15 +51,8 @@ jobs:
 
       # Rust installation
       - name: Rust cache
-        uses: actions/cache@v2
+        uses: Swatinem/rust-cache@v1
         with:
-          path: |
-            ~/.rustup/
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
       - name: Install Rust
         uses: actions-rs/toolchain@v1
