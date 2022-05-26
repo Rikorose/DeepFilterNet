@@ -100,6 +100,7 @@ jobs:
         id: cache
         with:
           path: |
+            ~/.cache/DeepFilterNet
             .venv
             DeepFilterNet/.venv
           key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/pyproject.toml') }}
