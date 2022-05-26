@@ -266,7 +266,7 @@ def maybe_download_model(name: str = "DeepFilterNet") -> str:
     os.makedirs(cache_dir, exist_ok=True)
     if name.endswith(".zip"):
         name = name.removesuffix(".zip")
-    url = f"https://github.com/Rikorose/DeepFilterNet/raw/feat_download_model/models/{name}"
+    url = f"https://github.com/Rikorose/DeepFilterNet/raw/main/models/{name}"
     download_file(url + ".zip", cache_dir, extract=True)
     return os.path.join(cache_dir, name)
 
