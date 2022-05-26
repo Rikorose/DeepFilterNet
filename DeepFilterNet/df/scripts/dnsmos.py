@@ -9,7 +9,7 @@ from torch import Tensor
 
 from df.enhance import load_audio
 from df.evaluation_utils import as_numpy, dnsmos_api_req
-from df.utils import download_file
+from df.utils import download_file, get_cache_dir
 
 URL_P808 = "https://dnsmos.azurewebsites.net/score"
 URL_P835 = "https://dnsmos.azurewebsites.net/v1/dnsmosp835/score"
@@ -103,9 +103,7 @@ def isclose(a, b) -> bool:
 
 
 def download_onnx_models():
-    from appdirs import user_cache_dir
-
-    cache_dir = user_cache_dir("DeepFilterNet")
+    cache_dir = get_cache_dir()
     if not os.path.isdir(cache_dir):
         os.makedirs(cache_dir)
     bak_ovr = os.path.join(cache_dir, "bak_ovr.onnx")
