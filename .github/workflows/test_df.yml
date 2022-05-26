@@ -96,9 +96,6 @@ jobs:
           poetry --version
           poetry install --no-interaction -E dnsmos -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
-      - name: Install Octave
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends octave
 
       # Run tests
       - name: Run DF Test
