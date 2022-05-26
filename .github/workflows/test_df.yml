@@ -65,13 +65,13 @@ jobs:
           echo "EXTRA=-E soundfile" >> $GITHUB_ENV
 
       # Rust installation
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with: {profile: "minimal", toolchain: "stable"}
       - name: Rust cache
         uses: Swatinem/rust-cache@v1
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with: {profile: "minimal", toolchain: "stable"}
 
       # Python and poetry install
       - name: Install Python

@@ -40,10 +40,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v1
-        with:
-          key: ${{matrix.manylinux}}-${{matrix.platform.arch}}
       - name: Install Rust (${{matrix.rust}})
         uses: actions-rs/toolchain@v1
         with:
@@ -51,6 +47,10 @@ jobs:
           toolchain: ${{matrix.rust}}
           override: true
           target: ${{matrix.platform.target}}
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v1
+        with:
+          key: ${{matrix.manylinux}}-${{matrix.platform.arch}}
       - name: Set Python Version
         run: |
           echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
