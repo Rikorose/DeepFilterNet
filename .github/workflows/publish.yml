@@ -88,10 +88,6 @@ jobs:
           override: true
           target: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v1
-        with:
-          key: ${{ matrix.target }}
-
       - name: Build wheel unix
         if: matrix.os != 'windows-latest'
         run: |
@@ -103,7 +99,7 @@ jobs:
         run: |
           mkdir -p target/wheels target/repaired
           maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe -o target/wheels/
-          pip install delvewheel
+          pip install delvewheel wheel
           delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
           mv target/repaired/* target/wheels/
 
@@ -156,5 +152,5 @@ jobs:
           USER: ${{ secrets.PYPI_USER }}
           PW: ${{ secrets.PYPI_PW }}
         run: |
-          maturin upload -u "$USER" -p "$PW" libdf-wheels/*"DF_VERSION"*
-          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*"DF_VERSION"*
+          maturin upload -u "$USER" -p "$PW" libdf-wheels/*"$DF_VERSION"*
+          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*"$DF_VERSION"*
