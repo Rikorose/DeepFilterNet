@@ -1,6 +1,7 @@
 name: Test PyPi
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["publish-pypi-wheels"]
     branches: [main]
