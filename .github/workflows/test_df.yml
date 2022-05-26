@@ -45,7 +45,7 @@ jobs:
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
       - name: should it be skipped?
         env:
-          COMMIT_FILTER: 'v[0-9]+.[0-9]+.[0-9]+'
+          COMMIT_FILTER: '^v[0-9]+.[0-9]+.[0-9]+$'
         run: |
           readonly local last_commit_log=$(git log -1 --pretty=format:"%s")
           echo "last commit log: $last_commit_log"
