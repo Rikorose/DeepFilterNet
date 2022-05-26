@@ -29,21 +29,20 @@ python = ">=3.7,<4.0"
 typing_extensions = "^4.0"
 numpy = ">=1.20,<2.0"
 loguru = ">=0.5"
+appdirs = "^1.4"
+requests = "^2.27"
 soundfile = { version = "^0.10", optional = true }
 icecream = { version = ">=2,<3", optional = true }
 pystoi = { version = "^0.3", optional = true }
 pesq = { version = "^0.0.3", optional = true }
 scipy = { version = "^1", optional = true }
-requests = { version = "^2.27", optional = true }
-appdirs = { version = "^1.4", optional = true }
 onnxruntime = { version = "^1.11", optional = true }
 
 [tool.poetry.extras]
 train = ["deepfilterdataloader", "icecream"]
 eval = ["pystoi", "pesq", "scipy"]
 soundfile = ["soundfile"]
-dnsmos = ["requests"]
-dnsmos-local = ["appdirs", "onnxruntime", "requests"]
+dnsmos-local = ["onnxruntime"]
 
 [tool.poetry.scripts]
 deepFilter = "df.enhance:run"

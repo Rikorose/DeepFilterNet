@@ -228,3 +228,30 @@ def detach_hidden(hidden: Any) -> Any:
     vector.
     """
     return apply_to_tensor(hidden, Tensor.detach)
+
+
+def download_file(url: str, download_dir: str, extract: bool = False):
+    import shutil
+    import zipfile
+
+    import requests
+
+    local_filename = url.split("/")[-1]
+    logger.info(f"Downloading file: {local_filename}")
+    local_filename = os.path.join(download_dir, local_filename)
+    with requests.get(url, stream=True) as r:
+        if r.status_code >= 400:
+            logger.error(f"Error downloading file ({r.status_code}): {r.reason}")
+            exit(1)
+        with open(local_filename, "wb") as f:
+            shutil.copyfileobj(r.raw, f)
+    if extract:
+        if os.path.splitext(local_filename)[1] != ".zip":
+            logger.error("File not supported. Cannot extract.")
+            exit(1)
+
+        with zipfile.ZipFile(local_filename) as zf:
+            zf.extractall(download_dir)
+        shutil.rmtree(local_filename)
+
+    return local_filename

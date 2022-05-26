@@ -1,16 +1,15 @@
 import argparse
 import os
-import shutil
 from typing import List, Tuple
 
 import numpy as np
 import numpy.polynomial.polynomial as poly
-import requests
 import torch
 from torch import Tensor
 
 from df.enhance import load_audio
 from df.evaluation_utils import as_numpy, dnsmos_api_req
+from df.utils import download_file
 
 URL_P808 = "https://dnsmos.azurewebsites.net/score"
 URL_P835 = "https://dnsmos.azurewebsites.net/v1/dnsmosp835/score"
@@ -154,17 +153,6 @@ def dnsmos_local(audio: Tensor, sig: str, bak_ovr: str) -> Tuple[float, float, f
     bak = np.mean(predicted_mos_bak_seg)
     ovr = np.mean(predicted_mos_ovr_seg)
     return sig, bak, ovr
-
-
-def download_file(url, download_dir: str):
-    local_filename = url.split("/")[-1]
-    print(local_filename)
-    local_filename = os.path.join(download_dir, local_filename)
-    with requests.get(url, stream=True) as r:
-        with open(local_filename, "wb") as f:
-            shutil.copyfileobj(r.raw, f)
-
-    return local_filename
 
 
 if __name__ == "__main__":
