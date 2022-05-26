@@ -92,14 +92,17 @@ jobs:
       - name: Build wheel unix
         if: matrix.os != 'windows-latest'
         run: |
-          maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python${{ matrix.python.version }}
+          mkdir -p target/wheels
+          maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python${{ matrix.python.version }} -o target/wheels/
 
       - name: Build wheel windows
         if: matrix.os == 'windows-latest'
         run: |
-          maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe
+          mkdir -p target/wheels target/repaired
+          maturin build --release --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe -o target/wheels/
           pip install delvewheel
-          delvewheel repair target/wheels/DeepFilterLib-*.whl
+          delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
+          mv target/repaired/* target/wheels/
 
       - uses: actions/upload-artifact@v2
         with:
