@@ -110,7 +110,7 @@ jobs:
         working-directory: DeepFilterNet
         run: |
           poetry --version
-          poetry install --no-interaction -E dnsmos -E eval ${{env.EXTRA}}
+          poetry install --no-interaction -E eval ${{env.EXTRA}}
           poetry run poe install-torch-cpu
 
       # Run tests
