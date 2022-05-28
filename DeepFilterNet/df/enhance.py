@@ -97,7 +97,7 @@ def init_df(
         use_default_model = True
     if model_base_dir is None or use_default_model:
         use_default_model = True
-        model_base_dir = ic(maybe_download_model(default_model))
+        model_base_dir = maybe_download_model(default_model)
 
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
@@ -263,12 +263,17 @@ def maybe_download_model(name: str = "DeepFilterNet") -> str:
         - base_dir: Return the model base directory as string.
     """
     cache_dir = get_cache_dir()
-    os.makedirs(cache_dir, exist_ok=True)
     if name.endswith(".zip"):
         name = name.removesuffix(".zip")
+    model_dir = os.path.join(cache_dir, name)
+    if os.path.isfile(os.path.join(model_dir, "config.ini")) or os.path.isdir(
+        os.path.join(model_dir, "checkpoints")
+    ):
+        return model_dir
+    os.makedirs(cache_dir, exist_ok=True)
     url = f"https://github.com/Rikorose/DeepFilterNet/raw/main/models/{name}"
     download_file(url + ".zip", cache_dir, extract=True)
-    return os.path.join(cache_dir, name)
+    return model_dir
 
 
 def parse_epoch_type(value: str) -> Union[int, str]:
