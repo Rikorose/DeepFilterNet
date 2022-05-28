@@ -75,9 +75,8 @@ def _get_metric(name: str, sr: int):
     return METRICS[name]
 
 
-def _load_model(df_dir: str, model_n: str):
-    model_base_dir = os.path.join(df_dir, "pretrained_models", model_n)
-    model, df_state, _ = init_df(model_base_dir, config_allow_defaults=True)
+def _load_model(model_n: str):
+    model, df_state, _ = init_df(model_n, config_allow_defaults=True)
     logger.info(f"Loaded model {model_n}")
     return model, df_state
 
@@ -88,7 +87,7 @@ class TestDfModels(unittest.TestCase):
         torch.set_printoptions(precision=14, linewidth=120)
         os.makedirs("out", exist_ok=True)
         cls.df_dir = os.path.abspath(os.path.join(os.path.dirname(df.__file__), os.pardir))
-        cls.models = {m: _load_model(cls.df_dir, m) for m in TARGET_METRICS.keys()}
+        cls.models = {m: _load_model(m) for m in TARGET_METRICS.keys()}
         return cls
 
     def _test_model(

@@ -238,7 +238,6 @@ def download_file(url: str, download_dir: str, extract: bool = False):
     import requests
 
     local_filename = url.split("/")[-1]
-    logger.info(f"Downloading file: {local_filename}")
     local_filename = os.path.join(download_dir, local_filename)
     with requests.get(url, stream=True) as r:
         if r.status_code >= 400:
