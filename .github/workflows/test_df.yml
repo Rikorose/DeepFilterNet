@@ -23,15 +23,15 @@ jobs:
       matrix:
         python: ["3.9"]
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-        is_pr:
-          - ${{ github.event_name == 'pull_request' }}
-        include:
-          - os: "ubuntu-latest"
-        exclude:
-          - os: "macos-latest"
-            is_pr: true  # Run only linux on PR
-          - os: "windows-latest"
-            is_pr: true  # Run only linux on PR
+        # is_pr:
+        #   - ${{ github.event_name == 'pull_request' }}
+        # include:
+        #   - os: "ubuntu-latest"
+        # exclude:
+        #   - os: "macos-latest"
+        #     is_pr: true  # Run only linux on PR
+        #   - os: "windows-latest"
+        #     is_pr: true  # Run only linux on PR
     defaults:
       run:
         shell: bash
