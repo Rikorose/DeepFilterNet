@@ -1,9 +1,15 @@
-[tool.poetry]
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
 name = "DeepFilterNet"
 version = "0.2.5-pre"
 description = "Noise supression using deep filtering"
+readme = "../README.md"
 authors = ["Hendrik Schröter"]
 repository = "https://github.com/Rikorose/DeepFilterNet"
+requires-python = ">=3.7"
 keywords = ["noise reduction", "neural network"]
 classifiers = [
   "Topic :: Multimedia :: Sound/Audio :: Speech",
@@ -15,28 +21,31 @@ classifiers = [
 ]
 license = "MIT"
 packages = [{ include = "df" }]
-include = [
-  { path = "pretrained_models/DeepFilterNet/config.ini" },
-  { path = "pretrained_models/DeepFilterNet/checkpoints/*" },
-  { path = "pretrained_models/DeepFilterNet2/config.ini" },
-  { path = "pretrained_models/DeepFilterNet2/checkpoints/*" },
-]
+# dependencies = [
+#   "numpy>=1.20",
+#   "loguru=0.5",
+#   "appdirs=1.4",
+#   "requests=2.27",
+#   "deepfilterlib=2.27",
+# ]
 
-[tool.poetry.dependencies]
+[project.dependencies]
 deepfilterlib = { path = "../pyDF/" }
-deepfilterdataloader = { path = "../pyDF-data/", optional = true }
 python = ">=3.7,<4.0"
 typing_extensions = "^4.0"
 numpy = ">=1.20,<2.0"
 loguru = ">=0.5"
 appdirs = "^1.4"
 requests = "^2.27"
-soundfile = { version = "^0.10", optional = true }
-icecream = { version = ">=2,<3", optional = true }
-pystoi = { version = "^0.3", optional = true }
-pesq = { version = "^0.0.3", optional = true }
-scipy = { version = "^1", optional = true }
-onnxruntime = { version = "^1.11", optional = true }
+
+[project.optional-dependences]
+deepfilterdataloader = { path = "../pyDF-data/", optional = true }
+soundfile = "^0.10"
+icecream = ">=2,<3"
+pystoi = "^0.3"
+pesq = "^0.0.3"
+scipy = "^1"
+onnxruntime = "^1.11"
 
 [tool.poetry.extras]
 train = ["deepfilterdataloader", "icecream"]
@@ -44,7 +53,7 @@ eval = ["pystoi", "pesq", "scipy"]
 soundfile = ["soundfile"]
 dnsmos-local = ["onnxruntime"]
 
-[tool.poetry.scripts]
+[project.scripts]
 deepFilter = "df.enhance:run"
 
 [tool.poetry.dev-dependencies]
@@ -54,10 +63,6 @@ pre-commit = "^2.17"
 [tool.poe.tasks]
 install-torch-cuda11 = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
 install-torch-cpu = "python -m pip install torch==1.11.0 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cpu/"
-
-[build-system]
-requires = ["poetry>=1.0"]
-build-backend = "poetry.masonry.api"
 
 [tool.black]
 line-length = 100
