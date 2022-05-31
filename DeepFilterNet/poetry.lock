@@ -400,7 +400,7 @@ python-versions = ">=3.6"
 name = "typing-extensions"
 version = "4.2.0"
 description = "Backported and Experimental Type Hints for Python 3.7+"
-category = "main"
+category = "dev"
 optional = false
 python-versions = ">=3.7"
 
@@ -468,7 +468,7 @@ train = ["deepfilterdataloader", "icecream"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.7,<4.0"
-content-hash = "cb87e326e0b8324e0d9647387ff986b072bcede6810571d041d73390693886d9"
+content-hash = "e03fde8f83a0c10a5a6917a2186a6a29a3798021985c9006ecdfb9fd883a14ba"
 
 [metadata.files]
 appdirs = [
