@@ -66,7 +66,7 @@ jobs:
 
       - name: Install Python
         if: matrix.os != 'ubuntu-latest'
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python.version }}
       - name: Setup Python manylinux
@@ -112,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.7", "3.8", "3.9", "3.10"]
+        python-version: ["3.10"]  # wheel will be independent of python version
     runs-on: ubuntu-18.04
     steps:
       - uses: actions/checkout@v2

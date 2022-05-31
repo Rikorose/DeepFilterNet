@@ -92,7 +92,10 @@ jobs:
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Update Path for Windows
         if: ${{ matrix.os == 'windows-latest' }}
-        run: echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
+        run: |
+          echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
+          which python
+          python --version
       - name: Configure poetry
         run: poetry config virtualenvs.in-project true
       - name: Set venv up cache
@@ -110,7 +113,8 @@ jobs:
         working-directory: DeepFilterNet
         run: |
           poetry --version
-          poetry install --no-interaction -E eval -E dnsmos-local ${{env.EXTRA}}
+          poetry install -vvv --no-interaction -E eval -E dnsmos-local ${{env.EXTRA}}
+          echo "Installing pytorch"
           poetry run poe install-torch-cpu
 
       # Run tests
