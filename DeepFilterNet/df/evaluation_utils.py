@@ -3,7 +3,6 @@ import json
 import os
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from copy import deepcopy
 from functools import partial
 from multiprocessing.dummy import Pool as DummyPool
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -110,7 +109,7 @@ def evaluation_loop(
         for noisyfn, cleanfn in log_progress(
             zip(noisy_files, clean_files), len(noisy_files), log_percent
         ):
-            noisy, meta = load_audio(noisyfn, sr)
+            noisy, _ = load_audio(noisyfn, sr)
             clean, _ = load_audio(cleanfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
             enh = enhance(model, df_state, noisy)[0]
@@ -217,7 +216,7 @@ def evaluation_loop_dns(
     with DummyPool(processes=max(1, n_workers)) as pool:
         metrics: List[NoisyMetric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
         for noisyfn in log_progress(noisy_files, len(noisy_files), log_percent):
-            noisy, meta = load_audio(noisyfn, sr)
+            noisy, _ = load_audio(noisyfn, sr)
             logger.debug(f"Processing {os.path.basename(noisyfn)}")
             enh = enhance(model, df_state, noisy)[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
@@ -304,8 +303,8 @@ class Metric(ABC):
 
     def maybe_resample(self, x) -> Tensor:
         if self.resampler is not None:
-            x = self.resampler.forward(torch.as_tensor(x))
-        return deepcopy(x)
+            x = self.resampler.forward(torch.as_tensor(x).clone())
+        return x
 
     def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
         assert clean.shape == enhanced.shape, f"{clean.shape}, {enhanced.shape}, {fn}"
@@ -589,8 +588,7 @@ def dnsmos_api_req(url: str, key: str, audio: Tensor, verbose=False) -> Dict[str
     input_data = json.dumps(data)
 
     tries = 0
-    e = ""
-    while tries < 20:
+    while True:
         try:
             resp = requests.post(url, data=input_data, headers=headers, timeout=1000)
             score_dict = resp.json()
@@ -601,8 +599,9 @@ def dnsmos_api_req(url: str, key: str, audio: Tensor, verbose=False) -> Dict[str
             if verbose:
                 print(e)
             tries += 1
-            continue
-    raise ValueError(f"Error gettimg mos: {e}")
+            if tries < 20:
+                continue
+            raise ValueError(f"Error gettimg mos {e}")
 
 
 def as_numpy(x) -> np.ndarray:
