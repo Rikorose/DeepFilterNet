@@ -20,7 +20,7 @@ COEFS_BAK = np.array([-3.733460011101781717e00, 2.700114234092929166e00, -1.7213
 COEFS_OVR = np.array([8.924546794696789354e-01, 6.609981731940616223e-01, 7.600269530243179694e-02])
 SR = 16000
 
-ort_providers = [
+ort_providers_all = [
     (
         "CUDAExecutionProvider",
         {
@@ -33,6 +33,9 @@ ort_providers = [
     ),
     "CPUExecutionProvider",
 ]
+ort_providers_cpu = [
+    "CPUExecutionProvider",
+]
 
 __a_tol = 1e-4
 __r_tol = 1e-4
@@ -41,6 +44,7 @@ __r_tol = 1e-4
 def main(args):
     file: str = args.file
     target_value: List[float] = args.target_value
+    verbose = args.debug
     audio = load_audio(file, sr=SR, verbose=False)[0].squeeze(0)
     if args.local:
         assert args.method == "p835"
@@ -55,10 +59,10 @@ def main(args):
                 "or via `DNS_AUTH_KEY` os environmental vairable."
             )
         if args.method == "p808":
-            dnsmos = [dnsmos_api_req(URL_P808, key, audio)["mos"]]
+            dnsmos = [dnsmos_api_req(URL_P808, key, audio, verbose=verbose)["mos"]]
         else:
             dnsmos = [
-                float(dnsmos_api_req(URL_P835, key, audio)[c])
+                float(dnsmos_api_req(URL_P835, key, audio, verbose=verbose)[c])
                 for c in ("mos_sig", "mos_bak", "mos_ovr")
             ]
     for d in dnsmos:
@@ -118,8 +122,12 @@ def download_onnx_models():
 def dnsmos_local(audio: Tensor, sig: str, bak_ovr: str) -> Tuple[float, float, float]:
     import onnxruntime as ort
 
-    session_sig = ort.InferenceSession(sig, providers=ort_providers)
-    session_bak_ovr = ort.InferenceSession(bak_ovr, providers=ort_providers)
+    try:
+        session_sig = ort.InferenceSession(sig, providers=ort_providers_all)
+        session_bak_ovr = ort.InferenceSession(bak_ovr, providers=ort_providers_all)
+    except ValueError:
+        session_sig = ort.InferenceSession(sig, providers=ort_providers_cpu)
+        session_bak_ovr = ort.InferenceSession(bak_ovr, providers=ort_providers_cpu)
     input_length = 9
 
     num_hops = int(np.floor(len(audio) / SR) - input_length) + 1
@@ -155,9 +163,10 @@ def dnsmos_local(audio: Tensor, sig: str, bak_ovr: str) -> Tuple[float, float, f
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", "-m", default="p808", choices=["p808", "p835"])
+    parser.add_argument("--method", "-m", default="p835", choices=["p808", "p835"])
     parser.add_argument("--local", "-l", action="store_true")
     parser.add_argument("--api-key", "-k", type=str, default=None)
+    parser.add_argument("--debug", "-d", "-v", action="store_true")
     parser.add_argument("--target-value", "-t", type=float, nargs="*")
     parser.add_argument("file", type=str, help="Path to audio file for DNSMOS evaluation.")
     args = parser.parse_args()
