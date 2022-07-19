@@ -20,6 +20,7 @@ from torchaudio.transforms import Resample
 
 from df.enhance import df_features, load_audio, save_audio
 from df.logger import log_metrics
+from df.model import ModelParams
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device, get_resample_params, resample
 from libdf import DF
@@ -61,11 +62,12 @@ def log_progress(iterable, total: Optional[int] = None, log_freq_percent=25, des
 
 
 @torch.no_grad()
-def enhance(model, df_state, audio, f_hp_cutoff: Optional[int] = None):
+def enhance(model, df_state: DF, noisy: Tensor, f_hp_cutoff: Optional[int] = None):
     model.eval()
     if hasattr(model, "reset_h0"):
         model.reset_h0(batch_size=1, device=get_device())
-    spec, erb_feat, spec_feat = df_features(audio, df_state, get_device())
+    nb_df = getattr(model, "nb_df", getattr(model, "df_bins", ModelParams().nb_df))
+    spec, erb_feat, spec_feat = df_features(noisy, df_state, nb_df, device=get_device())
     spec = model(spec, erb_feat, spec_feat)[0].squeeze(0)  # [C, T, F, 2]
     audio = df_state.synthesis(as_complex(spec).cpu().numpy())
     if f_hp_cutoff is not None:
