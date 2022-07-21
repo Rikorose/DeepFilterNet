@@ -1,12 +1,11 @@
-use std::mem::MaybeUninit;
+use std::collections::BTreeMap;
 use std::ops::Range;
 #[cfg(feature = "dataset_timings")]
 use std::time::Instant;
 
 use ndarray::{concatenate, prelude::*, Slice};
-use ndarray_rand::rand::{seq::SliceRandom, Rng};
+use ndarray_rand::rand::{prelude::IteratorRandom, seq::SliceRandom, Rng};
 use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
-use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
 use self::BiquadFilters::*;
@@ -27,8 +26,6 @@ pub enum AugmentationError {
     NotInitialized { transform: String, msg: String },
     #[error("DF error: {0}")]
     DfError(String),
-    #[error("Resample Error")]
-    ResampleError(#[from] rubato::ResampleError),
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Wav Reader Error")]
@@ -187,7 +184,6 @@ fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32;
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
     let amp = 10f32.powf(gain_db / 40.);
     let alpha = w0.sin() / 2. / q_factor;
-    dbg!(amp, alpha);
 
     let b0 = amp * ((amp + 1.) - (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha);
     let b1 = 2. * amp * ((amp - 1.) - (amp + 1.) * w0.cos());
@@ -195,7 +191,7 @@ fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32;
     let a0 = (amp + 1.) + (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha;
     let a1 = -2. * ((amp - 1.) + (amp + 1.) * w0.cos());
     let a2 = (amp + 1.) + (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha;
-    dbg!([b0, b1, b2], [a0, a1, a2])
+    ([b0, b1, b2], [a0, a1, a2])
 }
 pub fn low_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
@@ -327,56 +323,6 @@ impl Transform for RandBiquadFilter {
     }
 }
 
-pub(crate) fn low_pass_resample(x: &Array2<f32>, cut_off: usize, sr: usize) -> Result<Array2<f32>> {
-    let x = resample(x, sr, cut_off * 2, None)?;
-    let x = resample(&x, cut_off * 2, sr, None)?;
-    Ok(x)
-}
-
-pub(crate) fn resample(
-    x: &Array2<f32>,
-    sr: usize,
-    new_sr: usize,
-    chunk_size: Option<usize>,
-) -> Result<Array2<f32>> {
-    let channels = x.len_of(Axis(0));
-    let len = x.len_of(Axis(1));
-    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size.unwrap_or(1024), channels)
-        .expect("Could not initialize resampler");
-    let chunk_size = resampler.input_frames_max();
-    let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize;
-    let chunk_size_out = (chunk_size as u64 * new_sr as u64 / sr as u64) as usize;
-    let mut out = Array2::uninit((channels, chunk_size_out * num_chunks));
-    let mut inbuf = vec![vec![0f32; chunk_size]; channels];
-    let mut outbuf = resampler.output_buffer_allocate();
-    let mut i = 0;
-    for (chunk, mut out_chunk) in x
-        .axis_chunks_iter(Axis(1), chunk_size)
-        .zip(out.axis_chunks_iter_mut(Axis(1), chunk_size_out))
-    {
-        for (chunk_ch, buf_ch) in chunk.axis_iter(Axis(0)).zip(inbuf.iter_mut()) {
-            if chunk_ch.len() < chunk_size {
-                chunk_ch.assign_to(&mut buf_ch[..chunk_ch.len()]);
-                for b in buf_ch[chunk_ch.len()..].iter_mut() {
-                    *b = 0. // Zero pad
-                }
-            } else {
-                chunk_ch.assign_to(buf_ch);
-            }
-        }
-        resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
-        for (res_ch, mut out_ch) in outbuf.iter().zip(out_chunk.axis_iter_mut(Axis(0))) {
-            debug_assert_eq!(res_ch.len(), out_ch.len());
-            for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
-                *y = MaybeUninit::new(x);
-            }
-        }
-        i += 1;
-    }
-    assert_eq!(i, num_chunks);
-    Ok(unsafe { out.assume_init() })
-}
-
 #[derive(Clone)]
 pub struct RandResample {
     prob: f32,
@@ -421,7 +367,7 @@ impl Transform for RandResample {
         if new_sr == sr {
             return Ok(());
         }
-        let out = resample(x, sr, new_sr, Some(self.chunk_size))?;
+        let out = resample(x.view(), sr, new_sr, Some(self.chunk_size))?;
         let new_len = out.len_of(Axis(1));
         if new_len > len {
             x.append(Axis(1), Array2::zeros((ch, new_len - len)).view())?;
@@ -850,7 +796,7 @@ impl RandReverbSim {
         if self.prob_resample > rng.uniform(0f32, 1f32) {
             let new_sr: f32 = rng.uniform(0.8, 1.2) * self.sr as f32;
             let new_sr = ((new_sr / 500.).round() * 500.) as usize;
-            rir = resample(&rir, self.sr, new_sr, Some(512))?;
+            rir = resample(rir.view(), self.sr, new_sr, Some(512))?;
         }
         if self.prob_decay > rng.uniform(0f32, 1f32) {
             let rt60 = rng.uniform(0.2, 1.);
@@ -937,6 +883,110 @@ impl RandReverbSim {
     }
 }
 
+/// Implement a low pass filterbank in frequency domain. Adopted from audiomentations.
+/// Absorption coefs based on pyroomacoustics.
+///
+/// Absorption is given by:
+///
+///    `att = exp(- distance * absorption_coefficient)`
+pub(crate) struct AirAbsorptionAugmentation {
+    air_absorption: BTreeMap<String, [f32; 9]>,
+    center_freqs: [usize; 9],
+    distance_low: f32,
+    distance_high: f32,
+    prob: f32,
+    sr: usize,
+}
+/// Concat 3 slices into a Vec.
+pub fn concat3<T: Clone>(a: &[T], b: &[T], c: &[T]) -> Vec<T> {
+    [a, b, c].concat()
+}
+/// Linear interpolation between two points at x=0 and x=1
+fn interp_lin(x: f32, yvals: &[f32; 2]) -> f32 {
+    (1. - x) * yvals[0] + x * yvals[1]
+}
+impl AirAbsorptionAugmentation {
+    fn insert_coefs(map: &mut BTreeMap<String, [f32; 9]>, key: &str, scaled_coefs: [f32; 9]) {
+        map.insert(key.to_string(), scaled_coefs.map(|x| x * 1e-3));
+    }
+    pub fn new(sr: usize, prob: f32) -> Self {
+        let center_freqs = [125, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000];
+        let mut air_absorption = BTreeMap::new();
+        Self::insert_coefs(
+            &mut air_absorption,
+            "10C_30-50%",
+            [0.1, 0.2, 0.5, 1.1, 2.7, 9.4, 29.0, 91.5, 289.0],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "10C_50-70%",
+            [0.1, 0.2, 0.5, 0.8, 1.8, 5.9, 21.1, 76.6, 280.2],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "10C_70-90%",
+            [0.1, 0.2, 0.5, 0.7, 1.4, 4.4, 15.8, 58.0, 214.9],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "20C_30-50",
+            [0.1, 0.3, 0.6, 1.0, 1.9, 5.8, 20.3, 72.3, 259.9],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "20C_50-70%",
+            [0.1, 0.3, 0.6, 1.0, 1.7, 4.1, 13.5, 44.4, 148.7],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "20C_70-90%",
+            [0.1, 0.3, 0.6, 1.1, 1.7, 3.5, 10.6, 31.2, 93.8],
+        );
+        Self {
+            center_freqs,
+            air_absorption,
+            distance_low: 1.0,
+            distance_high: 20.0,
+            sr,
+            prob,
+        }
+    }
+    fn interp_atten(&self, atten_vals: &[f32], n_freqs: usize) -> Array1<f32> {
+        let atten_vals = concat3(&[atten_vals[0]], atten_vals, &[atten_vals[8]]);
+        let freqs = Array1::linspace(0., (self.sr / 2) as f32, n_freqs);
+        let mut atten_vals_interp = Array1::zeros(n_freqs);
+        let center_freqs = concat3(&[0], &self.center_freqs, &[self.sr / 2]);
+        let mut i = 0;
+        for (c, a) in center_freqs.windows(2).zip(atten_vals.windows(2)) {
+            let (c0, c1) = (c[0] as f32, c[1] as f32);
+            let (a0, a1) = (a[0] as f32, a[1] as f32);
+            while i < n_freqs && freqs[i] <= c1 {
+                let x = (freqs[i] - c1) / (c0 - c1);
+                atten_vals_interp[i] = a0 * x + a1 * (1. - x);
+                i += 1;
+            }
+        }
+        atten_vals_interp
+    }
+    pub fn apply(&self, spec: &mut Array3<Complex32>) -> Result<()> {
+        // Spec shape: [C, T, F]
+        let mut rng = thread_rng()?;
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
+            return Ok(());
+        }
+        let d = rng.uniform_inclusive(self.distance_low, self.distance_high);
+        let coefs = self.air_absorption.values().into_iter().choose(&mut rng).unwrap();
+        let atten_vals = coefs.map(|c| (-d * c).exp());
+        dbg!(d, coefs, atten_vals);
+        let n_freqs = spec.len_of(Axis(2));
+        let atten_vals = self.interp_atten(&atten_vals, n_freqs);
+        for (mut f, a) in spec.axis_iter_mut(Axis(2)).zip(atten_vals) {
+            f.mapv_inplace(|x| x.scale(a));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Once;
@@ -980,24 +1030,6 @@ mod tests {
         let rand_resample = RandResample::new(1., sr as usize, 0.8, 1.2, 1024);
         rand_resample.transform(&mut test_sample).unwrap();
         write_wav_iter("../out/resampled.wav", test_sample.iter(), sr, ch)?;
-        Ok(())
-    }
-
-    #[test]
-    pub fn test_low_pass() -> Result<()> {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
-        let sr = reader.sr as u32;
-        let mut test_sample = reader.samples_arr2()?;
-        let mut test_sample2 = test_sample.clone();
-        let ch = test_sample.len_of(Axis(0)) as u16;
-        let f = 8000.;
-        let mut mem = [0.; 2];
-        let (b, a) = low_pass(f, 0.707, sr as usize);
-        biquad_inplace(&mut test_sample, &mut mem, &b, &a);
-        write_wav_iter("../out/lowpass.wav", test_sample.iter(), sr, ch)?;
-        test_sample2 = low_pass_resample(&test_sample2, f as usize, sr as usize)?;
-        write_wav_iter("../out/lowpass_resample.wav", test_sample2.iter(), sr, ch)?;
         Ok(())
     }
 
@@ -1110,6 +1142,24 @@ mod tests {
         let mut s_filt = s_orig;
         biquad_filter(&mut s_filt, &b, &a);
         write_wav_iter("../out/filt_notch.wav", s_filt.iter(), sr as u32, ch)?;
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_air_absorption() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let sr = reader.sr;
+        let sample = reader.samples_arr2().unwrap();
+        let fft_size = sr / 50;
+        let hop_size = fft_size / 2;
+        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+        let mut x = stft(sample.view(), &mut state, false);
+        let airabs = AirAbsorptionAugmentation::new(sr, 1.0);
+        airabs.apply(&mut x).unwrap();
+        let sample = istft(x.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs.wav", sample.view(), sr as u32).unwrap();
         Ok(())
     }
 }

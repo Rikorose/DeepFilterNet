@@ -15,6 +15,7 @@ use std::time::SystemTime;
 #[cfg(feature = "flac")]
 use claxon;
 use hdf5::{types::VarLenUnicode, File};
+use ndarray::concatenate;
 use ndarray::{prelude::*, Slice};
 use ndarray_rand::rand::prelude::{IteratorRandom, SliceRandom};
 use rayon::prelude::*;
@@ -337,7 +338,6 @@ where
     T: Data,
 {
     pub speech: ArrayD<T>,
-    pub noise: ArrayD<T>,
     pub noisy: ArrayD<T>,
     pub feat_erb: Option<ArrayD<f32>>,
     pub feat_spec: Option<ArrayD<Complex32>>,
@@ -345,13 +345,11 @@ where
     pub snr: i8,
     pub gain: i8,
     pub idx: usize,
+    pub downsample_freq: Option<usize>,
 }
 impl Sample<f32> {
     fn get_speech_view(&self) -> Result<ArrayView2<f32>> {
         Ok(self.speech.view().into_dimensionality()?)
-    }
-    fn get_noise_view(&self) -> Result<ArrayView2<f32>> {
-        Ok(self.noise.view().into_dimensionality()?)
     }
     fn get_noisy_view(&self) -> Result<ArrayView2<f32>> {
         Ok(self.noisy.view().into_dimensionality()?)
@@ -363,9 +361,6 @@ impl Sample<f32> {
 impl Sample<Complex32> {
     fn get_speech_view(&self) -> Result<ArrayView3<Complex32>> {
         Ok(self.speech.view().into_dimensionality()?)
-    }
-    fn get_noise_view(&self) -> Result<ArrayView3<Complex32>> {
-        Ok(self.noise.view().into_dimensionality()?)
     }
     fn get_noisy_view(&self) -> Result<ArrayView3<Complex32>> {
         Ok(self.noisy.view().into_dimensionality()?)
@@ -427,6 +422,7 @@ pub struct DatasetBuilder {
     cache_valid: bool,
     cache_valid_max_gb: Option<f32>,
     num_threads: Option<usize>,
+    p_bandwidth_ext: Option<f32>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -450,6 +446,7 @@ impl DatasetBuilder {
             cache_valid: false,
             cache_valid_max_gb: None,
             num_threads: None,
+            p_bandwidth_ext: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -634,6 +631,7 @@ impl DatasetBuilder {
             reverb,
             seed,
             ds_len,
+            p_bandwidth_ext: self.p_bandwidth_ext,
         })
     }
     pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
@@ -703,6 +701,10 @@ impl DatasetBuilder {
         self.cache_valid_max_gb = max_gb;
         self
     }
+    pub fn bandwidth_extension(mut self, p: f32) -> Self {
+        self.p_bandwidth_ext = Some(p);
+        self
+    }
 }
 
 pub struct FftDataset {
@@ -742,11 +744,18 @@ impl Dataset<Complex32> for FftDataset {
             0
         };
         let sample: Sample<f32> = self.ds.get_sample(idx, seed)?;
+
+        // To frequency domain
         let nb_erb = self.nb_erb.unwrap_or(1);
-        let mut state = DFState::new(self.sr(), self.fft_size, self.hop_size, nb_erb, 1);
+        let sr = self.sr();
+        let mut state = DFState::new(sr, self.fft_size, self.hop_size, nb_erb, 1);
         let speech = stft(sample.get_speech_view()?, &mut state, false);
-        let noise = stft(sample.get_noise_view()?, &mut state, true);
-        let noisy = stft(sample.get_noisy_view()?, &mut state, true);
+        let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
+        if let Some(f) = sample.downsample_freq {
+            ext_bandwidth_spectral(&mut noisy, f, sr, Some(4));
+        }
+
+        // Feature calculation (normalization)
         let erb = if let Some(_b) = self.nb_erb {
             let mut erb = erb(&noisy.view(), true, &state.erb)?;
             if let Some(alpha) = self.norm_alpha {
@@ -767,7 +776,6 @@ impl Dataset<Complex32> for FftDataset {
         };
         let sample = Sample {
             speech: speech.into_dyn(),
-            noise: noise.into_dyn(),
             noisy: noisy.into_dyn(),
             feat_erb: erb,
             feat_spec: spec,
@@ -775,6 +783,7 @@ impl Dataset<Complex32> for FftDataset {
             gain: sample.gain,
             snr: sample.snr,
             idx: sample.idx,
+            downsample_freq: sample.downsample_freq,
         };
         #[cfg(feature = "cache")]
         if let Some(cache) = self.cache.as_ref() {
@@ -843,6 +852,7 @@ pub struct TdDataset {
     reverb: RandReverbSim, // Separate reverb transform that may be applied to both speech and noise
     seed: u64,
     ds_len: usize,
+    p_bandwidth_ext: Option<f32>, // Extend bandwidth via spectal translation
 }
 
 impl TdDataset {
@@ -884,7 +894,7 @@ impl TdDataset {
             }
         })?;
         if sr != self.sr {
-            x = resample(&x, sr, self.sr, None)?;
+            x = resample(x.view(), sr, self.sr, None)?;
             if let Some(l) = max_len {
                 if x.len_of(Axis(1)) > l {
                     x.slice_axis_inplace(Axis(1), Slice::from(0..l))
@@ -905,10 +915,16 @@ impl TdDataset {
         Ok(x)
     }
 
-    fn read_max_len(&self, idx: usize, key: &str) -> Result<Array2<f32>> {
+    fn read_max_len(
+        &self,
+        idx: usize,
+        key: &str,
+        max_samples: Option<usize>,
+    ) -> Result<Array2<f32>> {
         #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
-        let x = match self._read_from_hdf5(key, idx, Some(self.max_samples)) {
+        let max_samples = max_samples.unwrap_or(self.max_samples);
+        let x = match self._read_from_hdf5(key, idx, Some(max_samples)) {
             Err(e) => {
                 log::warn!(
                     "Error during {} read_max_len() for key '{}' from dataset {}: {:?}",
@@ -927,7 +943,7 @@ impl TdDataset {
                         self.ds_name(*sp_idx),
                         e_str
                     );
-                    self.read_max_len(*sp_idx, sp_key)?
+                    self.read_max_len(*sp_idx, sp_key, Some(max_samples))?
                 } else {
                     return Err(e);
                 }
@@ -943,7 +959,7 @@ impl TdDataset {
                 (Instant::now() - t0).as_millis()
             );
         }
-        debug_assert!(x.len_of(Axis(1)) <= self.max_samples);
+        debug_assert!(x.len_of(Axis(1)) <= max_samples);
         Ok(x)
     }
 
@@ -969,68 +985,64 @@ impl TdDataset {
     fn ds_codec(&self, idx: usize) -> Codec {
         self.hdf5_handles[idx].codec.clone().unwrap_or_default()
     }
-}
 
-impl Dataset<f32> for TdDataset {
-    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
-        #[cfg(feature = "dataset_timings")]
-        let t0 = Instant::now();
-        seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
-        let mut rng = thread_rng()?;
-        let (sp_idx, sp_key) = &self.sp_keys[idx];
-        let mut speech = self.read_max_len(*sp_idx, sp_key)?;
-        self.sp_augmentations.transform(&mut speech)?;
-        let mut max_freq = self.max_freq(*sp_idx)?;
-        while speech.len_of(Axis(1)) < self.max_sample_len()
-            && self.p_fill_speech > 0.0
-            && self.p_fill_speech > rng.uniform(0f32, 1f32)
-        {
-            // If too short, maybe sample another speech sample
-            let (sp_idx, sp_key) = &self.sp_keys.choose(&mut rng).unwrap();
-            let mut another_speech = self.read_max_len(*sp_idx, sp_key)?;
-            self.sp_augmentations.transform(&mut another_speech)?;
-            speech.append(Axis(1), another_speech.view())?;
-            max_freq = max_freq.min(self.max_freq(*sp_idx)?);
-        }
-        if speech.len_of(Axis(1)) > self.max_sample_len() {
-            speech.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
-        }
-        #[cfg(feature = "dataset_timings")]
-        let t_sp = Instant::now();
-        // Apply low pass to the noise as well
-        let noise_low_pass = if max_freq < self.sr / 2 {
-            Some(LpParam {
-                cut_off: max_freq,
-                sr: self.sr,
-            })
+    fn load_aug_speech(&self, idx: usize, rng: &mut SeededRng) -> Result<(Array2<f32>, usize)> {
+        let (mut sp_idx, mut sp_key) = self.sp_keys[idx].clone();
+        let mut max_freq = self.sr / 2;
+        let mut cur_len = 0;
+        let mut speech_samples = Vec::new();
+        // Used for bandwidth extension
+        let fft_size = 2048;
+        let mut state = if self.p_bandwidth_ext.is_some() {
+            Some(DFState::new(self.sr, fft_size, fft_size / 2, 1, 1))
         } else {
             None
         };
-        let mut ch = speech.len_of(Axis(0));
-        let mut len = speech.len_of(Axis(1));
-        if len > self.max_samples {
-            speech.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
-            len = speech.len_of(Axis(1));
-        }
-        if ch > 1 {
-            speech.slice_axis_inplace(Axis(0), Slice::from(..1));
-            ch = 1;
-        }
-        // Sample 2-5 noises and augment each
-        let n_noises = rng.uniform(2, 6);
-        let ns_ids = self.ns_keys.iter().choose_multiple(&mut rng, n_noises);
-        let mut noises = Vec::with_capacity(n_noises);
-        let mut noise_gains = Vec::with_capacity(n_noises);
-        for (ns_idx, ns_key) in &ns_ids {
-            // In 5% us a randomly generated noise signal instead of a real noise.
-            if let Some(ns) =
-                self.noise_generator.generate_random_noise(-2., 2., 1, self.max_samples)?
-            {
-                noises.push(ns);
-                noise_gains.push([-24, -12, -6, 0].choose(&mut rng).unwrap());
-                continue;
+        while cur_len < self.max_sample_len() {
+            // Read 10% more samples since augmentation might shorten the signal
+            let n_read = (self.max_samples as f32 * 1.1) as usize - cur_len;
+            let mut sample = self.read_max_len(sp_idx, &sp_key, Some(n_read))?;
+            if sample.len_of(Axis(0)) > 1 {
+                sample.slice_axis_inplace(Axis(0), Slice::from(0usize..1));
             }
-            let mut ns = match self.read_max_len(*ns_idx, ns_key) {
+            max_freq = max_freq.min(self.max_freq(sp_idx)?);
+            if self.p_bandwidth_ext.is_some() {
+                // Extend clean speech to make sure it covers the full spectrum
+                let mut spec = stft(sample.view(), state.as_mut().unwrap(), false);
+                let max_bin = estimate_bandwidth(spec.view(), 8., 2);
+                let n_bins = fft_size / 2 + 1;
+                // Extend bandwidth only if max 80% are missing.
+                if max_bin < n_bins && max_bin > (n_bins as f32 * 0.8) as usize {
+                    let f = max_bin * self.sr / 2 / n_bins;
+                    ext_bandwidth_spectral(&mut spec, f, self.sr, Some(16));
+                    sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
+                }
+            }
+            self.sp_augmentations.transform(&mut sample)?;
+            cur_len += sample.len_of(Axis(1));
+            speech_samples.push(sample);
+            (sp_idx, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+        }
+        let speech_views: Vec<ArrayView2<f32>> = speech_samples.iter().map(|s| s.view()).collect();
+        let mut speech = concatenate(Axis(1), speech_views.as_slice())?;
+        let len = speech.len_of(Axis(1));
+        if len > self.max_samples {
+            let start = rng.uniform(0, len - self.max_samples);
+            speech.slice_axis_inplace(Axis(1), Slice::from(start..(start + self.max_samples)))
+        }
+        Ok((speech, max_freq))
+    }
+
+    fn load_aug_noise(&self, rng: &mut SeededRng) -> Result<(Array2<f32>, f32)> {
+        // In 5% us a randomly generated noise signal instead of a real noise.
+        if let Some(ns) =
+            self.noise_generator.generate_random_noise(-2., 2., 1, self.max_samples)?
+        {
+            return Ok((ns, *[-24., -12., -6., 0.].choose(rng).unwrap()));
+        }
+        loop {
+            let (ns_idx, ns_key) = self.ns_keys.iter().choose(rng).unwrap();
+            let mut ns = match self.read_max_len(*ns_idx, ns_key, None) {
                 Err(e) => {
                     log::warn!("Error during noise reading get_sample(): {}", e);
                     continue;
@@ -1044,17 +1056,47 @@ impl Dataset<f32> for TdDataset {
             if ns.len_of(Axis(1)) > self.max_samples {
                 ns.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
             }
+            return Ok((ns, *self.gains.choose(rng).unwrap() as f32));
+        }
+    }
+}
+
+impl Dataset<f32> for TdDataset {
+    fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
+        seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
+        let mut rng = thread_rng()?;
+        let (mut speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
+        #[cfg(feature = "dataset_timings")]
+        let t_sp = Instant::now();
+        // Apply low pass to the noise as well
+        let mut noise_low_pass = if max_freq < self.sr / 2 {
+            Some(LpParam {
+                cut_off: max_freq,
+                sr: self.sr,
+            })
+        } else {
+            None
+        };
+        let ch = speech.len_of(Axis(0));
+        let len = speech.len_of(Axis(1));
+        // Sample 2-5 noises and augment each
+        let n_noises = rng.uniform(2, 6);
+        let mut noises = Vec::with_capacity(n_noises);
+        let mut noise_gains = Vec::with_capacity(n_noises);
+        for _ in 0..n_noises {
+            let (ns, gain) = self.load_aug_noise(&mut rng)?;
             noises.push(ns);
-            noise_gains.push(self.gains.choose(&mut rng).unwrap());
+            noise_gains.push(gain);
         }
         #[cfg(feature = "dataset_timings")]
         let t_ns = Instant::now();
-        let noise_gains_f32: Vec<f32> = noise_gains.iter().map(|x| **x as f32).collect();
         // Sample SNR and gain
         let &snr = self.snrs.choose(&mut rng).unwrap();
         let &gain = self.gains.choose(&mut rng).unwrap();
         // Truncate to speech len, combine noises and mix to noisy
-        let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains_f32.as_slice()))?;
+        let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains.as_slice()))?;
         // Optionally we may also introduce some distortions to the speech signal.
         // These distortions will be only present in the noisy mixture, with the aim to reconstruce
         // the original undistorted signal. Example distortions are reverberation, or clipping.
@@ -1073,14 +1115,31 @@ impl Dataset<f32> for TdDataset {
             self.sp_distortions.transform(&mut d)?;
             speech_distorted = Some(d);
         }
-        let (speech, noise, noisy) = mix_audio_signal(
-            speech,
-            speech_distorted,
-            noise,
-            snr as f32,
-            gain as f32,
-            noise_low_pass,
-        )?;
+        let mut downsample_freq = None;
+        if let Some(p) = self.p_bandwidth_ext {
+            if p > rng.uniform(0., 1.) {
+                let f_cut_off = *[8000, 10000, 12000, 16000, 20000, 22050]
+                    .iter()
+                    .filter(|&f| f < &max_freq)
+                    .choose(&mut rng)
+                    .unwrap();
+                let d = speech_distorted.unwrap_or_else(|| speech.clone());
+                let d = low_pass_resample(d.view(), f_cut_off, self.sr).unwrap();
+                speech_distorted = Some(d);
+                noise_low_pass = Some(LpParam {
+                    cut_off: f_cut_off,
+                    sr: self.sr,
+                });
+                downsample_freq = Some(f_cut_off)
+            }
+        }
+        if let Some(re) = noise_low_pass {
+            // Low pass filtering via resampling to match speech cut off frequency
+            noise = low_pass_resample(noise.view(), re.cut_off, re.sr)?;
+            noise.slice_axis_inplace(Axis(1), Slice::from(..len));
+        }
+        let (speech, _, noisy) =
+            mix_audio_signal(speech, speech_distorted, noise, snr as f32, gain as f32)?;
         #[cfg(feature = "dataset_timings")]
         if log::log_enabled!(log::Level::Trace) {
             let te = std::time::Instant::now();
@@ -1094,7 +1153,6 @@ impl Dataset<f32> for TdDataset {
         }
         Ok(Sample {
             speech: speech.into_dyn(),
-            noise: noise.into_dyn(),
             noisy: noisy.into_dyn(),
             feat_erb: None,
             feat_spec: None,
@@ -1102,6 +1160,7 @@ impl Dataset<f32> for TdDataset {
             snr,
             gain,
             idx,
+            downsample_freq,
         })
     }
 
@@ -1731,14 +1790,7 @@ fn mix_audio_signal(
     mut noise: Array2<f32>,
     snr_db: f32,
     gain_db: f32,
-    noise_resample: Option<LpParam>,
 ) -> Result<(Signal, Signal, Signal)> {
-    let len = clean.len_of(Axis(1));
-    if let Some(re) = noise_resample {
-        // Low pass filtering via resampling
-        noise = low_pass_resample(&noise, re.cut_off, re.sr)?;
-        noise.slice_axis_inplace(Axis(1), Slice::from(..len));
-    }
     // Apply gain to speech
     let g = 10f32.powf(gain_db / 20.);
     let mut clean_out = &clean * g;
@@ -1749,7 +1801,7 @@ fn mix_audio_signal(
     let mut mixture = clean_mix + &noise;
     // Guard against clipping
     let max = &([&clean_out, &noise, &mixture].iter().map(|x| find_max_abs(x.iter())))
-        .collect::<std::result::Result<Vec<f32>, crate::util::UtilsError>>()?;
+        .collect::<std::result::Result<Vec<f32>, crate::transforms::TransformError>>()?;
     let max = find_max(max)?;
     if (max - 1.) > 1e-10 {
         let f = 1. / (max + 1e-10);
@@ -1770,7 +1822,7 @@ mod tests {
 
     use super::*;
     use crate::util::seed_from_u64;
-    use crate::wav_utils;
+    use crate::wav_utils::*;
 
     static INIT: Once = Once::new();
 
@@ -1872,8 +1924,7 @@ mod tests {
             dbg!(key);
             assert!(hdf5_noise_keys().contains(key.as_str()));
             let mut samples_raw =
-                wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
-                    .samples_arr2()?;
+                ReadWav::new(&str::replace(key, "assets_", "../assets/"))?.samples_arr2()?;
             dbg!(samples_raw.shape());
             assert_eq!(hdf5.sample_len(key)?, samples_raw.len_of(Axis(1)));
             samples_raw.slice_axis_inplace(Axis(0), Slice::from(0..1));
@@ -1893,8 +1944,7 @@ mod tests {
             dbg!(key);
             assert!(hdf5_noise_keys().contains(key.as_str()));
             let mut samples_raw =
-                wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
-                    .samples_arr2()?;
+                ReadWav::new(&str::replace(key, "assets_", "../assets/"))?.samples_arr2()?;
             dbg!(samples_raw.shape());
             assert_eq!(dbg!(hdf5.sample_len(key)?), samples_raw.len_of(Axis(1)));
             samples_raw.slice_axis_inplace(Axis(0), Slice::from(0..1));
@@ -1903,7 +1953,7 @@ mod tests {
             assert_eq!(sample_hdf5.shape(), samples_raw.shape());
             assert!(dbg!(calc_snr_sx(samples_raw.iter(), sample_hdf5.iter())) > 25.);
             let filename = &str::replace(key, "assets_", "../out/").replace(".wav", "_vorbis.wav");
-            wav_utils::write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
+            write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
         }
         Ok(())
     }
@@ -1915,8 +1965,7 @@ mod tests {
             dbg!(key);
             assert!(hdf5_noise_keys().contains(key.as_str()));
             let mut samples_raw =
-                wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))?
-                    .samples_arr2()?;
+                ReadWav::new(&str::replace(key, "assets_", "../assets/"))?.samples_arr2()?;
             dbg!(samples_raw.shape());
             assert_eq!(hdf5.sample_len(key)?, samples_raw.len_of(Axis(1)));
             samples_raw.slice_axis_inplace(Axis(0), Slice::from(0..1));
@@ -1926,7 +1975,7 @@ mod tests {
             assert_eq!(sample_hdf5, samples_raw);
             assert!(dbg!(calc_snr_sx(samples_raw.iter(), sample_hdf5.iter())) > 100.);
             let filename = &str::replace(key, "assets_", "../out/").replace(".wav", "_flac.wav");
-            wav_utils::write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
+            write_wav_arr2(filename, sample_hdf5.view(), hdf5.sr.unwrap() as u32)?;
         }
         Ok(())
     }
@@ -1959,7 +2008,7 @@ mod tests {
         let sr = hdf5.sr.unwrap();
         let r = r.start * sr..r.end * sr;
         dbg!(&r);
-        let samples_raw = wav_utils::ReadWav::new(&str::replace(key, "assets_", "../assets/"))
+        let samples_raw = ReadWav::new(&str::replace(key, "assets_", "../assets/"))
             .unwrap()
             .samples_arr2()
             .unwrap()
@@ -1972,8 +2021,7 @@ mod tests {
             let filename =
                 &str::replace(basen, ".wav", &format!("_{}_{}_raw.wav", &r.start, &r.end));
             dbg!(hdf5.sample_len(key).unwrap());
-            wav_utils::write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32)
-                .unwrap();
+            write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32).unwrap();
             let dsn =
                 &str::replace(ds, "../assets/noise", "").replace('_', "").replace(".hdf5", "");
             let filename = &str::replace(
@@ -1982,8 +2030,7 @@ mod tests {
                 &format!("_{}_{}_{}.wav", &r.start, &r.end, dsn),
             );
             dbg!(&filename);
-            wav_utils::write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32)
-                .unwrap();
+            write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32).unwrap();
         }
         assert_eq!(samples_hdf5.shape(), samples_raw.shape());
         assert!(dbg!(calc_snr_sx(samples_raw.iter(), samples_hdf5.iter())) > snr);
@@ -2007,7 +2054,6 @@ mod tests {
                         noise.clone(),
                         snr,
                         gain,
-                        None,
                     )?;
                     assert_eq!(&c + &n, m);
                     dbg!(clean_rev.is_some(), gain, snr);
@@ -2035,6 +2081,34 @@ mod tests {
         Ok(())
     }
     #[test]
+    pub fn test_td_dataset() -> Result<()> {
+        seed_from_u64(0);
+        let sr = 48_000;
+        let dir = "../assets/";
+        let cfg = DatasetConfigJson::open("../assets/dataset.cfg").unwrap();
+        let mut ds = DatasetBuilder::new(dir, sr)
+            .dataset(cfg.split_config(Split::Train))
+            .bandwidth_extension(1.0)
+            .build_td_dataset()
+            .unwrap();
+        ds.generate_keys()?;
+        let mut rng = thread_rng()?;
+        let sample = ds.get_sample(rng.uniform(0, ds.len()), Some(0)).unwrap();
+        write_wav_arr2(
+            "../out/speech.wav",
+            sample.speech.view().into_dimensionality()?,
+            sr as u32,
+        )
+        .unwrap();
+        write_wav_arr2(
+            "../out/noisy.wav",
+            sample.noisy.view().into_dimensionality()?,
+            sr as u32,
+        )
+        .unwrap();
+        Ok(())
+    }
+    #[test]
     pub fn test_cached_valid_dataset() -> Result<()> {
         use std::collections::BTreeMap;
 
@@ -2047,7 +2121,7 @@ mod tests {
         let norm_alpha = None;
         let sr = 48000;
         let ds_dir = "../assets/";
-        for item in fs::read_dir(Path::new("../assets/"))? {
+        for item in fs::read_dir(Path::new(ds_dir))? {
             let item = item?.path();
             if item.is_dir()
                 && item.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")

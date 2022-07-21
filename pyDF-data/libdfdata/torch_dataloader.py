@@ -23,7 +23,7 @@ class Batch:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             assert len(b) == 10
-            speech, noise, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
+            speech, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
             if erb.size <= 1:
                 self.feat_erb = None
             if spec.size <= 1:
@@ -32,7 +32,6 @@ class Batch:
                 self.feat_erb = torch.from_numpy(erb)
                 self.feat_spec = torch.from_numpy(spec)
             self.speech = torch.from_numpy(speech)
-            self.noise = torch.from_numpy(noise)
             self.noisy = torch.from_numpy(noisy)
             self.lengths = torch.from_numpy(lengths.astype(np.int64)).long()
             self.snr = torch.from_numpy(snr)
@@ -80,6 +79,7 @@ class PytorchDataLoader:
         norm_alpha: Optional[float] = None,  # Exponential normalization decay for erb/spec_feat
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
+        p_bw_ext: Optional[float] = None,  # Percentage of bandwidth limited signal for extension
         overfit: bool = False,  # Overfit on one epoch
         cache_valid: bool = False,  # Cache validiation dataset
         seed: int = 0,
@@ -110,6 +110,7 @@ class PytorchDataLoader:
             nb_spec=nb_spec,
             norm_alpha=norm_alpha,
             p_reverb=p_reverb,
+            p_bw_ext=p_bw_ext,
             prefetch=prefetch_loader,
             drop_last=drop_last,
             overfit=overfit,

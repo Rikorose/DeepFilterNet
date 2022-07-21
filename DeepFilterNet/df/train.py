@@ -149,6 +149,7 @@ def main():
         nb_spec=p.nb_df,
         norm_alpha=get_norm_alpha(log=False),
         p_reverb=config("p_reverb", 0.2, float, section="train"),
+        p_bw_ext=config("p_bandwidth_ext", 0.0, float, section="train"),
         prefetch=config("NUM_PREFETCH_BATCHES", 32, int, section="train"),
         overfit=overfit,
         seed=seed,

@@ -62,7 +62,6 @@ struct _FdDataLoader {
 
 type FdBatch<'py> = (
     &'py PyArray4<Complex32>, // speech
-    &'py PyArray4<Complex32>, // noise
     &'py PyArray4<Complex32>, // noisy
     &'py PyArray4<f32>,       // feat_erb
     &'py PyArray4<Complex32>, // feat_spec
@@ -93,6 +92,7 @@ impl _FdDataLoader {
         num_threads: Option<usize>,
         prefetch: Option<usize>,
         p_reverb: Option<f32>,
+        p_bw_ext: Option<f32>,
         drop_last: Option<bool>,
         overfit: Option<bool>,
         cache_valid: Option<bool>,
@@ -129,6 +129,9 @@ impl _FdDataLoader {
         }
         if let Some(p_reverb) = p_reverb {
             ds_builder = ds_builder.prob_reverberation(p_reverb)
+        }
+        if let Some(p_bw_ext) = p_bw_ext {
+            ds_builder = ds_builder.bandwidth_extension(p_bw_ext)
         }
         if let Some(nb_freqs) = min_nb_erb_freqs {
             ds_builder = ds_builder.min_nb_erb_freqs(nb_freqs)
@@ -231,7 +234,6 @@ impl _FdDataLoader {
                 let spec = batch.feat_spec.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
                 Ok((
                     batch.speech.into_dimensionality().to_py_err()?.into_pyarray(py),
-                    batch.noise.into_dimensionality().to_py_err()?.into_pyarray(py),
                     batch.noisy.into_dimensionality().to_py_err()?.into_pyarray(py),
                     erb.into_dimensionality().to_py_err()?.into_pyarray(py),
                     spec.into_dimensionality().to_py_err()?.into_pyarray(py),

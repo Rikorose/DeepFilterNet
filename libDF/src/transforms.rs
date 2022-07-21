@@ -1,4 +1,7 @@
-use ndarray::prelude::*;
+use std::mem::MaybeUninit;
+
+use ndarray::{prelude::*, Slice};
+use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
 use crate::*;
@@ -9,8 +12,12 @@ type Result<T> = std::result::Result<T, TransformError>;
 pub enum TransformError {
     #[error("DF error: {0}")]
     DfError(String),
+    #[error("NaN detected")]
+    NaN,
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
+    #[error("Resample Error")]
+    ResampleError(#[from] rubato::ResampleError),
 }
 
 pub(crate) fn biquad_norm_inplace<'a, I>(xs: I, mem: &mut [f32; 2], b: &[f32; 2], a: &[f32; 2])
@@ -117,26 +124,43 @@ pub fn ifft_with_output(
     Ok(())
 }
 
+/// Short time Fourier transform.
+///
+/// Args:
+///   - `input`: array of shape (C, T)
+///   - `state`: DFState
+///   - `reset`: Whether to reset STFT buffers
+///
+/// Returns:
+///   - `spectrum`: complex array of shape (C, T', F)
 pub fn stft(input: ArrayView2<f32>, state: &mut DFState, reset: bool) -> Array3<Complex32> {
     if reset {
         state.reset();
     }
     let ch = input.len_of(Axis(0));
     let ttd = input.len_of(Axis(1));
-    let tfd = ttd / state.frame_size;
+    let n_pad = state.window_size / state.frame_size - 1;
+    let tfd = (ttd as f32 / state.frame_size as f32).ceil() as usize + n_pad;
     let mut output: Array3<Complex32> = Array3::zeros((ch, tfd, state.freq_size));
     for (input_ch, mut output_ch) in input.outer_iter().zip(output.outer_iter_mut()) {
         for (ichunk, mut ochunk) in input_ch
             .axis_chunks_iter(Axis(0), state.frame_size)
             .zip(output_ch.outer_iter_mut())
         {
-            frame_analysis(
-                ichunk.as_slice().unwrap(),
-                ochunk.as_slice_mut().unwrap(),
-                state,
-            )
+            let ichunk = ichunk.as_slice().unwrap();
+            if ichunk.len() == state.frame_size {
+                frame_analysis(ichunk, ochunk.as_slice_mut().unwrap(), state)
+            } else {
+                let pad = vec![0.; state.frame_size - ichunk.len()];
+                frame_analysis(
+                    &[ichunk, pad.as_slice()].concat(),
+                    ochunk.as_slice_mut().unwrap(),
+                    state,
+                )
+            };
         }
     }
+    output.slice_axis_inplace(Axis(1), Slice::from(n_pad..));
     output
 }
 
@@ -302,4 +326,368 @@ pub fn unit_norm(
         }
     }
     Ok(state)
+}
+
+/// Low pass by resampling the data to `f_cut_off*2`.
+pub(crate) fn low_pass_resample(
+    x: ArrayView2<f32>,
+    f_cut_off: usize,
+    sr: usize,
+) -> Result<Array2<f32>> {
+    let orig_len = x.len_of(Axis(1));
+    let x = resample(x, sr, f_cut_off * 2, None)?;
+    let mut x = resample(x.view(), f_cut_off * 2, sr, None)?;
+    x.slice_axis_inplace(Axis(1), Slice::from(0..orig_len));
+    Ok(x)
+}
+/// Resample using a synchronous resample from rubato
+pub(crate) fn resample(
+    x: ArrayView2<f32>,
+    sr: usize,
+    new_sr: usize,
+    chunk_size: Option<usize>,
+) -> Result<Array2<f32>> {
+    let channels = x.len_of(Axis(0));
+    let len = x.len_of(Axis(1));
+    let out_len = (len as f32 * new_sr as f32 / sr as f32).ceil() as usize;
+    let chunk_size = chunk_size.unwrap_or(2048);
+    let mut resampler = FftFixedInOut::<f32>::new(sr, new_sr, chunk_size, channels)
+        .expect("Could not initialize resampler");
+    let chunk_size = resampler.input_frames_max();
+    // One extra to get the remaining resampler state buffer
+    let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize + 1;
+    let chunk_size_out = resampler.output_frames_max();
+    let mut out = Array2::uninit((channels, chunk_size_out * num_chunks));
+    let mut inbuf = vec![vec![0f32; chunk_size]; channels];
+    let mut outbuf = resampler.output_buffer_allocate();
+    let mut out_chunk_iter = out.axis_chunks_iter_mut(Axis(1), chunk_size_out);
+    for chunk in x.axis_chunks_iter(Axis(1), chunk_size) {
+        for (chunk_ch, buf_ch) in chunk.axis_iter(Axis(0)).zip(inbuf.iter_mut()) {
+            if chunk_ch.len() == chunk_size {
+                chunk_ch.assign_to(buf_ch);
+            } else {
+                chunk_ch.assign_to(&mut buf_ch[..chunk_ch.len()]);
+                for b in buf_ch[chunk_ch.len()..].iter_mut() {
+                    *b = 0. // Zero pad
+                }
+            }
+        }
+        resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
+        for (res_ch, mut out_ch) in
+            outbuf.iter().zip(out_chunk_iter.next().unwrap().axis_iter_mut(Axis(0)))
+        {
+            debug_assert_eq!(res_ch.len(), out_ch.len());
+            for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
+                *y = MaybeUninit::new(x);
+            }
+        }
+    }
+    // Another round with zeros to get remaining state buffer
+    for in_ch in inbuf.iter_mut() {
+        in_ch.fill(0.)
+    }
+    resampler.process_into_buffer(&inbuf, &mut outbuf, None)?;
+    for (res_ch, mut out_ch) in
+        outbuf.iter().zip(out_chunk_iter.next().unwrap().axis_iter_mut(Axis(0)))
+    {
+        debug_assert_eq!(res_ch.len(), out_ch.len());
+        for (&x, y) in res_ch.iter().zip(out_ch.iter_mut()) {
+            *y = MaybeUninit::new(x);
+        }
+    }
+    let mut out = unsafe { out.assume_init() };
+    out.slice_axis_inplace(
+        Axis(1),
+        Slice::from(chunk_size_out / 2..chunk_size_out / 2 + out_len),
+    );
+    Ok(out)
+}
+
+/// Bandwidth extension via spectral translation.
+/// That is, copy spectrum from lower frequencies into higher frequencies.
+///
+/// Args:
+///   - `x`: Spectrogram of shape (C, T, F)
+///   - `freq`: Cut of frequency. Frequencies above will get extended based on lower Frequencies.
+///   - `sr`: Original time-domain sampling rate.
+///   - `n_bins_overlap`: Instead of starting at bin correspinging to `freq` start `n_bins_overlap` lower.
+pub(crate) fn ext_bandwidth_spectral(
+    x: &mut Array3<Complex32>,
+    freq: usize,
+    sr: usize,
+    n_bins_overlap: Option<usize>,
+) {
+    let full_n_bins = x.len_of(Axis(2)); // Number of bins of non-downampled signal
+    let n_ov = n_bins_overlap.unwrap_or(0); // Overlap at the edge of the downsampled spectrum
+    let down_n_bins = full_n_bins * freq * 2 / sr - n_ov; // Number of bins containing energy in downsampled signal
+    let min_bin = full_n_bins * 4000 * 2 / sr + 1; // Only start from 4kHz
+    let max_copy_bins = down_n_bins - min_bin; // Number of bins to copy per iteration
+    let missing_bins = full_n_bins - down_n_bins;
+    let n_copies = (missing_bins as f32 / max_copy_bins as f32).ceil() as usize;
+    let mut start_bin_tgt = down_n_bins;
+    let start_bin_src = min_bin.max(down_n_bins.saturating_sub(missing_bins));
+    debug_assert!(start_bin_tgt > start_bin_src);
+    for _ in 0..n_copies {
+        let cur_n_copy = max_copy_bins.min(full_n_bins - start_bin_tgt);
+        let (src, target) = x.multi_slice_mut((
+            s![.., .., start_bin_src..(start_bin_src + cur_n_copy)],
+            s![.., .., start_bin_tgt..(start_bin_tgt + cur_n_copy)],
+        ));
+        src.assign_to(target);
+        start_bin_tgt += cur_n_copy;
+    }
+}
+
+/// Estimate bandwidth by finding the highest frequency bin containing a sufficient amount of
+/// energy.
+pub(crate) fn estimate_bandwidth(
+    input: ArrayView3<Complex32>,
+    db_cut_off: f32,
+    n_avg: usize,
+) -> usize {
+    // input shape [C, T, F]
+    let f_db = input
+        .mean_axis(Axis(1))
+        .unwrap()
+        .mean_axis(Axis(0))
+        .unwrap()
+        .map(|x| (x.norm() + 1e-16).log10() * 10.);
+    let n_freqs = f_db.len();
+    let f_db_diff =
+        (f_db.slice(s![..n_freqs - n_avg]).to_owned() - f_db.slice(s![n_avg..])) / n_avg as f32;
+    let i = argmax(&f_db_diff).unwrap_or(n_freqs);
+    dbg!(i);
+    dbg!(f_db_diff[i]);
+    if f_db_diff[i] < db_cut_off || i < n_freqs / 4 {
+        return n_freqs;
+    }
+    // Some corrections if we are at a boundary of n_freqs/2, n_freqs/3, etc.
+    if i == n_freqs - 1 {
+        return n_freqs;
+    } else if i == n_freqs / 2 || i == n_freqs / 2 + 2 {
+        return n_freqs / 2 + 1;
+    } else if i == n_freqs / 3 || i == n_freqs / 3 + 2 {
+        return n_freqs / 3 + 1;
+    } else if i == n_freqs / 4 || i == n_freqs / 4 + 2 {
+        return n_freqs / 4 + 1;
+    }
+    i
+}
+
+pub(crate) struct NonNan(f32);
+
+impl NonNan {
+    fn new(val: f32) -> Option<NonNan> {
+        if val.is_nan() {
+            None
+        } else {
+            Some(NonNan(val))
+        }
+    }
+    fn get(&self) -> f32 {
+        self.0
+    }
+}
+
+pub(crate) fn find_max<'a, I>(vals: I) -> Result<f32>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    vals.into_iter().try_fold(f32::MIN, |acc, v| {
+        let nonnan: NonNan = match NonNan::new(*v) {
+            None => return Err(TransformError::NaN),
+            Some(x) => x,
+        };
+        Ok(nonnan.get().max(acc))
+    })
+}
+
+pub(crate) fn find_max_abs<'a, I>(vals: I) -> Result<f32>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    vals.into_iter().try_fold(0., |acc, v| {
+        let nonnan: NonNan = match NonNan::new(v.abs()) {
+            None => return Err(TransformError::NaN),
+            Some(x) => x,
+        };
+        Ok(nonnan.get().max(acc))
+    })
+}
+
+pub(crate) fn find_min<'a, I>(vals: I) -> Result<f32>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    vals.into_iter().try_fold(f32::MAX, |acc, v| {
+        let nonnan: NonNan = match NonNan::new(*v) {
+            None => return Err(TransformError::NaN),
+            Some(x) => x,
+        };
+        Ok(nonnan.get().min(acc))
+    })
+}
+
+pub(crate) fn find_min_abs<'a, I>(vals: I) -> Result<f32>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    vals.into_iter().try_fold(0., |acc, v| {
+        let nonnan: NonNan = match NonNan::new(v.abs()) {
+            None => return Err(TransformError::NaN),
+            Some(x) => x,
+        };
+        Ok(nonnan.get().min(acc))
+    })
+}
+
+pub(crate) fn median(x: &mut [f32]) -> f32 {
+    x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = x.len() / 2;
+    x[mid]
+}
+
+pub(crate) fn argmax<'a, I>(vals: I) -> Result<usize>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut index = 0;
+    let mut high = std::f32::MIN;
+    vals.into_iter().enumerate().for_each(|(i, v)| {
+        if v > &high {
+            high = *v;
+            index = i;
+        }
+    });
+    Ok(index)
+}
+
+pub(crate) fn argmax_abs<'a, I>(vals: I) -> Result<usize>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut index = 0;
+    let mut high = std::f32::MIN;
+    vals.into_iter().enumerate().for_each(|(i, v)| {
+        if v > &high {
+            high = v.abs();
+            index = i;
+        }
+    });
+    Ok(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{augmentations::low_pass, wav_utils::*};
+
+    /// Setup function that is only run once, even if called multiple times.
+    fn setup() {
+        create_out_dir().expect("Could not create output directory");
+    }
+
+    fn create_out_dir() -> std::io::Result<()> {
+        match std::fs::create_dir("../out") {
+            Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            r => r,
+        }
+    }
+
+    #[test]
+    pub fn test_low_pass() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let sr = reader.sr as u32;
+        let sample = reader.samples_arr2().unwrap();
+        let mut lowpass_res = sample.clone();
+        let mut lowpass_biquad = sample.clone();
+        let ch = sample.len_of(Axis(0)) as u16;
+        let f = 8000.;
+        let mut mem = [0.; 2];
+        let (b, a) = low_pass(f, 0.707, sr as usize);
+        biquad_inplace(&mut lowpass_biquad, &mut mem, &b, &a);
+        write_wav_iter("../out/lowpass_biquad.wav", lowpass_biquad.iter(), sr, ch).unwrap();
+        let xx: f64 = sample.iter().map(|&n| n as f64 * n as f64).sum();
+        let yy: f64 = lowpass_biquad.iter().map(|&n| n as f64 * n as f64).sum();
+        let xy: f64 = sample.iter().zip(lowpass_biquad).map(|(&n, m)| n as f64 * m as f64).sum();
+        let corr = xy / (xx.sqrt() * yy.sqrt());
+        dbg!(corr);
+
+        lowpass_res = low_pass_resample(lowpass_res.view(), f as usize, sr as usize).unwrap();
+        write_wav_iter("../out/lowpass_resample.wav", lowpass_res.iter(), sr, ch).unwrap();
+
+        let xx: f64 = sample.iter().map(|&n| n as f64 * n as f64).sum();
+        let yy: f64 = lowpass_res.iter().map(|&n| n as f64 * n as f64).sum();
+        let xy: f64 = sample.iter().zip(lowpass_res).map(|(&n, m)| n as f64 * m as f64).sum();
+        let corr = xy / (xx.sqrt() * yy.sqrt());
+        dbg!(corr);
+        Ok(())
+    }
+
+    #[test]
+    fn test_estimate_bandwidth() -> Result<()> {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let mut sr = reader.sr;
+        let sample = reader.samples_arr2().unwrap();
+        let sample = resample(sample.view(), sr, sr / 2, None).unwrap();
+        sr /= 2;
+        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+
+        let fft_size = sr / 50;
+        let hop_size = fft_size / 2;
+        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+        let x = stft(sample.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x.view(), 8., 2), fft_size / 2 + 1);
+
+        let sample_f2 = low_pass_resample(sample.view(), sr / 4, sr).unwrap();
+        write_wav_arr2("../out/resampled_f2.wav", sample_f2.view(), sr as u32).unwrap();
+        let x_f2 = stft(sample_f2.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x_f2.view(), 8., 2), fft_size / 4 + 1);
+
+        let sample_f3 = low_pass_resample(sample.view(), sr / 6, sr).unwrap();
+        write_wav_arr2("../out/resampled_f3.wav", sample_f3.view(), sr as u32).unwrap();
+        let x_f3 = stft(sample_f3.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x_f3.view(), 8., 2), fft_size / 6 + 1);
+
+        let sample_f4 = low_pass_resample(sample.view(), sr / 8, sr).unwrap();
+        write_wav_arr2("../out/resampled_f4.wav", sample_f4.view(), sr as u32).unwrap();
+        let x_f4 = stft(sample_f4.view(), &mut state, true);
+        assert_eq!(estimate_bandwidth(x_f4.view(), 8., 2), fft_size / 8 + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ext_bandwidth_spectral() {
+        setup();
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let sr = reader.sr;
+        let fft_size = sr / 50;
+        let hop_size = fft_size / 2;
+        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+        let sample = reader.samples_arr2().unwrap();
+        let mut x = stft(sample.view(), &mut state, true);
+
+        let f_cut_off = 20000;
+        let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
+        write_wav_arr2("../out/sample_f2.wav", sample_f2.view(), sr as u32).unwrap();
+        let mut x2 = stft(sample_f2.view(), &mut state, true);
+        ext_bandwidth_spectral(&mut x2, f_cut_off, sr, Some(4));
+
+        let sample = istft(x.view_mut(), &mut state, true);
+        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+        let sample_f2 = istft(x2.view_mut(), &mut state, true);
+        write_wav_arr2("../out/sample_f2_ext.wav", sample_f2.view(), sr as u32).unwrap();
+    }
+
+    #[test]
+    fn test_find_max_abs() -> Result<()> {
+        let mut x = vec![vec![0f32; 10]; 1];
+        x[0][2] = 3f32;
+        x[0][5] = -10f32;
+        let max = find_max_abs(x.iter().flatten())?;
+        assert_eq!(max, 10.);
+        Ok(())
+    }
 }

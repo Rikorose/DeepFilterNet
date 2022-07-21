@@ -390,7 +390,6 @@ class DfNet(nn.Module):
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
         self.df_order = p.df_order
-        self.df_bins = p.nb_df
         self.df_op: Union[DfOp, MultiFrameModule]
         if p.dfop_method == "real_unfold":
             raise ValueError("RealUnfold DF OP is now unsupported.")
