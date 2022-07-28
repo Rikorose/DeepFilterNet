@@ -585,12 +585,15 @@ impl DatasetBuilder {
             Box::new(RandBiquadFilter::default_with_prob(0.1).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
-        let mut sp_distortions = Compose::new(Vec::new());
+        let mut sp_distortions_td = Compose::new(Vec::new());
         if ds_split == Split::Train {
-            sp_distortions.push(Box::new(
+            //TODO make clipping distortion configurable
+            sp_distortions_td.push(Box::new(
                 RandClipping::default_with_prob(0.05).with_c(0.05..0.9),
             ))
         }
+        //TODO add fd distortions, use bandwidth limiter here
+        let mut sp_distortions_fd = Compose::new(Vec::new());
         let mut ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandBiquadFilter::default_with_prob(0.25).with_sr(self.sr)),
@@ -625,7 +628,8 @@ impl DatasetBuilder {
             gains,
             p_fill_speech,
             sp_augmentations,
-            sp_distortions,
+            sp_distortions_td: sp_distortions_td,
+            sp_distortions_fd: sp_distortions_fd,
             ns_augmentations,
             noise_generator,
             reverb,
@@ -842,8 +846,9 @@ pub struct TdDataset {
     p_fill_speech: f32, // Probability to completely fill the speech signal to `max_samples` with a different speech sample
     noise_generator: NoiseGenerator, // Create random noises
     sp_augmentations: Compose, // Transforms to augment speech samples
-    sp_distortions: Compose, // Transforms to distort speech samples for used generating the mixture
-    ns_augmentations: Compose, // Transforms to augment noise samples
+    sp_distortions_td: Compose, // Transforms to distort speech samples in time domain for used generating the mixture
+    sp_distortions_fd: Compose, // Transforms to distort speech samples in frequency domain for used generating the mixture
+    ns_augmentations: Compose,  // Transforms to augment noise samples
     reverb: RandReverbSim, // Separate reverb transform that may be applied to both speech and noise
     seed: u64,
     ds_len: usize,
@@ -1013,7 +1018,7 @@ impl TdDataset {
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
                 }
             }
-            self.sp_augmentations.transform(&mut sample)?;
+            self.sp_augmentations.transform(&mut TransformInput::Audio(&mut sample))?;
             cur_len += sample.len_of(Axis(1));
             speech_samples.push(sample);
             (sp_idx, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
@@ -1047,7 +1052,7 @@ impl TdDataset {
             if ns.len_of(Axis(1)) < 100 {
                 continue;
             }
-            self.ns_augmentations.transform(&mut ns)?;
+            self.ns_augmentations.transform(&mut TransformInput::Audio(&mut ns))?;
             if ns.len_of(Axis(1)) > self.max_samples {
                 ns.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
             }
@@ -1105,9 +1110,9 @@ impl Dataset<f32> for TdDataset {
                 Ok(rir)
             })?
         }
-        if !self.sp_distortions.is_empty() {
+        if !self.sp_distortions_td.is_empty() {
             let mut d = speech_distorted.unwrap_or_else(|| speech.clone());
-            self.sp_distortions.transform(&mut d)?;
+            self.sp_distortions_td.transform(&mut TransformInput::Audio(&mut d))?;
             speech_distorted = Some(d);
         }
         let mut downsample_freq = None;
