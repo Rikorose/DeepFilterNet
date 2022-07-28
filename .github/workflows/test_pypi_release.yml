@@ -52,8 +52,8 @@ jobs:
         run: |
           mkdir ../out
           deepFilter ../assets/noisy_snr0.wav -o ../out
-          python df/scripts/dnsmos.py ../assets/noisy_snr0.wav -t 2.9511659145355225
-          python df/scripts/dnsmos.py ../out/noisy_snr0_DeepFilterNet2.wav -t 3.7940118312835693
+          python df/scripts/dnsmos.py ../assets/noisy_snr0.wav -d -l -t 4.320409320319172 2.53722799232174 3.209282577524924
+          python df/scripts/dnsmos.py ../out/noisy_snr0_DeepFilterNet2.wav -d -l -t 4.126786274491472 4.460851010847896 3.623052233685985 
       - uses: actions/upload-artifact@v2
         with:
           name: enhanced-${{ runner.os }}
