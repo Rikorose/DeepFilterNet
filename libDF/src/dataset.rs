@@ -586,14 +586,15 @@ impl DatasetBuilder {
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
         let mut sp_distortions_td = Compose::new(Vec::new());
+        //TODO add fd distortions, use bandwidth limiter here
+        let mut sp_distortions_fd = Compose::new(Vec::new());
         if ds_split == Split::Train {
             //TODO make clipping distortion configurable
             sp_distortions_td.push(Box::new(
                 RandClipping::default_with_prob(0.05).with_c(0.05..0.9),
-            ))
+            ));
+            sp_distortions_fd.push(Box::new(AirAbsorptionAugmentation::default_with_prob(0.1)))
         }
-        //TODO add fd distortions, use bandwidth limiter here
-        let mut sp_distortions_fd = Compose::new(Vec::new());
         let mut ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
             Box::new(RandBiquadFilter::default_with_prob(0.25).with_sr(self.sr)),
@@ -628,8 +629,8 @@ impl DatasetBuilder {
             gains,
             p_fill_speech,
             sp_augmentations,
-            sp_distortions_td: sp_distortions_td,
-            sp_distortions_fd: sp_distortions_fd,
+            sp_distortions_td,
+            sp_distortions_fd,
             ns_augmentations,
             noise_generator,
             reverb,
@@ -1018,7 +1019,7 @@ impl TdDataset {
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
                 }
             }
-            self.sp_augmentations.transform(&mut TransformInput::Audio(&mut sample))?;
+            self.sp_augmentations.transform(&mut (&mut sample).into())?;
             cur_len += sample.len_of(Axis(1));
             speech_samples.push(sample);
             (sp_idx, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
@@ -1052,7 +1053,7 @@ impl TdDataset {
             if ns.len_of(Axis(1)) < 100 {
                 continue;
             }
-            self.ns_augmentations.transform(&mut TransformInput::Audio(&mut ns))?;
+            self.ns_augmentations.transform(&mut (&mut ns).into())?;
             if ns.len_of(Axis(1)) > self.max_samples {
                 ns.slice_axis_inplace(Axis(1), Slice::from(..self.max_samples));
             }
@@ -1112,7 +1113,7 @@ impl Dataset<f32> for TdDataset {
         }
         if !self.sp_distortions_td.is_empty() {
             let mut d = speech_distorted.unwrap_or_else(|| speech.clone());
-            self.sp_distortions_td.transform(&mut TransformInput::Audio(&mut d))?;
+            self.sp_distortions_td.transform(&mut (&mut d).into())?;
             speech_distorted = Some(d);
         }
         let mut downsample_freq = None;
@@ -1817,7 +1818,6 @@ mod tests {
     use std::collections::BTreeSet;
     use std::sync::Once;
 
-    use log::info;
     use rstest::rstest;
 
     use super::*;
@@ -2108,8 +2108,10 @@ mod tests {
         .unwrap();
         Ok(())
     }
+    #[cfg(feature = "cache")]
     #[test]
     pub fn test_cached_valid_dataset() -> Result<()> {
+        use log::info;
         use std::collections::BTreeMap;
 
         setup();

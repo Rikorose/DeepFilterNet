@@ -38,6 +38,16 @@ pub enum TransformInput<'a> {
     Audio(&'a mut Array2<f32>),
     Spectrum(&'a mut Array3<Complex32>),
 }
+impl<'a> From<&'a mut Array2<f32>> for TransformInput<'a> {
+    fn from(audio: &'a mut Array2<f32>) -> Self {
+        TransformInput::Audio(audio)
+    }
+}
+impl<'a> From<&'a mut Array3<Complex32>> for TransformInput<'a> {
+    fn from(spec: &'a mut Array3<Complex32>) -> Self {
+        TransformInput::Spectrum(spec)
+    }
+}
 
 pub trait Transform {
     fn transform(&self, x: &mut TransformInput) -> Result<()>;
@@ -912,13 +922,35 @@ impl RandReverbSim {
 }
 
 #[derive(Clone)]
-pub(crate) struct BandwidthLimiter {
+pub(crate) struct BandwidthLimiterAugmentation {
     prob: f32,
-    sr: Option<usize>,
-    center_freqs: Vec<usize>,
+    sr: usize,
+    cut_off_freqs: Vec<usize>,
 }
 
-impl BandwidthLimiter {}
+impl BandwidthLimiterAugmentation {
+    fn name(&self) -> &str {
+        "BandwidthLimiter"
+    }
+    fn new(p: f32, sr: usize) -> Self {
+        BandwidthLimiterAugmentation {
+            prob: p,
+            sr,
+            cut_off_freqs: vec![8000, 10000, 12000, 16000, 20000, 22050],
+        }
+    }
+    fn transform(&self, inp: &mut TransformInput, max_freq: usize) -> Result<()> {
+        let audio = match inp {
+            TransformInput::Spectrum(_) => return Err(AugmentationError::WrongInput),
+            TransformInput::Audio(a) => a,
+        };
+        let mut rng = thread_rng()?;
+        let f = self.cut_off_freqs.iter().filter(|&f| *f < max_freq).choose(&mut rng).unwrap();
+        let d = low_pass_resample(audio.view(), *f, self.sr).unwrap();
+        audio.clone_from(&d);
+        Ok(())
+    }
+}
 
 /// Implement a low pass filterbank in frequency domain. Adopted from audiomentations.
 /// Absorption coefs based on pyroomacoustics.
@@ -1019,8 +1051,8 @@ impl Transform for AirAbsorptionAugmentation {
     fn name(&self) -> &str {
         "RandLFilt"
     }
-    fn transform(&self, x: &mut TransformInput) -> Result<()> {
-        let spec = match x {
+    fn transform(&self, inp: &mut TransformInput) -> Result<()> {
+        let spec = match inp {
             TransformInput::Spectrum(s) => s,
             TransformInput::Audio(_) => return Err(AugmentationError::WrongInput),
         };
@@ -1091,11 +1123,11 @@ mod tests {
         let mut out_manual = test_sample.clone();
         write_wav_iter("../out/original.wav", test_sample.iter(), sr, ch)?;
         seed_from_u64(42);
-        transforms.transform(&mut TransformInput::Audio(&mut out))?;
+        transforms.transform(&mut (&mut out).into())?;
         write_wav_iter("../out/compose_all.wav", out.iter(), sr, ch)?;
         seed_from_u64(42);
         for (i, t) in transforms.transforms.iter().enumerate() {
-            t.transform(&mut TransformInput::Audio(&mut out_manual))?;
+            t.transform(&mut (&mut out_manual).into())?;
             write_wav_iter(
                 format!("../out/compose_{}.wav", i).as_str(),
                 out_manual.iter(),
@@ -1118,7 +1150,7 @@ mod tests {
         let ch = test_sample.len_of(Axis(0)) as u16;
         seed_from_u64(42);
         let rand_resample = RandResample::new(1., sr as usize, 0.8, 1.2, 1024);
-        rand_resample.transform(&mut TransformInput::Audio(&mut test_sample)).unwrap();
+        rand_resample.transform(&mut (&mut test_sample).into()).unwrap();
         write_wav_iter("../out/resampled.wav", test_sample.iter(), sr, ch)?;
         Ok(())
     }
@@ -1155,8 +1187,9 @@ mod tests {
         let ch = test_sample.len_of(Axis(0)) as u16;
         let tsnr = 3.; // Test with 3dB
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_snr(tsnr..tsnr);
-        transform.transform(&mut TransformInput::Audio(&mut test_sample_c))?;
+        transform.transform(&mut (&mut test_sample_c).into())?;
         let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
+        write_wav_iter("../out/original.wav", test_sample.iter(), sr, ch)?;
         write_wav_iter("../out/clipped_snr.wav", test_sample_c.iter(), sr, ch)?;
         log::info!("Expecting target SNR {}, got SNR {}", tsnr, resulting_snr);
         // Test relative difference
@@ -1165,7 +1198,7 @@ mod tests {
         let mut test_sample_c = test_sample.clone();
         let c = 0.05;
         let transform = RandClipping::new(1.0, 1e-10, 0.001).with_c(c..c);
-        transform.transform(&mut TransformInput::Audio(&mut test_sample_c))?;
+        transform.transform(&mut (&mut test_sample_c).into())?;
         let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(c, resulting_snr);
@@ -1247,7 +1280,7 @@ mod tests {
         write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
         let mut x = stft(sample.view(), &mut state, false);
         let airabs = AirAbsorptionAugmentation::new(sr, 1.0);
-        airabs.transform(&mut TransformInput::Spectrum(&mut x)).unwrap();
+        airabs.transform(&mut (&mut x).into()).unwrap();
         let sample = istft(x.view_mut(), &mut state, false);
         write_wav_arr2("../out/air_abs.wav", sample.view(), sr as u32).unwrap();
         Ok(())

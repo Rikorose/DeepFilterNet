@@ -22,7 +22,7 @@ class Batch:
         # safe to assume writable.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            assert len(b) == 10
+            assert len(b) == 9, f"Got {len(b)} elements"
             speech, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
             if erb.size <= 1:
                 self.feat_erb = None

@@ -456,8 +456,6 @@ pub(crate) fn estimate_bandwidth(
     let f_db_diff =
         (f_db.slice(s![..n_freqs - n_avg]).to_owned() - f_db.slice(s![n_avg..])) / n_avg as f32;
     let i = argmax(&f_db_diff).unwrap_or(n_freqs);
-    dbg!(i);
-    dbg!(f_db_diff[i]);
     if f_db_diff[i] < db_cut_off || i < n_freqs / 4 {
         return n_freqs;
     }
