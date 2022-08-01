@@ -187,7 +187,6 @@ fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32;
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
     let amp = 10f32.powf(gain_db / 40.);
     let alpha = w0.sin() / 2. / q_factor;
-    dbg!(amp, alpha);
 
     let b0 = amp * ((amp + 1.) - (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha);
     let b1 = 2. * amp * ((amp - 1.) - (amp + 1.) * w0.cos());
@@ -195,7 +194,7 @@ fn low_shelf(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32;
     let a0 = (amp + 1.) + (amp - 1.) * w0.cos() + 2. * amp.sqrt() * alpha;
     let a1 = -2. * ((amp - 1.) + (amp + 1.) * w0.cos());
     let a2 = (amp + 1.) + (amp - 1.) * w0.cos() - 2. * amp.sqrt() * alpha;
-    dbg!([b0, b1, b2], [a0, a1, a2])
+    ([b0, b1, b2], [a0, a1, a2])
 }
 pub fn low_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
