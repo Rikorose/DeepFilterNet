@@ -309,7 +309,7 @@ impl Transform for RandBiquadFilter {
         if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
-        for _ in 0..self.n_freqs {
+        for _ in 0..rng.uniform_inclusive(1, self.n_freqs) {
             let freq = rng.log_uniform(self.f_low as f32, self.f_high as f32);
             let gain_db = rng.uniform_inclusive(self.gain_db_low, self.gain_db_high);
             let q = rng.uniform_inclusive(self.q_low, self.q_high);
@@ -323,6 +323,16 @@ impl Transform for RandBiquadFilter {
                 Some(Notch) => notch(freq, q, sr),
             };
             biquad_filter(x, &b, &a);
+        }
+        // Guard against clipping
+        let max = find_max_abs(x.iter())?;
+        if (max - 1.) > 1e-10 {
+            let f = 1. / (max + 1e-10);
+            log::debug!(
+                "RandBiquadFilter: Clipping detected. Reducing gain by: {}",
+                max
+            );
+            x.mapv_inplace(|s| s * f);
         }
         Ok(())
     }
@@ -1299,9 +1309,15 @@ mod tests {
         write_wav_iter("../out/filt_peaking_eq.wav", s_filt.iter(), sr as u32, ch)?;
         // Notch
         let (b, a) = notch(f, q, sr);
-        let mut s_filt = s_orig;
+        let mut s_filt = s_orig.clone();
         biquad_filter(&mut s_filt, &b, &a);
         write_wav_iter("../out/filt_notch.wav", s_filt.iter(), sr as u32, ch)?;
+        // Test augmentation transform
+        seed_from_u64(43);
+        let aug = RandBiquadFilter::default_with_prob(1.0).with_sr(sr);
+        let mut s_aug = s_orig;
+        aug.transform(&mut (&mut s_aug).into())?;
+        write_wav_iter("../out/filt_aug.wav", s_aug.iter(), sr as u32, ch)?;
         Ok(())
     }
 
