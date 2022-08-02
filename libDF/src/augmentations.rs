@@ -929,26 +929,22 @@ pub(crate) struct BandwidthLimiterAugmentation {
 }
 
 impl BandwidthLimiterAugmentation {
-    fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         "BandwidthLimiter"
     }
-    fn new(p: f32, sr: usize) -> Self {
+    pub fn new(p: f32, sr: usize) -> Self {
         BandwidthLimiterAugmentation {
             prob: p,
             sr,
             cut_off_freqs: vec![8000, 10000, 12000, 16000, 20000, 22050],
         }
     }
-    fn transform(&self, inp: &mut TransformInput, max_freq: usize) -> Result<()> {
-        let audio = match inp {
-            TransformInput::Spectrum(_) => return Err(AugmentationError::WrongInput),
-            TransformInput::Audio(a) => a,
-        };
+    pub fn transform(&self, audio: &mut Array2<f32>, max_freq: usize) -> Result<usize> {
         let mut rng = thread_rng()?;
-        let f = self.cut_off_freqs.iter().filter(|&f| *f < max_freq).choose(&mut rng).unwrap();
-        let d = low_pass_resample(audio.view(), *f, self.sr).unwrap();
+        let &f = self.cut_off_freqs.iter().filter(|&f| *f < max_freq).choose(&mut rng).unwrap();
+        let d = low_pass_resample(audio.view(), f, self.sr).unwrap();
         audio.clone_from(&d);
-        Ok(())
+        Ok(f)
     }
 }
 
@@ -980,7 +976,7 @@ impl AirAbsorptionAugmentation {
         map.insert(key.to_string(), scaled_coefs.map(|x| x * 1e-3));
     }
     pub fn new(sr: usize, prob: f32) -> Self {
-        let center_freqs = [125, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000];
+        let center_freqs = [125, 250, 500, 1000, 2000, 4000, 8000, 16000, 24000];
         let mut air_absorption = BTreeMap::new();
         Self::insert_coefs(
             &mut air_absorption,
@@ -1012,6 +1008,32 @@ impl AirAbsorptionAugmentation {
             "20C_70-90%",
             [0.1, 0.3, 0.6, 1.1, 1.7, 3.5, 10.6, 31.2, 93.8],
         );
+        // The following coefficients are artificial to produce strong absorption
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-High",
+            [0.1, 0.2, 0.8, 1.8, 5.9, 21.1, 76.6, 280.2, 576.1],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-Mid1",
+            [0.1, 0.8, 5.9, 76.6, 48.1, 21.1, 5.9, 1.8, 0.8],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-Mid2",
+            [0.1, 0.8, 1.8, 5.9, 76.1, 128.1, 38.9, 1.8, 0.8],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-Mid3",
+            [0.1, 0.8, 1.8, 5.9, 21.1, 76.1, 128.9, 5.8, 0.8],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-Low",
+            [214.7, 60.2, 20.6, 6.5, 1.7, 0.6, 0.3, 1.1, 0.1],
+        );
         Self {
             center_freqs,
             air_absorption,
@@ -1021,6 +1043,11 @@ impl AirAbsorptionAugmentation {
             prob,
         }
     }
+    /// Interpolate frequency attenuation from center bands stft frequency bins.
+    ///
+    /// Args:
+    ///   - `atten_vals`: Attenuation values of shape [8]
+    ///   - `n_freqs`: Number of stft frequency bins.
     fn interp_atten(&self, atten_vals: &[f32], n_freqs: usize) -> Array1<f32> {
         let atten_vals = concat3(&[atten_vals[0]], atten_vals, &[atten_vals[8]]);
         let sr = self.sr.unwrap();
@@ -1038,6 +1065,22 @@ impl AirAbsorptionAugmentation {
             }
         }
         atten_vals_interp
+    }
+    /// Get available absorption coefficient keys
+    pub fn keys(&self) -> Vec<String> {
+        self.air_absorption.keys().map(|k| k.to_owned()).collect()
+    }
+    /// Get absorption coefficients for a predifined key
+    pub fn get_coefs(&self, key: &str) -> Option<&[f32; 9]> {
+        self.air_absorption.get(key)
+    }
+    pub fn apply(&self, spec: &mut Array3<Complex32>, coefs: &[f32; 9], d: f32) {
+        let atten_vals = coefs.map(|c| (-d * c).exp());
+        let n_freqs = spec.len_of(Axis(2));
+        let atten_vals = self.interp_atten(&atten_vals, n_freqs);
+        for (mut f, a) in spec.axis_iter_mut(Axis(2)).zip(atten_vals) {
+            f.mapv_inplace(|x| x.scale(a));
+        }
     }
 }
 
@@ -1062,14 +1105,8 @@ impl Transform for AirAbsorptionAugmentation {
             return Ok(());
         }
         let d = rng.uniform_inclusive(self.distance_low, self.distance_high);
-        let coefs = self.air_absorption.values().into_iter().choose(&mut rng).unwrap();
-        let atten_vals = coefs.map(|c| (-d * c).exp());
-        dbg!(d, coefs, atten_vals);
-        let n_freqs = spec.len_of(Axis(2));
-        let atten_vals = self.interp_atten(&atten_vals, n_freqs);
-        for (mut f, a) in spec.axis_iter_mut(Axis(2)).zip(atten_vals) {
-            f.mapv_inplace(|x| x.scale(a));
-        }
+        let coefs = self.air_absorption.iter().choose(&mut rng).unwrap();
+        self.apply(spec, coefs.1, d);
         Ok(())
     }
 }
@@ -1278,11 +1315,27 @@ mod tests {
         let hop_size = fft_size / 2;
         let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
         write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
-        let mut x = stft(sample.view(), &mut state, false);
+        let mut x1 = stft(sample.view(), &mut state, false);
+        let mut x2 = x1.clone();
+        let mut x3 = x1.clone();
+        let mut x4 = x1.clone();
+        let mut x5 = x1.clone();
         let airabs = AirAbsorptionAugmentation::new(sr, 1.0);
-        airabs.transform(&mut (&mut x).into()).unwrap();
-        let sample = istft(x.view_mut(), &mut state, false);
-        write_wav_arr2("../out/air_abs.wav", sample.view(), sr as u32).unwrap();
+        airabs.apply(&mut x1, airabs.get_coefs("Strong-Low").unwrap(), 20.);
+        let sample = istft(x1.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs_low.wav", sample.view(), sr as u32).unwrap();
+        airabs.apply(&mut x2, airabs.get_coefs("Strong-Mid1").unwrap(), 20.);
+        let sample = istft(x2.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs_mid1.wav", sample.view(), sr as u32).unwrap();
+        airabs.apply(&mut x3, airabs.get_coefs("Strong-Mid2").unwrap(), 20.);
+        let sample = istft(x3.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs_mid2.wav", sample.view(), sr as u32).unwrap();
+        airabs.apply(&mut x4, airabs.get_coefs("Strong-Mid3").unwrap(), 20.);
+        let sample = istft(x4.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs_mid3.wav", sample.view(), sr as u32).unwrap();
+        airabs.apply(&mut x5, airabs.get_coefs("Strong-High").unwrap(), 20.);
+        let sample = istft(x5.view_mut(), &mut state, false);
+        write_wav_arr2("../out/air_abs_high.wav", sample.view(), sr as u32).unwrap();
         Ok(())
     }
 }
