@@ -147,14 +147,18 @@ pub fn stft(input: ArrayView2<f32>, state: &mut DFState, reset: bool) -> Array3<
             .axis_chunks_iter(Axis(0), state.frame_size)
             .zip(output_ch.outer_iter_mut())
         {
-            let ichunk = ichunk.as_slice().unwrap();
+            let ichunk = ichunk.as_slice().expect("stft ichunk has wrong shape");
             if ichunk.len() == state.frame_size {
-                frame_analysis(ichunk, ochunk.as_slice_mut().unwrap(), state)
+                frame_analysis(
+                    ichunk,
+                    ochunk.as_slice_mut().expect("stft ochunk has wrong shape"),
+                    state,
+                )
             } else {
                 let pad = vec![0.; state.frame_size - ichunk.len()];
                 frame_analysis(
                     &[ichunk, pad.as_slice()].concat(),
-                    ochunk.as_slice_mut().unwrap(),
+                    ochunk.as_slice_mut().expect("stft ochunk has wrong shape"),
                     state,
                 )
             };
@@ -164,6 +168,14 @@ pub fn stft(input: ArrayView2<f32>, state: &mut DFState, reset: bool) -> Array3<
     output
 }
 
+/// .Inverse short time Fourier transform.
+///
+/// # Args:
+///   - `input`: Complex array of shape (C, T, F)
+///   - `state`: DFState
+///   - `reset`: Whether to reset ISTFT buffers before transfrorm.
+///
+/// # Returns
 pub fn istft(mut input: ArrayViewMut3<Complex32>, state: &mut DFState, reset: bool) -> Array2<f32> {
     if reset {
         state.reset();
@@ -581,8 +593,12 @@ mod tests {
     use crate::{augmentations::low_pass, wav_utils::*};
 
     /// Setup function that is only run once, even if called multiple times.
-    fn setup() {
+    fn setup() -> (Array2<f32>, usize) {
         create_out_dir().expect("Could not create output directory");
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let sr = reader.sr;
+        let sample = reader.samples_arr2().unwrap();
+        (sample, sr)
     }
 
     fn create_out_dir() -> std::io::Result<()> {
@@ -593,11 +609,31 @@ mod tests {
     }
 
     #[test]
+    pub fn test_stft_istft_delay() -> Result<()> {
+        let (sample, sr) = setup();
+        let ch = sample.len_of(Axis(0)) as u16;
+        let fft_size = sr / 50;
+        let hop_size = fft_size / 2;
+        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+        let mut x = stft(sample.view(), &mut state, true);
+        let out = istft(x.view_mut(), &mut state, true);
+        for (ich, och) in sample.outer_iter().zip(out.outer_iter()) {
+            let xx: f32 = ich.iter().map(|&s| s * s).sum();
+            let yy: f32 = ich.iter().map(|&s| s * s).sum();
+            let xy: f32 = ich.iter().zip(och).map(|(&a, &b)| a * b).sum();
+            let corr = xy / (xx.sqrt() * yy.sqrt());
+            dbg!(corr);
+            assert!((corr - 1.).abs() < 1e-6)
+        }
+        write_wav_iter("../out/original.wav", sample.iter(), sr as u32, ch).unwrap();
+        write_wav_iter("../out/stft_istft.wav", out.iter(), sr as u32, ch).unwrap();
+        Ok(())
+    }
+
+    #[test]
     pub fn test_low_pass() -> Result<()> {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
-        let sr = reader.sr as u32;
-        let sample = reader.samples_arr2().unwrap();
+        let (sample, sr) = setup();
+        let sr = sr as u32;
         let mut lowpass_res = sample.clone();
         let mut lowpass_biquad = sample.clone();
         let ch = sample.len_of(Axis(0)) as u16;
@@ -625,10 +661,7 @@ mod tests {
 
     #[test]
     fn test_estimate_bandwidth() -> Result<()> {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
-        let mut sr = reader.sr;
-        let sample = reader.samples_arr2().unwrap();
+        let (sample, mut sr) = setup();
         let sample = resample(sample.view(), sr, sr / 2, None).unwrap();
         sr /= 2;
         write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
@@ -658,13 +691,10 @@ mod tests {
 
     #[test]
     fn test_ext_bandwidth_spectral() {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
-        let sr = reader.sr;
+        let (sample, sr) = setup();
         let fft_size = sr / 50;
         let hop_size = fft_size / 2;
         let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
-        let sample = reader.samples_arr2().unwrap();
         let mut x = stft(sample.view(), &mut state, true);
 
         let f_cut_off = 20000;
