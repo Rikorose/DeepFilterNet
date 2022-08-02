@@ -623,7 +623,7 @@ mod tests {
     use crate::util::seed_from_u64;
 
     #[test]
-    pub fn test_fft_dataset() -> Result<()> {
+    pub fn test_data_loader() -> Result<()> {
         println!("******** Start test_data_loader() ********");
         seed_from_u64(42);
         let fft_size = 960;
