@@ -423,6 +423,8 @@ pub struct DatasetBuilder {
     cache_valid_max_gb: Option<f32>,
     num_threads: Option<usize>,
     p_bandwidth_ext: Option<f32>,
+    p_clipping: Option<f32>,
+    p_air_absorption: Option<f32>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -447,6 +449,8 @@ impl DatasetBuilder {
             cache_valid_max_gb: None,
             num_threads: None,
             p_bandwidth_ext: None,
+            p_clipping: None,
+            p_air_absorption: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -586,14 +590,21 @@ impl DatasetBuilder {
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
         let mut sp_distortions_td = Compose::new(Vec::new());
-        //TODO add fd distortions, use bandwidth limiter here
         let mut sp_distortions_fd = Compose::new(Vec::new());
         if ds_split == Split::Train {
-            //TODO make clipping distortion configurable
-            sp_distortions_td.push(Box::new(
-                RandClipping::default_with_prob(0.05).with_c(0.05..0.9),
-            ));
-            sp_distortions_fd.push(Box::new(AirAbsorptionAugmentation::default_with_prob(0.1)))
+            if let Some(p) = self.p_clipping {
+                if p > 0. {
+                    sp_distortions_td.push(Box::new(
+                        RandClipping::default_with_prob(p).with_c(0.05..0.9),
+                    ))
+                }
+            }
+            if let Some(p) = self.p_air_absorption {
+                if p > 0. {
+                    sp_distortions_fd
+                        .push(Box::new(AirAbsorptionAugmentation::default_with_prob(p)));
+                }
+            }
         }
         let mut ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
@@ -615,6 +626,11 @@ impl DatasetBuilder {
         // This has the advantage that the noise will actually contain frequencies up 24 kHz.
         let noise_generator =
             NoiseGenerator::new(self.sr, if ds_split == Split::Train { 0.05 } else { 0.0 });
+        let bw_limiter = if let Some(p) = self.p_bandwidth_ext {
+            Some(BandwidthLimiterAugmentation::new(p, self.sr))
+        } else {
+            None
+        };
         Ok(TdDataset {
             config,
             hdf5_handles,
@@ -636,7 +652,7 @@ impl DatasetBuilder {
             reverb,
             seed,
             ds_len,
-            p_bandwidth_ext: self.p_bandwidth_ext,
+            bw_limiter,
         })
     }
     pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
@@ -708,6 +724,14 @@ impl DatasetBuilder {
     }
     pub fn bandwidth_extension(mut self, p: f32) -> Self {
         self.p_bandwidth_ext = Some(p);
+        self
+    }
+    pub fn clipping_distortion(mut self, p: f32) -> Self {
+        self.p_clipping = Some(p);
+        self
+    }
+    pub fn air_absorption_distortion(mut self, p: f32) -> Self {
+        self.p_air_absorption = Some(p);
         self
     }
 }
@@ -853,7 +877,7 @@ pub struct TdDataset {
     reverb: RandReverbSim, // Separate reverb transform that may be applied to both speech and noise
     seed: u64,
     ds_len: usize,
-    p_bandwidth_ext: Option<f32>, // Extend bandwidth via spectal translation
+    bw_limiter: Option<BandwidthLimiterAugmentation>, // Extend bandwidth via spectal translation
 }
 
 impl TdDataset {
@@ -994,7 +1018,7 @@ impl TdDataset {
         let mut speech_samples = Vec::new();
         // Used for bandwidth extension
         let fft_size = 2048;
-        let mut state = if self.p_bandwidth_ext.is_some() {
+        let mut state = if self.bw_limiter.is_some() {
             Some(DFState::new(self.sr, fft_size, fft_size / 2, 1, 1))
         } else {
             None
@@ -1007,7 +1031,7 @@ impl TdDataset {
                 sample.slice_axis_inplace(Axis(0), Slice::from(0usize..1));
             }
             max_freq = max_freq.min(self.max_freq(sp_idx)?);
-            if self.p_bandwidth_ext.is_some() {
+            if self.bw_limiter.is_some() {
                 // Extend clean speech to make sure it covers the full spectrum
                 let mut spec = stft(sample.view(), state.as_mut().unwrap(), false);
                 let max_bin = estimate_bandwidth(spec.view(), 8., 2);
@@ -1101,46 +1125,56 @@ impl Dataset<f32> for TdDataset {
         // Optionally we may also introduce some distortions to the speech signal.
         // These distortions will be only present in the noisy mixture, with the aim to reconstruce
         // the original undistorted signal. Example distortions are reverberation, or clipping.
-        // TODO: Think about codec distortions or filters like low-pass.
-        let mut speech_distorted = None;
+        //
         // Apply reverberation using a randomly sampled RIR
-        if !self.rir_keys.is_empty() {
-            speech_distorted = self.reverb.transform(&mut speech, &mut noise, || {
-                let (rir_idx, rir_key) = self.rir_keys.iter().choose(&mut rng).unwrap();
-                let rir = self.read(*rir_idx, rir_key)?;
-                Ok(rir)
-            })?
-        }
-        if !self.sp_distortions_td.is_empty() {
-            let mut d = speech_distorted.unwrap_or_else(|| speech.clone());
-            self.sp_distortions_td.transform(&mut (&mut d).into())?;
-            speech_distorted = Some(d);
-        }
-        let mut downsample_freq = None;
-        if let Some(p) = self.p_bandwidth_ext {
-            if p > rng.uniform(0., 1.) {
-                let f_cut_off = *[8000, 10000, 12000, 16000, 20000, 22050]
-                    .iter()
-                    .filter(|&f| f < &max_freq)
-                    .choose(&mut rng)
-                    .unwrap();
-                let d = speech_distorted.unwrap_or_else(|| speech.clone());
-                let d = low_pass_resample(d.view(), f_cut_off, self.sr).unwrap();
-                speech_distorted = Some(d);
-                noise_low_pass = Some(LpParam {
-                    cut_off: f_cut_off,
-                    sr: self.sr,
-                });
-                downsample_freq = Some(f_cut_off)
+        let mut speech_distorted = {
+            if !self.rir_keys.is_empty() {
+                self.reverb.transform(&mut speech, &mut noise, || {
+                    let (rir_idx, rir_key) = self.rir_keys.iter().choose(&mut rng).unwrap();
+                    let rir = self.read(*rir_idx, rir_key)?;
+                    Ok(rir)
+                })?
+            } else {
+                None
             }
         }
+        .unwrap_or_else(|| speech.clone());
+        // TD distortions like clipping
+        if !self.sp_distortions_td.is_empty() {
+            self.sp_distortions_td.transform(&mut (&mut speech_distorted).into())?;
+        }
+        // Bandwidth limitation
+        let downsample_freq = if let Some(limiter) = self.bw_limiter.as_ref() {
+            let f = limiter.transform(&mut speech_distorted, max_freq)?;
+            noise_low_pass = Some(LpParam {
+                cut_off: f,
+                sr: self.sr,
+            });
+            Some(f)
+        } else {
+            None
+        };
         if let Some(re) = noise_low_pass {
             // Low pass filtering via resampling to match speech cut off frequency
             noise = low_pass_resample(noise.view(), re.cut_off, re.sr)?;
             noise.slice_axis_inplace(Axis(1), Slice::from(..len));
         }
-        let (speech, _, noisy) =
-            mix_audio_signal(speech, speech_distorted, noise, snr as f32, gain as f32)?;
+        // FD distortions
+        if !self.sp_distortions_fd.is_empty() {
+            let fft_size = 2048;
+            let mut state = DFState::new(self.sr, fft_size, fft_size / 2, 1, 1);
+            let mut x = stft(speech_distorted.view(), &mut state, false);
+            self.sp_distortions_fd.transform(&mut (&mut x).into())?;
+            speech_distorted = istft(x.view_mut(), &mut state, false);
+            speech_distorted.slice_axis_inplace(Axis(1), Slice::from(0..speech.len_of(Axis(1))));
+        }
+        let (speech, _, noisy) = mix_audio_signal(
+            speech,
+            Some(speech_distorted),
+            noise,
+            snr as f32,
+            gain as f32,
+        )?;
         #[cfg(feature = "dataset_timings")]
         if log::log_enabled!(log::Level::Trace) {
             let te = std::time::Instant::now();
@@ -1774,7 +1808,7 @@ fn combine_noises(
 /// Arguments
 ///
 /// * `clean` - A clean speech signal of shape `[C, N]`.
-/// * `clean_dist` - An optional distorted speech signal of shape `[C, N]`. If provided, this signal
+/// * `clean_distorted` - An optional distorted speech signal of shape `[C, N]`. If provided, this signal
 ///                  will be used for creating the noisy mixture. `clean` may be used as a training
 ///                  target and usually contains no or less distortions. This can be used to learn
 ///                  some dereverberation or declipping.
@@ -1787,7 +1821,7 @@ fn combine_noises(
 ///                     same sampling rate.
 fn mix_audio_signal(
     clean: Array2<f32>,
-    clean_dist: Option<Array2<f32>>,
+    clean_distorted: Option<Array2<f32>>,
     mut noise: Array2<f32>,
     snr_db: f32,
     gain_db: f32,
@@ -1796,7 +1830,7 @@ fn mix_audio_signal(
     let g = 10f32.powf(gain_db / 20.);
     let mut clean_out = &clean * g;
     // clean_mix may contain distorted speech
-    let clean_mix = clean_dist.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
+    let clean_mix = clean_distorted.map(|c| &c * g).unwrap_or_else(|| clean_out.clone());
     // For energy calculation use clean speech to also consider direct-to-reverberant ratio
     noise *= mix_f(clean_out.view(), noise.view(), snr_db);
     let mut mixture = clean_mix + &noise;
@@ -2108,11 +2142,43 @@ mod tests {
         .unwrap();
         Ok(())
     }
+    #[test]
+    pub fn test_fft_dataset() -> Result<()> {
+        seed_from_u64(0);
+        let sr = 48_000;
+        let n_fft = 1024;
+        let n_hop = 512;
+        let nb = 1;
+        let dir = "../assets/";
+        let cfg = DatasetConfigJson::open("../assets/dataset.cfg").unwrap();
+        let mut ds = DatasetBuilder::new(dir, sr)
+            .dataset(cfg.split_config(Split::Train))
+            .df_params(n_fft, Some(n_hop), Some(nb), Some(1), Some(0.1))
+            .build_fft_dataset()?;
+        ds.generate_keys()?;
+        let mut rng = thread_rng()?;
+        let mut sample = ds.get_sample(rng.uniform(0, ds.len()), Some(0)).unwrap();
+        let mut state = DFState::new(sr, n_fft, n_hop, nb, 1);
+        let speech = istft(
+            sample.speech.view_mut().into_dimensionality().unwrap(),
+            &mut state,
+            false,
+        );
+        let noisy = istft(
+            sample.noisy.view_mut().into_dimensionality().unwrap(),
+            &mut state,
+            false,
+        );
+        write_wav_arr2("../out/speech.wav", speech.view(), sr as u32).unwrap();
+        write_wav_arr2("../out/noisy.wav", noisy.view(), sr as u32).unwrap();
+        Ok(())
+    }
     #[cfg(feature = "cache")]
     #[test]
     pub fn test_cached_valid_dataset() -> Result<()> {
-        use log::info;
         use std::collections::BTreeMap;
+
+        use log::info;
 
         setup();
         seed_from_u64(42);
