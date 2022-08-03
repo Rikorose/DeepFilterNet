@@ -8,7 +8,7 @@ use ndarray_rand::rand::{prelude::IteratorRandom, seq::SliceRandom, Rng};
 use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
 use thiserror::Error;
 
-use self::BiquadFilters::*;
+use self::BiquadFilter::*;
 use crate::transforms::*;
 pub use crate::util::seed_from_u64;
 use crate::util::*;
@@ -258,8 +258,8 @@ fn biquad_filter(x: &mut Array2<f32>, b: &[f32; 3], a: &[f32; 3]) {
     }
 }
 
-#[derive(Clone, Copy)]
-enum BiquadFilters {
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum BiquadFilter {
     HighShelf,
     LowShelf,
     HighPass,
@@ -267,29 +267,65 @@ enum BiquadFilters {
     PeakingEQ,
     Notch,
 }
-impl BiquadFilters {
-    pub fn iterator() -> impl Iterator<Item = BiquadFilters> {
+impl BiquadFilter {
+    pub fn iterator() -> impl Iterator<Item = BiquadFilter> {
         [HighShelf, LowShelf, HighPass, LowPass, PeakingEQ, Notch].iter().copied()
     }
 }
 
+/// Apply random biquad filters based on https://www.w3.org/TR/audio-eq-cookbook/
+/// 
+/// # Available filters:
+///  * LowPass
+///  * LowShelf
+///  * HighPass
+///  * HighShelf
+///  * PeakingEQ
+///  * Notch
 #[derive(Clone)]
 pub struct RandBiquadFilter {
     prob: f32,
     sr: Option<usize>,
     n_freqs: usize,
-    f_low: usize,
-    f_high: usize,
     gain_db_low: f32,
     gain_db_high: f32,
     q_low: f32,
     q_high: f32,
-    filters: Vec<BiquadFilters>,
+    filters: Vec<BiquadFilter>,
+    equalize_rms: bool,
 }
 impl RandBiquadFilter {
     pub fn with_sr(mut self, sr: usize) -> Self {
         self.sr = Some(sr);
         self
+    }
+    pub(crate) fn apply(
+        &self,
+        x: &mut Array2<f32>,
+        filter: BiquadFilter,
+        freq: f32,
+        q: f32,
+        gain_db: Option<f32>,
+    ) {
+        let sr = self.sr.unwrap();
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "Augmentation RandBiquadFilter (filter: {:?}, freq: {}, q: {}, db: {})",
+                filter,
+                freq,
+                q,
+                gain_db.unwrap_or_default()
+            );
+        }
+        let (b, a) = match filter {
+            HighShelf => high_shelf(freq, gain_db.unwrap(), q, sr),
+            LowShelf => low_shelf(freq, gain_db.unwrap(), q, sr),
+            HighPass => high_pass(freq, q, sr),
+            LowPass => low_pass(freq, q, sr),
+            PeakingEQ => peaking_eq(freq, gain_db.unwrap(), q, sr),
+            Notch => notch(freq, q, sr),
+        };
+        biquad_filter(x, &b, &a);
     }
 }
 impl Transform for RandBiquadFilter {
@@ -300,39 +336,43 @@ impl Transform for RandBiquadFilter {
         };
         if self.sr.is_none() {
             return Err(AugmentationError::NotInitialized {
-                transform: "RandEQ".into(),
+                transform: "RandBiquadFilter".into(),
                 msg: "No sampling rate provided.".into(),
             });
         }
-        let sr = self.sr.unwrap();
         let mut rng = thread_rng()?;
         if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
             return Ok(());
         }
+        let rms = x.map(|&x| x.powi(2)).mean().unwrap().sqrt();
         for _ in 0..rng.uniform_inclusive(1, self.n_freqs) {
-            let freq = rng.log_uniform(self.f_low as f32, self.f_high as f32);
+            let filter = self.filters.choose(&mut rng).unwrap();
+            let (f_low, f_high)=match filter {
+                LowPass  => (4000, 8000),
+                HighShelf => (1000, 8000),
+                HighPass => (40, 400),
+                LowShelf => (40, 1000),
+                _ => (40, 4000),
+            };
+            let freq = rng.log_uniform(f_low as f32, f_high as f32);
             let gain_db = rng.uniform_inclusive(self.gain_db_low, self.gain_db_high);
             let q = rng.uniform_inclusive(self.q_low, self.q_high);
-            let (b, a) = match self.filters.choose(&mut rng) {
-                None => continue,
-                Some(HighShelf) => high_shelf(freq, gain_db, q, sr),
-                Some(LowShelf) => low_shelf(freq, gain_db, q, sr),
-                Some(HighPass) => high_pass(freq, q, sr),
-                Some(LowPass) => low_pass(freq, q, sr),
-                Some(PeakingEQ) => peaking_eq(freq, gain_db, q, sr),
-                Some(Notch) => notch(freq, q, sr),
-            };
-            biquad_filter(x, &b, &a);
+            self.apply(x, *filter, freq, q, Some(gain_db));
         }
-        // Guard against clipping
-        let max = find_max_abs(x.iter())?;
-        if (max - 1.) > 1e-10 {
-            let f = 1. / (max + 1e-10);
-            log::debug!(
-                "RandBiquadFilter: Clipping detected. Reducing gain by: {}",
-                max
-            );
-            x.mapv_inplace(|s| s * f);
+        if self.equalize_rms {
+            let rms_new = x.map(|&x| x.powi(2)).mean().unwrap().sqrt();
+            x.mapv_inplace(|x| x * rms / rms_new)
+        } else {
+            // Guard against clipping
+            let max = find_max_abs(x.iter())?;
+            if (max - 1.) > 1e-10 {
+                let f = 1. / (max + 1e-10);
+                log::debug!(
+                    "RandBiquadFilter: Clipping detected. Reducing gain by: {}",
+                    max
+                );
+                x.mapv_inplace(|s| s * f);
+            }
         }
         Ok(())
     }
@@ -341,13 +381,12 @@ impl Transform for RandBiquadFilter {
             prob: p,
             sr: None,
             n_freqs: 3,
-            f_low: 40,
-            f_high: 8000,
             gain_db_high: 15.,
             gain_db_low: -15.,
             q_low: 0.5,
             q_high: 1.5,
-            filters: BiquadFilters::iterator().collect(),
+            filters: BiquadFilter::iterator().collect(),
+            equalize_rms: true,
         }
     }
     fn box_clone(&self) -> Box<dyn Transform + Send> {
@@ -513,6 +552,9 @@ impl Transform for RandClipping {
             let c_range = self.c_range.as_ref().unwrap();
             rng.uniform_inclusive(c_range.start * max, c_range.end * max)
         };
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!("Augmentation RandClipping (c: {})", c);
+        }
         self.clip_inplace(x, c);
         Ok(())
     }
@@ -609,6 +651,9 @@ fn gen_noise_with_scratch(
         mask.mapv_inplace(|x| x.powf(f_decay));
         spec = spec / mask.to_shape([1, sr / 2 + 1]).unwrap();
         ifft_with_output(&mut spec, fft_inverse, scratch_inverse, &mut noise)?;
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!("Generated random noise (f_decay : {})", f_decay);
+        }
         noise
     } else {
         // Fast path for white noise
@@ -830,6 +875,8 @@ impl RandReverbSim {
         if !(apply_speech || apply_noise) {
             return Ok(None);
         }
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         let mut rir = match rir_callback() {
             Ok(r) => r,
             Err(e) => {
@@ -879,6 +926,10 @@ impl RandReverbSim {
             self.pad(noise, fft_size)?;
             *noise = self.convolve(noise, rir_noise, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
+        }
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!("Calculated RandReverbSim in {:?}", Instant::now() - t0);
         }
         Ok(speech_rev)
     }
@@ -950,10 +1001,19 @@ impl BandwidthLimiterAugmentation {
         }
     }
     pub fn transform(&self, audio: &mut Array2<f32>, max_freq: usize) -> Result<usize> {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         let mut rng = thread_rng()?;
         let &f = self.cut_off_freqs.iter().filter(|&f| *f < max_freq).choose(&mut rng).unwrap();
         let d = low_pass_resample(audio.view(), f, self.sr).unwrap();
         audio.clone_from(&d);
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "Calculated BandwidthLimiterAugmentation in {:?}",
+                Instant::now() - t0
+            );
+        }
         Ok(f)
     }
 }
@@ -1085,11 +1145,20 @@ impl AirAbsorptionAugmentation {
         self.air_absorption.get(key)
     }
     pub fn apply(&self, spec: &mut Array3<Complex32>, coefs: &[f32; 9], d: f32) {
+        #[cfg(feature = "dataset_timings")]
+        let t0 = Instant::now();
         let atten_vals = coefs.map(|c| (-d * c).exp());
         let n_freqs = spec.len_of(Axis(2));
         let atten_vals = self.interp_atten(&atten_vals, n_freqs);
         for (mut f, a) in spec.axis_iter_mut(Axis(2)).zip(atten_vals) {
             f.mapv_inplace(|x| x.scale(a));
+        }
+        #[cfg(feature = "dataset_timings")]
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "Calculated AirAbsorptionAugmentation in {:?}",
+                Instant::now() - t0
+            );
         }
     }
 }
@@ -1279,7 +1348,7 @@ mod tests {
         let sr = reader.sr;
         let s_orig = reader.samples_arr2()?;
         let ch = s_orig.len_of(Axis(0)) as u16;
-        let f = 8000.;
+        let f = 1000.;
         let gain = -18.;
         let q = 0.5;
         // Low pass
