@@ -1,6 +1,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt;
+#[cfg(feature = "dataset_timings")]
+use std::fmt::Write as _;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter};
@@ -981,7 +983,7 @@ impl TdDataset {
                 self.ds_codec(ds_name)
             );
             #[cfg(feature = "dataset_timings")]
-            msg.push_str(&format!(" in {} ms", (Instant::now() - t0).as_millis()));
+            let _ = write!(msg, " in {} ms", (Instant::now() - t0).as_millis());
             log::trace!("{}", msg);
         }
         debug_assert!(x.len_of(Axis(1)) <= max_samples);

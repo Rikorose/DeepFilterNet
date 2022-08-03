@@ -52,7 +52,7 @@ fn main() -> Result<()> {
         true => log::LevelFilter::max(),
         _ => log::LevelFilter::Info,
     };
-    let _ = env_logger::builder().filter_level(level).init();
+    env_logger::builder().filter_level(level).init();
 
     seed_from_u64(args.seed.unwrap_or(42));
     let cfg = DatasetConfigJson::open(args.cfg.to_str().unwrap()).unwrap();
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
     };
     let mut ds = ds_builder.dataset(cfg.split_config(split)).build_fft_dataset()?;
     ds.generate_keys()?;
-    let n_samples = args.num.unwrap_or(ds.len());
+    let n_samples = args.num.unwrap_or_else(|| ds.len());
     let mut rng = thread_rng().unwrap();
     let iter = match args.randomize {
         true => (0..ds.len()).choose_multiple(&mut rng, n_samples),
