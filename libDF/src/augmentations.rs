@@ -195,7 +195,7 @@ fn high_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3])
 
     let b0 = (1. + w0.cos()) / 2.;
     let b1 = -(1. + w0.cos());
-    let b2 = (1. - w0.cos()) / 2.;
+    let b2 = (1. + w0.cos()) / 2.;
     let a0 = 1. + alpha;
     let a1 = -2. * w0.cos();
     let a2 = 1. - alpha;
