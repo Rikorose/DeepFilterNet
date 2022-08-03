@@ -659,8 +659,8 @@ fn gen_noise_with_scratch(
         // Fast path for white noise
         Array::random((ch, sr), Normal::new(-1., 1.).unwrap())
     };
-    let max = find_max(&noise)? * 1.1;
-    noise /= max;
+    let f = thread_rng()?.uniform(1.1, 100.) / find_max(&noise)?;
+    noise *= f;
     let mut noises = concatenate(
         Axis(1),
         &vec![noise.view(); (num_samples as f32 / sr as f32).ceil() as usize],
