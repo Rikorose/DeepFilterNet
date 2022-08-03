@@ -1,7 +1,7 @@
 [package]
 name = "deep_filter"
 version = "0.2.6-pre"
-authors = ["Hendrik Schröter <h.schroeter@pm.me>"]
+authors = ["Hendrik Schröter"]
 edition = "2021"
 description = "Noise supression using deep filtering"
 repository = "https://github.com/Rikorose/DeepFilterNet"
@@ -50,7 +50,7 @@ dataset_timings = []
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
 cache = ["sled", "bincode"]
-bin = ["anyhow", "ctrlc"]
+bin = ["clap", "anyhow", "ctrlc", "log", "env_logger", "rand", "ndarray-rand"]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -80,6 +80,8 @@ bincode = { version = "2.0.0-rc", default-features = false, features = [
   "std",
   "serde",
 ], optional = true }
+env_logger = { version = "0.9", optional = true }
+clap = { version = "3.2", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 rand = "0.8"
