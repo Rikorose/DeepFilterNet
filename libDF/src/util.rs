@@ -25,7 +25,7 @@ pub enum UtilsError {
 }
 
 static LOGGER_INIT: Once = Once::new();
-pub(crate) struct SeededRng {
+pub struct SeededRng {
     rng: Rc<UnsafeCell<Xoshiro256PlusPlus>>,
 }
 thread_local!(
@@ -54,7 +54,7 @@ impl RngCore for SeededRng {
     }
 }
 
-pub(crate) fn thread_rng() -> Result<SeededRng> {
+pub fn thread_rng() -> Result<SeededRng> {
     if !(SEEDED.with(|s| *s.borrow())) {
         return Err(UtilsError::SeedNotInitialized);
     }
