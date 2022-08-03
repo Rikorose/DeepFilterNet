@@ -274,7 +274,7 @@ impl BiquadFilter {
 }
 
 /// Apply random biquad filters based on https://www.w3.org/TR/audio-eq-cookbook/
-/// 
+///
 /// # Available filters:
 ///  * LowPass
 ///  * LowShelf
@@ -347,8 +347,8 @@ impl Transform for RandBiquadFilter {
         let rms = x.map(|&x| x.powi(2)).mean().unwrap().sqrt();
         for _ in 0..rng.uniform_inclusive(1, self.n_freqs) {
             let filter = self.filters.choose(&mut rng).unwrap();
-            let (f_low, f_high)=match filter {
-                LowPass  => (4000, 8000),
+            let (f_low, f_high) = match filter {
+                LowPass => (4000, 8000),
                 HighShelf => (1000, 8000),
                 HighPass => (40, 400),
                 LowShelf => (40, 1000),
