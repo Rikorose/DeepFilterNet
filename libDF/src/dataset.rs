@@ -479,7 +479,7 @@ impl DatasetBuilder {
                 let ds_path = Path::new(&self.ds_dir);
                 let hash = {
                     let mut hash_vec: Vec<u64> =
-                        ds.config.iter().map(|c| c.hash().unwrap()).collect();
+                        ds.config.values().map(|c| c.hash().unwrap()).collect();
                     hash_vec.push(fft_size as u64);
                     hash_vec.push(hop_size as u64);
                     hash_vec.push(nb_erb as u64);
@@ -576,6 +576,7 @@ impl DatasetBuilder {
             );
             hdf5_handles.insert(ds.name(), ds);
         }
+        ds_keys.sort_by(|a, b| a.1.cmp(&b.1));
         if hdf5_handles.is_empty() {
             return Err(DfDatasetError::NoDatasetFoundError);
         }
@@ -980,7 +981,7 @@ impl TdDataset {
                 self.ds_codec(ds_name)
             );
             #[cfg(feature = "dataset_timings")]
-            msg.push_str(format!(" in {} ms", (Instant::now() - t0).as_millis()));
+            msg.push_str(&format!(" in {} ms", (Instant::now() - t0).as_millis()));
             log::trace!("{}", msg);
         }
         debug_assert!(x.len_of(Axis(1)) <= max_samples);
