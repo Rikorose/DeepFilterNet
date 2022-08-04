@@ -499,6 +499,22 @@ impl NonNan {
     }
 }
 
+pub(crate) fn nan_to_num<'a, I>(vals: I, log_context: Option<&str>)
+where
+    I: IntoIterator<Item = &'a mut f32>,
+{
+    let mut logged = false;
+    for x in vals.into_iter() {
+        if !x.is_infinite() {
+            if !logged {
+                log::warn!("Found NaN {}", log_context.unwrap_or_default());
+                logged = true;
+            }
+            *x = 0.
+        }
+    }
+}
+
 pub(crate) fn find_max<'a, I>(vals: I) -> Result<f32>
 where
     I: IntoIterator<Item = &'a f32>,
