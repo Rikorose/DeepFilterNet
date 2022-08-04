@@ -1169,6 +1169,13 @@ impl Dataset<f32> for TdDataset {
             speech_distorted = istft(x.view_mut(), &mut state, false);
             speech_distorted.slice_axis_inplace(Axis(1), Slice::from(0..speech.len_of(Axis(1))));
         }
+        // Guard against NaN
+        nan_to_num(&mut speech, Some("(get_sample(): speech)"));
+        nan_to_num(
+            &mut speech_distorted,
+            Some("(get_sample(): speech_distorted)"),
+        );
+        nan_to_num(&mut noise, Some("(get_sample(): noise)"));
         #[cfg(feature = "dataset_timings")]
         let t_d = Instant::now(); // distortions
         let (speech, _, noisy) = mix_audio_signal(
