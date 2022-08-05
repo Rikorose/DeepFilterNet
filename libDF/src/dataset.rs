@@ -718,12 +718,7 @@ pub struct FftDataset {
 }
 impl FftDataset {
     pub fn get_hdf5cfg(&self, filename: &str) -> Option<&Hdf5Cfg> {
-        for cfg in &self.ds.config {
-            if cfg.filename() == filename {
-                return Some(cfg);
-            }
-        }
-        None
+        self.ds.config.iter().find(|&cfg| cfg.filename() == filename)
     }
 }
 impl Dataset<Complex32> for FftDataset {

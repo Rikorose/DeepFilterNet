@@ -251,7 +251,8 @@ impl DataLoader {
         self.out_receiver = Some(out_receiver);
         let ds = self.get_ds_arc(split);
         let (in_sender, in_receiver) = unbounded();
-        for idx in self.idcs.lock().unwrap().drain(..) {
+        let idcs = self.idcs.lock().unwrap().drain(..).collect::<Vec<(usize, isize)>>();
+        for idx in idcs {
             in_sender.send(idx).expect("Could not send index");
         }
         in_sender.send((0, -1)).expect("Could not send index");
