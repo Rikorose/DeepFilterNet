@@ -190,7 +190,7 @@ def load_audio(
                 "Resampling..."
             )
         audio = resample(audio, orig_sr, sr, **rkwargs)
-    return audio, info
+    return audio.contiguous(), info
 
 
 def save_audio(
