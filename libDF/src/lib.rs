@@ -148,10 +148,12 @@ impl DFState {
 
     pub fn analysis(&mut self, input: &[f32], output: &mut [Complex32]) {
         debug_assert_eq!(input.len(), self.frame_size);
+        debug_assert_eq!(output.len(), self.freq_size);
         frame_analysis(input, output, self)
     }
 
     pub fn synthesis(&mut self, input: &mut [Complex32], output: &mut [f32]) {
+        debug_assert_eq!(input.len(), self.freq_size);
         debug_assert_eq!(output.len(), self.frame_size);
         frame_synthesis(input, output, self)
     }
@@ -166,7 +168,7 @@ impl Default for DFState {
 pub fn band_mean_norm_freq(xs: &[Complex32], xout: &mut [f32], state: &mut [f32], alpha: f32) {
     debug_assert_eq!(xs.len(), state.len());
     debug_assert_eq!(xout.len(), state.len());
-    for ((x, s), xo) in xs.iter().zip(state.iter_mut()).zip(xout.iter_mut()) {
+    for (x, s, xo) in zip3(xs.iter(), state.iter_mut(), xout.iter_mut()) {
         let xabs = x.norm();
         *s = xabs * (1. - alpha) + *s * alpha;
         *xo = xabs - *s;
@@ -275,9 +277,11 @@ fn frame_analysis(input: &[f32], output: &mut [Complex32], state: &mut DFState) 
     let (buf_first, buf_second) = buf.split_at_mut(state.window_size - state.frame_size);
     let (window_first, window_second) = state.window.split_at(state.window_size - state.frame_size);
     let analysis_split = state.analysis_mem.len() - state.frame_size;
-    for ((&y, &w), x) in
-        state.analysis_mem.iter().zip(window_first.iter()).zip(buf_first.iter_mut())
-    {
+    for (&y, &w, x) in zip3(
+        state.analysis_mem.iter(),
+        window_first.iter(),
+        buf_first.iter_mut(),
+    ) {
         *x = y * w;
     }
     // Second part of the window on the new input frame
@@ -308,7 +312,7 @@ fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFSt
     let mut x = state.fft_inverse.make_output_vec();
     match state
         .fft_inverse
-        .process_with_scratch(input, &mut x[..], &mut state.synthesis_scratch)
+        .process_with_scratch(input, &mut x, &mut state.synthesis_scratch)
     {
         Err(realfft::FftError::InputValues(_, _)) => (),
         Err(e) => Err(e).unwrap(),
@@ -339,7 +343,7 @@ fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFSt
 
 fn apply_window(xs: &[f32], window: &[f32]) -> Vec<f32> {
     let mut out = vec![0.; window.len()];
-    for ((&x, &w), o) in xs.iter().zip(window.iter()).zip(out.iter_mut()) {
+    for (&x, &w, o) in zip3(xs.iter(), window.iter(), out.iter_mut()) {
         *o = x * w;
     }
     out
@@ -352,6 +356,15 @@ where
     for (x, &w) in xs.iter_mut().zip(window) {
         *x *= w;
     }
+}
+
+fn zip3<A, B, C>(a: A, b: B, c: C) -> impl Iterator<Item = (A::Item, B::Item, C::Item)>
+where
+    A: IntoIterator,
+    B: IntoIterator,
+    C: IntoIterator,
+{
+    a.into_iter().zip(b.into_iter().zip(c)).map(|(x, (y, z))| (x, y, z))
 }
 
 #[cfg(test)]
