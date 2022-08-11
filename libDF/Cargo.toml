@@ -47,6 +47,7 @@ dataset = [
   "log",
 ]
 dataset_timings = []
+logging = ["log"]
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
 cache = ["sled", "bincode"]

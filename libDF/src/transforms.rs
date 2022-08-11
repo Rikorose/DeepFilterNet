@@ -499,16 +499,19 @@ impl NonNan {
     }
 }
 
-pub(crate) fn nan_to_num<'a, I>(vals: I, log_context: Option<&str>)
+pub(crate) fn nan_to_num<'a, I>(vals: I, _log_context: Option<&str>)
 where
     I: IntoIterator<Item = &'a mut f32>,
 {
-    let mut logged = false;
+    #[allow(unused_mut)]
+    let mut _logged = false;
     for x in vals.into_iter() {
-        if !x.is_infinite() {
-            if !logged {
-                log::warn!("Found NaN {}", log_context.unwrap_or_default());
-                logged = true;
+        if !x.is_finite() {
+            #[cfg(any(feature = "logging", feature = "dataset"))]
+            if !_logged {
+                dbg!(&x, _log_context.as_ref());
+                log::warn!("Found NaN {}", _log_context.unwrap_or_default());
+                _logged = true;
             }
             *x = 0.
         }
