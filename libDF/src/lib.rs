@@ -115,8 +115,7 @@ impl DFState {
             let sin = (0.5 * pi * (i as f64 + 0.5) / window_size_h as f64).sin();
             *w = (0.5 * pi * sin * sin).sin() as f32;
         }
-        let wnorm =
-            1_f32 / window.iter().map(|x| x * x).sum::<f32>() * frame_size as f32 / fft_size as f32;
+        let wnorm = 1. / (window_size.pow(2) as f32 / (2 * frame_size) as f32);
 
         DFState {
             sr,
