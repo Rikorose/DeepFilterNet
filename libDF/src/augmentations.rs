@@ -710,22 +710,6 @@ impl NoiseGenerator {
         num_channels: u16,
         num_samples: usize,
     ) -> Result<Array2<f32>> {
-        self.generate_with_scratch(
-            f_decay,
-            num_channels,
-            num_samples,
-            &mut self.fft_forward.make_scratch_vec(),
-            &mut self.fft_inverse.make_scratch_vec(),
-        )
-    }
-    pub fn generate_with_scratch(
-        &self,
-        f_decay: f32,
-        num_channels: u16,
-        num_samples: usize,
-        scratch_forward: &mut [Complex32],
-        scratch_inverse: &mut [Complex32],
-    ) -> Result<Array2<f32>> {
         gen_noise_with_scratch(
             f_decay,
             num_channels,
@@ -733,8 +717,8 @@ impl NoiseGenerator {
             self.sr,
             self.fft_forward.as_ref(),
             self.fft_inverse.as_ref(),
-            scratch_forward,
-            scratch_inverse,
+            &mut self.fft_forward.make_scratch_vec(),
+            &mut self.fft_inverse.make_scratch_vec(),
         )
     }
     pub fn generate_random_noise(
@@ -746,11 +730,22 @@ impl NoiseGenerator {
     ) -> Result<Option<Array2<f32>>> {
         debug_assert!(f_decay_min < f_decay_max);
         let mut rng = thread_rng()?;
+        let f_decay = rng.uniform(f_decay_min, f_decay_max);
+        Ok(Some(self.generate(f_decay, num_channels, num_samples)?))
+    }
+    pub fn maybe_generate_random_noise(
+        &self,
+        f_decay_min: f32,
+        f_decay_max: f32,
+        num_channels: u16,
+        num_samples: usize,
+    ) -> Result<Option<Array2<f32>>> {
+        debug_assert!(f_decay_min < f_decay_max);
+        let mut rng = thread_rng()?;
         if self.p == 0. || self.p < rng.uniform(0., 1.) {
             return Ok(None);
         }
-        let f_decay = rng.uniform(f_decay_min, f_decay_max);
-        Ok(Some(self.generate(f_decay, num_channels, num_samples)?))
+        self.generate_random_noise(f_decay_min, f_decay_max, num_channels, num_samples)
     }
 }
 

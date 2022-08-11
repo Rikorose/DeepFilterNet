@@ -589,7 +589,7 @@ impl DatasetBuilder {
         let sp_augmentations = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(0.25)),
             Box::new(RandLFilt::default_with_prob(0.25)),
-            Box::new(RandBiquadFilter::default_with_prob(0.1).with_sr(self.sr)),
+            // Box::new(RandBiquadFilter::default_with_prob(0.1).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
         ]);
         let mut sp_distortions_td = Compose::new(Vec::new());
@@ -611,7 +611,7 @@ impl DatasetBuilder {
         }
         let mut ns_augmentations = Compose::new(vec![
             Box::new(RandLFilt::default_with_prob(0.25)),
-            Box::new(RandBiquadFilter::default_with_prob(0.25).with_sr(self.sr)),
+            // Box::new(RandBiquadFilter::default_with_prob(0.25).with_sr(self.sr)),
             Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
         ]);
         if ds_split == Split::Train {
@@ -1062,7 +1062,7 @@ impl TdDataset {
     fn load_aug_noise(&self, rng: &mut SeededRng) -> Result<(Array2<f32>, f32)> {
         // In 5% us a randomly generated noise signal instead of a real noise.
         if let Some(ns) =
-            self.noise_generator.generate_random_noise(-2., 2., 1, self.max_samples)?
+            self.noise_generator.maybe_generate_random_noise(-2., 2., 1, self.max_samples)?
         {
             return Ok((ns, *[-24., -12., -6., 0.].choose(rng).unwrap()));
         }
@@ -1076,6 +1076,9 @@ impl TdDataset {
                 Ok(n) => n,
             };
             if ns.len_of(Axis(1)) < 100 {
+                continue;
+            }
+            if find_max_abs(ns.as_slice().unwrap())? < 1e-10 {
                 continue;
             }
             self.ns_augmentations.transform(&mut (&mut ns).into())?;
