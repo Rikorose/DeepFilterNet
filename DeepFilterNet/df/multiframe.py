@@ -146,8 +146,8 @@ class CRM(MultiFrameModule):
 
 
 class DF(MultiFrameModule):
-    conj: Final[bool]
     """Deep Filtering."""
+    conj: Final[bool]
 
     def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
         super().__init__(num_freqs, frame_size, lookahead)

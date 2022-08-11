@@ -80,6 +80,8 @@ class PytorchDataLoader:
         batch_size_eval: Optional[int] = None,  # Different batch size for evaluation
         p_reverb: Optional[float] = None,  # Percentage of reverberant speech/noise samples
         p_bw_ext: Optional[float] = None,  # Percentage of bandwidth limited signal for extension
+        p_clipping: Optional[float] = None,  # Clipping distortion applied to the (noisy) speech
+        p_air_absorption: Optional[float] = None,  # Distortion applied to the (noisy) speech
         overfit: bool = False,  # Overfit on one epoch
         cache_valid: bool = False,  # Cache validiation dataset
         seed: int = 0,
@@ -111,6 +113,8 @@ class PytorchDataLoader:
             norm_alpha=norm_alpha,
             p_reverb=p_reverb,
             p_bw_ext=p_bw_ext,
+            p_clipping=p_clipping,
+            p_air_absorption=p_air_absorption,
             prefetch=prefetch_loader,
             drop_last=drop_last,
             overfit=overfit,
