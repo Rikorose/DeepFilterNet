@@ -829,6 +829,12 @@ impl RandReverbSim {
         if self.prob_noise == 0. && self.prob_speech == 0. {
             return Ok(None);
         }
+        let mut rng = thread_rng()?;
+        let apply_speech = self.prob_speech > rng.uniform(0f32, 1f32);
+        let apply_noise = self.prob_noise > rng.uniform(0f32, 1f32);
+        if !(apply_speech || apply_noise) {
+            return Ok(None);
+        }
         let mut rir = match rir_callback() {
             Ok(r) => r,
             Err(e) => {
@@ -838,12 +844,6 @@ impl RandReverbSim {
                 )));
             }
         };
-        let mut rng = thread_rng()?;
-        let apply_speech = self.prob_speech > rng.uniform(0f32, 1f32);
-        let apply_noise = self.prob_noise > rng.uniform(0f32, 1f32);
-        if !(apply_speech || apply_noise) {
-            return Ok(None);
-        }
         let orig_len = speech.len_of(Axis(1));
         // Maybe resample RIR as augmentation
         if self.prob_resample > rng.uniform(0f32, 1f32) {
