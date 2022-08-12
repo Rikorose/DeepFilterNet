@@ -656,7 +656,6 @@ impl DatasetBuilder {
             seed,
             ds_len,
             bw_limiter,
-            p_bandwidth_ext: self.p_bandwidth_ext,
         })
     }
     pub fn dataset(mut self, datasets: DatasetSplitConfig) -> Self {
@@ -882,7 +881,6 @@ pub struct TdDataset {
     seed: u64,
     ds_len: usize,
     bw_limiter: Option<BandwidthLimiterAugmentation>, // Extend bandwidth via spectal translation
-    p_bandwidth_ext: Option<f32>, // Extend bandwidth via spectal translation
 }
 
 impl TdDataset {

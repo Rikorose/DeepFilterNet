@@ -737,27 +737,4 @@ mod tests {
         assert_eq!(max, 10.);
         Ok(())
     }
-
-    #[test]
-    fn test_ext_bandwidth_spectral() {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
-        let sr = reader.sr;
-        let fft_size = sr / 50;
-        let hop_size = fft_size / 2;
-        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
-        let sample = reader.samples_arr2().unwrap();
-        let mut x = stft(sample.view(), &mut state, true);
-
-        let f_cut_off = 20000;
-        let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
-        write_wav_arr2("../out/sample_f2.wav", sample_f2.view(), sr as u32).unwrap();
-        let mut x2 = stft(sample_f2.view(), &mut state, true);
-        ext_bandwidth_spectral(&mut x2, f_cut_off, sr, Some(4));
-
-        let sample = istft(x.view_mut(), &mut state, true);
-        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
-        let sample_f2 = istft(x2.view_mut(), &mut state, true);
-        write_wav_arr2("../out/sample_f2_ext.wav", sample_f2.view(), sr as u32).unwrap();
-    }
 }
