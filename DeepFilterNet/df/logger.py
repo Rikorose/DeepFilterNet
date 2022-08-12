@@ -68,11 +68,17 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
 
 
 def warn_once(message, *args, **kwargs):
-    logger.log("WARNONCE", message, *args, **kwargs)
+    try:
+        logger.log("WARNONCE", message, *args, **kwargs)
+    except ValueError:
+        logger.warning(message, *args, **kwargs)
 
 
 def log_deprecated(message, *args, **kwargs):
-    logger.log("DEPRECATED", message, *args, **kwargs)
+    try:
+        logger.log("DEPRECATED", message, *args, **kwargs)
+    except ValueError:
+        logger.warning(message, *args, **kwargs)
 
 
 class Formatter:
