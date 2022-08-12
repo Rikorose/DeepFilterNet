@@ -9,7 +9,7 @@ from torch import Tensor
 from torchaudio.backend.common import AudioMetaData
 
 from df.logger import warn_once
-from df.utils import get_git_root, get_cache_dir, download_file
+from df.utils import download_file, get_cache_dir, get_git_root
 
 
 def load_audio(
