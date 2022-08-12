@@ -22,7 +22,8 @@ from df.enhance import df_features
 from df.logger import log_metrics
 from df.model import ModelParams
 from df.sepm import composite as composite_py
-from df.utils import as_complex, get_device, get_resample_params, load_audio, resample, save_audio
+from df.utils import as_complex, get_device
+from df.io import get_resample_params, load_audio, resample, save_audio
 from libdf import DF
 
 HAS_OCTAVE = True
