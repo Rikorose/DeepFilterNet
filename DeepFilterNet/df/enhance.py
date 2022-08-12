@@ -5,19 +5,17 @@ import warnings
 from typing import Optional, Tuple, Union
 
 import torch
-import torchaudio as ta
 from loguru import logger
-from numpy import ndarray
 from torch import Tensor, nn
 from torch.nn import functional as F
-from torchaudio.backend.common import AudioMetaData
 
 from df import config
 from df.checkpoint import load_model as load_model_cp
-from df.logger import init_logger, warn_once
+from df.io import load_audio, resample, save_audio
+from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
-from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha, resample
+from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
 from libdf import DF, erb, erb_norm, unit_norm
 
 
@@ -158,66 +156,6 @@ def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor,
         erb_feat = erb_feat.to(device)
         spec_feat = spec_feat.to(device)
     return spec, erb_feat, spec_feat
-
-
-def load_audio(
-    file: str, sr: Optional[int], verbose=True, **kwargs
-) -> Tuple[Tensor, AudioMetaData]:
-    """Loads an audio file using torchaudio.
-
-    Args:
-        file (str): Path to an audio file.
-        sr (int): Optionally resample audio to specified target sampling rate.
-        **kwargs: Passed to torchaudio.load(). Depends on the backend. The resample method
-            may be set via `method` which is passed to `resample()`.
-
-    Returns:
-        audio (Tensor): Audio tensor of shape [C, T], if channels_first=True (default).
-        info (AudioMetaData): Meta data of the original audio file. Contains the original sr.
-    """
-    ikwargs = {}
-    if "format" in kwargs:
-        ikwargs["format"] = kwargs["format"]
-    rkwargs = {}
-    if "method" in kwargs:
-        rkwargs["method"] = kwargs.pop("method")
-    info: AudioMetaData = ta.info(file, **ikwargs)
-    audio, orig_sr = ta.load(file, **kwargs)
-    if sr is not None and orig_sr != sr:
-        if verbose:
-            warn_once(
-                f"Audio sampling rate does not match model sampling rate ({orig_sr}, {sr}). "
-                "Resampling..."
-            )
-        audio = resample(audio, orig_sr, sr, **rkwargs)
-    return audio.contiguous(), info
-
-
-def save_audio(
-    file: str,
-    audio: Union[Tensor, ndarray],
-    sr: int,
-    output_dir: Optional[str] = None,
-    suffix: Optional[str] = None,
-    log: bool = False,
-    dtype=torch.int16,
-):
-    outpath = file
-    if suffix is not None:
-        file, ext = os.path.splitext(file)
-        outpath = file + f"_{suffix}" + ext
-    if output_dir is not None:
-        outpath = os.path.join(output_dir, os.path.basename(outpath))
-    if log:
-        logger.info(f"Saving audio file '{outpath}'")
-    audio = torch.as_tensor(audio)
-    if audio.ndim == 1:
-        audio.unsqueeze_(0)
-    if dtype == torch.int16 and audio.dtype != torch.int16:
-        audio = (audio * (1 << 15)).to(torch.int16)
-    if dtype == torch.float32 and audio.dtype != torch.float32:
-        audio = audio.to(torch.float32) / (1 << 15)
-    ta.save(outpath, audio, sr)
 
 
 @torch.no_grad()
