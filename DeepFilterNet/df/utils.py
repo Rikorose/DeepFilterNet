@@ -4,11 +4,10 @@ import os
 import random
 import subprocess
 from socket import gethostname
-from typing import Any, Dict, Set, Tuple, Union
+from typing import Any, Set, Tuple, Union
 
 import numpy as np
 import torch
-from appdirs import user_cache_dir
 from loguru import logger
 from torch import Tensor
 from torch._six import string_classes
@@ -17,37 +16,6 @@ from torch.types import Number
 
 from df.config import config
 from df.model import ModelParams
-
-try:
-    from torchaudio.functional import resample as ta_resample
-except ImportError:
-    from torchaudio.compliance.kaldi import resample_waveform as ta_resample  # type: ignore
-
-
-def get_resample_params(method: str) -> Dict[str, Any]:
-    params = {
-        "sinc_fast": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 16},
-        "sinc_best": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 64},
-        "kaiser_fast": {
-            "resampling_method": "kaiser_window",
-            "lowpass_filter_width": 16,
-            "rolloff": 0.85,
-            "beta": 8.555504641634386,
-        },
-        "kaiser_best": {
-            "resampling_method": "kaiser_window",
-            "lowpass_filter_width": 16,
-            "rolloff": 0.9475937167399596,
-            "beta": 14.769656459379492,
-        },
-    }
-    assert method in params.keys(), f"method must be one of {list(params.keys())}"
-    return params[method]
-
-
-def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
-    params = get_resample_params(method)
-    return ta_resample(audio, orig_sr, new_sr, **params)
 
 
 def get_device():
@@ -170,9 +138,13 @@ def check_manual_seed(seed: int = None):
 
 
 def get_git_root():
-    git_local_dir = os.path.dirname(os.path.abspath(__file__))
-    args = ["git", "-C", git_local_dir, "rev-parse", "--show-toplevel"]
-    return subprocess.check_output(args).strip().decode()
+    """Returns the top level git directory or None if not called within the git repository."""
+    try:
+        git_local_dir = os.path.dirname(os.path.abspath(__file__))
+        args = ["git", "-C", git_local_dir, "rev-parse", "--show-toplevel"]
+        return subprocess.check_output(args).strip().decode()
+    except subprocess.CalledProcessError:
+        return None
 
 
 def get_commit_hash():
@@ -258,4 +230,16 @@ def download_file(url: str, download_dir: str, extract: bool = False):
 
 
 def get_cache_dir():
-    return user_cache_dir("DeepFilterNet")
+    try:
+        from appdirs import user_cache_dir
+
+        return user_cache_dir("DeepFilterNet")
+    except ImportError:
+        import sys
+
+        if sys.platform == "linux":
+            return os.path.expanduser("~/.cache/DeepFilterNet/")
+        else:
+            raise ValueError(
+                "Could not get cache dir. Please install `appdirs` via `pip install appdirs`"
+            )

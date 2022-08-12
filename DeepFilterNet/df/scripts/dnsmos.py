@@ -7,9 +7,8 @@ import numpy.polynomial.polynomial as poly
 import torch
 from torch import Tensor
 
-from df.enhance import load_audio
 from df.evaluation_utils import as_numpy, dnsmos_api_req
-from df.utils import download_file, get_cache_dir
+from df.utils import download_file, get_cache_dir, load_audio
 
 URL_P808 = "https://dnsmos.azurewebsites.net/score"
 URL_P835 = "https://dnsmos.azurewebsites.net/v1/dnsmosp835/score"
