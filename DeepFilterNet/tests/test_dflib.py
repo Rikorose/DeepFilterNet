@@ -118,7 +118,7 @@ def test_timings(num=1000):
     import torch
 
     sr = 48000
-    x = get_test_sample(sr)
+    x = get_test_sample(sr).numpy()
     print("librosa: ", end="", flush=True)
     t = timeit.timeit(
         "librosa.stft(x, n_fft=960, hop_length=480, center=False)",

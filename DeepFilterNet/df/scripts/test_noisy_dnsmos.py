@@ -23,6 +23,7 @@ def main(args):
     noisy_dir = args.dataset_dir
     noisy_files = glob.glob(noisy_dir + "/*.wav")
     n = len(noisy_files)
+    assert n == 859
     logger.info(f"Evaluating DNSMOS on enhanced noisy files for dir: {noisy_dir} ({n} files)")
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
