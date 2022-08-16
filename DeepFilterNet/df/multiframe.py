@@ -1,9 +1,39 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Final
+from typing import Dict, Final, List
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+
+
+def as_windowed(x: Tensor, window_length: int, step: int = 1, dim: int = 1) -> Tensor:
+    """Returns a tensor with chunks of overlapping windows of the first dim of x.
+
+    Args:
+        x (Tensor): Input of shape [B, T, ...]
+        window_length (int): Length of each window
+        step (int): Step/hop of each window w.r.t. the original signal x
+        dim (int): Dimension on to apply the windowing
+
+    Returns:
+        windowed tensor (Tensor): Output tensor with shape (if dim==1)
+            [B, (N - window_length + step) // step, window_length, ...]
+    """
+    shape: List[int] = list(x.shape)
+    stride: List[int] = list(x.stride())
+    shape[dim] = torch.div(shape[dim] - window_length + step, step, rounding_mode="trunc")
+    if dim > 0:
+        shape.insert(dim + 1, window_length)
+        stride.insert(dim + 1, stride[dim])
+    else:
+        if dim == -1:
+            shape.append(window_length)
+            stride.append(stride[dim])
+        else:
+            shape.insert(dim, window_length)
+            stride.insert(dim, stride[dim])
+    stride[dim] = stride[dim] * step
+    return x.as_strided(shape, stride)
 
 
 class MultiFrameModule(nn.Module, ABC):
@@ -22,8 +52,9 @@ class MultiFrameModule(nn.Module, ABC):
     num_freqs: Final[int]
     frame_size: Final[int]
     need_unfold: Final[bool]
+    real: Final[bool]
 
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, real: bool = False):
         """Multi-Frame filtering module.
 
         Args:
@@ -35,9 +66,18 @@ class MultiFrameModule(nn.Module, ABC):
         super().__init__()
         self.num_freqs = num_freqs
         self.frame_size = frame_size
-        self.pad = nn.ConstantPad2d((0, 0, frame_size - 1, 0), 0.0)
+        self.real = real
+        if real:
+            self.pad_real = nn.ConstantPad3d((0, 0, 0, 0, frame_size - 1, 0), 0.0)
+        else:
+            self.pad = nn.ConstantPad2d((0, 0, frame_size - 1, 0), 0.0)
         self.need_unfold = frame_size > 1
         self.lookahead = lookahead
+
+    def spec_unfold_real(self, spec: Tensor):
+        if self.need_unfold:
+            return as_windowed(self.pad_real(spec), self.frame_size, 1, dim=-3)
+        return spec.unsqueeze(-1)
 
     def spec_unfold(self, spec: Tensor):
         """Pads and unfolds the spectrogram according to frame_size.
@@ -58,13 +98,19 @@ class MultiFrameModule(nn.Module, ABC):
             spec (Tensor): Spectrogram of shape [B, C, T, F, 2]
             coefs (Tensor): Spectrogram of shape [B, C, T, F, 2]
         """
-        spec_u = self.spec_unfold(torch.view_as_complex(spec))
-        coefs = torch.view_as_complex(coefs)
+        if self.real:
+            spec_u = self.spec_unfold_real(spec)
+        else:
+            spec_u = self.spec_unfold(torch.view_as_complex(spec))
+            coefs = torch.view_as_complex(coefs)
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         spec_f = self.forward_impl(spec_f, coefs)
         if self.training:
             spec = spec.clone()
-        spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
+        if self.real:
+            spec[..., : self.num_freqs, :] = spec_f
+        else:
+            spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
         return spec
 
     @staticmethod
@@ -123,12 +169,52 @@ def df(spec: Tensor, coefs: Tensor) -> Tensor:
 
     Args:
         spec (complex Tensor): Spectrogram of shape [B, C, T, F, N]
-        coefs (complex Tensor): Spectrogram of shape [B, C, N, T, F]
+        coefs (complex Tensor): Coefficients of shape [B, C, N, T, F]
 
     Returns:
         spec (complex Tensor): Spectrogram of shape [B, C, T, F]
     """
     return torch.einsum("...tfn,...ntf->...tf", spec, coefs)
+
+
+def df_real(spec: Tensor, coefs: Tensor) -> Tensor:
+    """Deep filter implemenation for real valued input Tensors. Requires unfolded spectrograms.
+
+    Args:
+        spec (real-valued Tensor): Spectrogram of shape [B, C, N, T, F, 2].
+        coefs (real-valued Tensor): Coefficients of shape [B, C, N, T, F, 2].
+
+    Returns:
+        spec (real-valued Tensor): Filtered Spectrogram of shape [B, C, T, F, 2]
+    """
+    b, c, _, t, f, _ = spec.shape
+    out = torch.empty((b, c, t, f, 2), dtype=spec.dtype, device=spec.device)
+    # real
+    out[..., 0] = (spec[..., 0] * coefs[..., 0]).sum(dim=2)
+    out[..., 0] -= (spec[..., 1] * coefs[..., 1]).sum(dim=2)
+    # imag
+    out[..., 1] = (spec[..., 0] * coefs[..., 1]).sum(dim=2)
+    out[..., 1] += (spec[..., 1] * coefs[..., 0]).sum(dim=2)
+    return out
+
+
+class DFreal(MultiFrameModule):
+    """Deep Filtering."""
+
+    conj: Final[bool]
+
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
+        super().__init__(num_freqs, frame_size, lookahead, real=True)
+        self.conj = conj
+
+    def forward_impl(self, spec: Tensor, coefs: Tensor):
+        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
+        if self.conj:
+            coefs = coefs.conj()
+        return df_real(spec, coefs)
+
+    def num_channels(self):
+        return self.frame_size * 2
 
 
 class CRM(MultiFrameModule):
@@ -324,6 +410,7 @@ class MvdrRtfPower(MultiFrameModule):
 MF_METHODS: Dict[str, MultiFrameModule] = {  # type: ignore
     "crm": CRM,
     "df": DF,
+    "df_real": DFreal,
     "mfwf_df": MfWfDf,
     "mfwf_df_sx": MfWfDf,
     "mfwf_psd": MfWfPsd,
