@@ -26,6 +26,7 @@ export PYTHONUSERBASE="/cluster/$USER/.python_packages"
 # Workaround for HDF5 on other file systems. All hdf5 files are opened in read
 # only mode; we do not need locks.
 export HDF5_USE_FILE_LOCKING='FALSE'
+export RUST_BACKTRACE=1
 
 PROJECT_NAME=DeepFilterNet
 DATA_DIR=${DATA_DIR:-$CLUSTER/Data/HDF5}     # Set to the directory containing the HDF5s
@@ -40,7 +41,7 @@ EXCLUDE=${EXCLUDE:-lme[49,170,171]}          # Slurm nodes to exclude
 
 if [ "$DEBUG" -eq 1 ]; then
   DEBUG="--debug"
-else
+elif [ "$DEBUG" -eq 0 ]; then
   DEBUG="--no-debug"
 fi
 
