@@ -335,7 +335,7 @@ class DfOp(nn.Module):
             "real_hidden_state_loop": self.forward_real_hidden_state_loop,
         }
         if method not in forward_methods.keys():
-            raise NotImplementedError(f"`method` must be one of {forward_methods.keys()}")
+            raise NotImplementedError(f"`method` must be one of {forward_methods.keys()}, but got '{method}'")
         if method == "real_hidden_state_loop":
             assert self.freq_bins >= self.df_bins
             self.spec_buf: Tensor

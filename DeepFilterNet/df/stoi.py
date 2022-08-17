@@ -6,7 +6,7 @@ from loguru import logger
 from torch import Tensor
 from torch.nn import functional as F
 
-from df.utils import resample
+from df.io import resample
 
 EPS = np.finfo("float").eps
 
