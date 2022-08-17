@@ -406,6 +406,20 @@ def run_epoch(
                         n_nans += 1
                         if n_nans > 10:
                             raise e
+                        os.makedirs(os.path.join(summary_dir, "nan"), exist_ok=True)
+                        for idx in range(clean.shape[0]):
+                            summary_write(
+                                clean.detach(),
+                                noisy.detach(),
+                                enh.detach(),
+                                batch.snr.detach(),
+                                lsnr.detach().float(),
+                                df_alpha,
+                                os.path.join(summary_dir, "nan"),
+                                mask_loss=losses.ml,
+                                prefix=split + f"_{idx}",
+                                idx=idx,
+                            )
                         continue
                     else:
                         raise e
@@ -444,7 +458,7 @@ def run_epoch(
                 df_alpha,
                 summary_dir,
                 mask_loss=losses.ml,
-                split=split,
+                prefix=split,
             )
     try:
         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
@@ -559,14 +573,16 @@ def summary_write(
     df_alpha: Optional[Tensor],
     summary_dir: str,
     mask_loss: Optional[MaskLoss] = None,
-    split="train",
+    prefix="train",
+    idx: Optional[int] = None,
 ):
     global state
     assert state is not None
 
     p = ModelParams()
     bs = snrs.shape[0]
-    idx = random.randrange(bs)
+    if idx is None:
+        idx = random.randrange(bs)
     snr = snrs[idx].detach().cpu().item()
 
     def synthesis(x: Tensor) -> Tensor:
@@ -576,25 +592,25 @@ def summary_write(
         ideal = mask_loss.erb_mask_compr(clean[idx], noisy[idx], compressed=False)
         ideal = noisy[idx] * mask_loss.erb_inv(ideal)
         torchaudio.save(
-            os.path.join(summary_dir, f"{split}_idealmask_snr{snr}.wav"), synthesis(ideal), p.sr
+            os.path.join(summary_dir, f"{prefix}_idealmask_snr{snr}.wav"), synthesis(ideal), p.sr
         )
     torchaudio.save(
-        os.path.join(summary_dir, f"{split}_clean_snr{snr}.wav"), synthesis(clean[idx]), p.sr
+        os.path.join(summary_dir, f"{prefix}_clean_snr{snr}.wav"), synthesis(clean[idx]), p.sr
     )
     torchaudio.save(
-        os.path.join(summary_dir, f"{split}_noisy_snr{snr}.wav"), synthesis(noisy[idx]), p.sr
+        os.path.join(summary_dir, f"{prefix}_noisy_snr{snr}.wav"), synthesis(noisy[idx]), p.sr
     )
     torchaudio.save(
-        os.path.join(summary_dir, f"{split}_enh_snr{snr}.wav"), synthesis(enh[idx]), p.sr
+        os.path.join(summary_dir, f"{prefix}_enh_snr{snr}.wav"), synthesis(enh[idx]), p.sr
     )
     np.savetxt(
-        os.path.join(summary_dir, f"{split}_lsnr_snr{snr}.txt"),
+        os.path.join(summary_dir, f"{prefix}_lsnr_snr{snr}.txt"),
         lsnr[idx].detach().cpu().numpy(),
         fmt="%.3f",
     )
     if df_alpha is not None:
         np.savetxt(
-            os.path.join(summary_dir, f"{split}_df_alpha_snr{snr}.txt"),
+            os.path.join(summary_dir, f"{prefix}_df_alpha_snr{snr}.txt"),
             df_alpha[idx].detach().cpu().numpy(),
         )
 
