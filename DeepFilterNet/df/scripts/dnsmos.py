@@ -1,5 +1,6 @@
 import argparse
 import os
+import warnings
 from typing import List, Tuple
 
 import numpy as np
@@ -21,7 +22,7 @@ COEFS_OVR = np.array([8.924546794696789354e-01, 6.609981731940616223e-01, 7.6002
 SR = 16000
 INPUT_LENGTH = 9
 
-ort_providers_all = [
+ORT_PROVIDERS_ALL = [
     (
         "CUDAExecutionProvider",
         {
@@ -34,12 +35,29 @@ ort_providers_all = [
     ),
     "CPUExecutionProvider",
 ]
-ort_providers_cpu = [
+ORT_PROVIDERS_CPU = [
     "CPUExecutionProvider",
 ]
+ORT_SESS = {}
 
 __a_tol = 1e-4
 __r_tol = 1e-4
+
+
+def get_ort_session(onnx: str):
+    global ORT_SESS
+
+    import onnxruntime as ort
+
+    if onnx not in ORT_SESS:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                sess = ort.InferenceSession(onnx, providers=ORT_PROVIDERS_ALL)
+        except ValueError:
+            sess = ort.InferenceSession(onnx, providers=ORT_PROVIDERS_CPU)
+        ORT_SESS[onnx] = sess
+    return ORT_SESS[onnx]
 
 
 def main(args):
@@ -120,17 +138,13 @@ def download_onnx_models():
     return sig, bak_ovr
 
 
-def dnsmos_local_raw(
+def dnsmos_local(
     audio: Tensor, sig: str, bak_ovr: str
 ) -> Tuple[List[float], List[float], List[float]]:
-    import onnxruntime as ort
+    assert len(audio) >= SR, f"Audio to short: {audio.shape}"
 
-    try:
-        session_sig = ort.InferenceSession(sig, providers=ort_providers_all)
-        session_bak_ovr = ort.InferenceSession(bak_ovr, providers=ort_providers_all)
-    except ValueError:
-        session_sig = ort.InferenceSession(sig, providers=ort_providers_cpu)
-        session_bak_ovr = ort.InferenceSession(bak_ovr, providers=ort_providers_cpu)
+    session_sig = get_ort_session(sig)
+    session_bak_ovr = get_ort_session(bak_ovr)
 
     if len(audio) < INPUT_LENGTH * SR:
         audio = np.pad(audio, (0, int(INPUT_LENGTH * SR - len(audio))), mode="wrap")
@@ -159,14 +173,7 @@ def dnsmos_local_raw(
         predicted_mos_sig_seg.append(mos_sig)
         predicted_mos_bak_seg.append(mos_bak)
         predicted_mos_ovr_seg.append(mos_ovr)
-    return predicted_mos_sig_seg, predicted_mos_bak_seg, predicted_mos_ovr_seg
 
-
-def dnsmos_local(audio: Tensor, sig: str, bak_ovr: str) -> Tuple[float, float, float]:
-    assert len(audio) >= SR, f"Audio to short: {audio.shape}"
-    predicted_mos_sig_seg, predicted_mos_bak_seg, predicted_mos_ovr_seg = dnsmos_local_raw(
-        audio, sig, bak_ovr
-    )
     mod_sig = np.mean(predicted_mos_sig_seg)
     mod_bak = np.mean(predicted_mos_bak_seg)
     mod_ovr = np.mean(predicted_mos_ovr_seg)
