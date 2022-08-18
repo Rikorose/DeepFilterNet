@@ -16,8 +16,8 @@ from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from df.io import resample
 from df.logger import init_logger
-from df.utils import resample
 
 
 def write_to_h5(
@@ -137,27 +137,34 @@ class PreProcessingDataset(Dataset):
         x = self.read(fn)
         assert x.dim() == 2 and x.shape[0] <= 16, f"Got sample {fn} with unexpected shape {x.shape}"
         n_samples = x.shape[1]
-        if self.codec == "vorbis":
-            with NamedTemporaryFile(suffix=".ogg") as tf:
-                torchaudio.save(tf.name, x, self.sr, format="vorbis", compression=self.compression)
-                x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
-        elif self.codec == "flac":
-            with NamedTemporaryFile(suffix=".flac") as tf:
-                torchaudio.save(
-                    tf.name,
-                    x,
-                    self.sr,
-                    format="flac",
-                    compression=self.compression,
-                    bits_per_sample=16,
-                )
-                x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
-        else:
-            x = x.numpy()
+        x = encode(x, self.sr, self.codec, self.compression)
         return {"file_name": fn, "data": x, "n_samples": n_samples}
 
     def __len__(self):
         return len(self.file_names)
+
+
+def encode(x: Tensor, sr: int, codec: str, compression: Optional[int] = None) -> np.ndarray:
+    if codec == "vorbis":
+        with NamedTemporaryFile(suffix=".ogg") as tf:
+            torchaudio.save(tf.name, x, sr, format="vorbis", compression=compression)
+            x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
+    elif codec == "flac":
+        with NamedTemporaryFile(suffix=".flac") as tf:
+            torchaudio.save(
+                tf.name,
+                x,
+                sr,
+                format="flac",
+                compression=compression,
+                bits_per_sample=16,
+            )
+            x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
+    elif codec == "pcm":
+        x = x.numpy()
+    else:
+        raise NotImplementedError(f"Codec '{codec}' not supported.")
+    return x
 
 
 if __name__ == "__main__":
