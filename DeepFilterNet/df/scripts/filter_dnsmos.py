@@ -12,7 +12,7 @@ import torchaudio as ta
 from icecream import ic
 from torch import Tensor
 
-import df.scripts.dnsmos as dnsmos
+import df.scripts.dnsmos_v2 as dnsmos
 from df.io import resample
 from df.scripts.prepare_data import encode
 
@@ -35,7 +35,7 @@ def to_int16(audio: Tensor) -> Tensor:
 
 
 def main(args):
-    onnx_sig, onnx_bak_ovr = dnsmos.download_onnx_models()
+    onnx = dnsmos.download_onnx_model()
     with h5py.File(args.hdf5_input, "r") as h5_read, h5py.File(args.hdf5_filtered, "a") as h5_write:
         # Copy attributes
         for (k, v) in h5_read.attrs.items():
@@ -47,6 +47,7 @@ def main(args):
             exit(1)
         codec = h5_read.attrs.get("codec", "pcm")
         codec_write = args.codec or codec
+        h5_write.attrs["codec"] = codec_write
         for (grp_name, group_read) in h5_read.items():
             if grp_name not in h5_write:
                 group_write = h5_write.create_group(grp_name)
@@ -58,7 +59,6 @@ def main(args):
                     audio = torch.from_numpy(encoded)
                 else:
                     audio = load_encoded(encoded, codec=codec)
-                ic(ds.dtype, audio.min(), audio.max())
                 print(f"{key}, ", end="", flush=True)
                 assert audio.dim() <= 2
                 # For now, only single channel is supported
@@ -70,25 +70,23 @@ def main(args):
                 trim_start, trim_end = 0, None
                 for n in range(3, 0, -1):
                     if trim_start == 0:
-                        (sig, _, ovr) = dnsmos.dnsmos_local(
-                            resampled[: n * dnsmos.SR], onnx_sig, onnx_bak_ovr
-                        )
-                        if sig < 2.5 and ovr < 3.0:
+                        (sig, _, ovr) = dnsmos.dnsmos_local(resampled[: n * dnsmos.SR], onnx)
+                        if sig < 2.5 or ovr < 2.8:
                             trim_start = n * dnsmos.SR
                     if trim_end is None:
-                        (sig, _, ovr) = dnsmos.dnsmos_local(
-                            resampled[-n * dnsmos.SR :], onnx_sig, onnx_bak_ovr
-                        )
-                        if sig < 2.5 and ovr < 3.0:
+                        (sig, _, ovr) = dnsmos.dnsmos_local(resampled[-n * dnsmos.SR :], onnx)
+                        if sig < 2.5 or ovr < 2.8:
                             trim_end = -1 * dnsmos.SR
-                (sig, bak, ovr) = dnsmos.dnsmos_local(
-                    resampled[..., trim_start:trim_end], onnx_sig, onnx_bak_ovr
-                )
+                # (sig, bak, ovr) = dnsmos.dnsmos_local(resampled, onnx)
+                # print(f"got sig: {sig:.2f}, bak: {bak:.2f}, ovr: {ovr:.2f} ... ", end="")
+                (sig, bak, ovr) = dnsmos.dnsmos_local(resampled[..., trim_start:trim_end], onnx)
                 print(f"got sig: {sig:.2f}, bak: {bak:.2f}, ovr: {ovr:.2f} ... ", end="")
-                if sig > 4.2 and bak > 4.5 and ovr > 4.0:
+                if sig > 3.5 and bak > 4.0 and ovr > 3.7:
                     print("copying.")
                     trim_start = trim_start // dnsmos.SR * sr
                     trim_end = trim_end // dnsmos.SR * sr if trim_end is not None else None
+                    if trim_start>0 or trim_end is not None:
+                        print("Triming audio ({list(audio.shape)}): {trim_start}:{trim_end}")
                     if trim_start == 0 and trim_end is None:
                         data = encoded
                     else:
