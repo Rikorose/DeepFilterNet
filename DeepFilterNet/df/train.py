@@ -401,13 +401,13 @@ def run_epoch(
                     e_str = str(e)
                     if "nan" in e_str.lower() or "non-finite" in e_str:
                         check_finite_module(model)
-                        cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
                         logger.error(e_str)
                         n_nans += 1
                         if n_nans > 10:
                             raise e
                         os.makedirs(os.path.join(summary_dir, "nan"), exist_ok=True)
-                        for idx in range(clean.shape[0]):
+                        for batch_idx in range(clean.shape[0]):
+                            clean_idx = batch.ids[batch_idx].item()
                             summary_write(
                                 clean.detach(),
                                 noisy.detach(),
@@ -417,9 +417,10 @@ def run_epoch(
                                 df_alpha,
                                 os.path.join(summary_dir, "nan"),
                                 mask_loss=losses.ml,
-                                prefix=split + f"_{idx}",
-                                idx=idx,
+                                prefix=split + f"_b{batch_idx}_ds{clean_idx}_e{epoch}",
+                                idx=batch_idx,
                             )
+                        cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
                         continue
                     else:
                         raise e

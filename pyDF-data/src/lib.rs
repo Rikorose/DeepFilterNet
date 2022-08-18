@@ -70,6 +70,7 @@ type FdBatch<'py> = (
     &'py PyArray1<i8>,        // snr
     &'py PyArray1<i8>,        // gain
     &'py PyArray1<f32>,       // Timings until each sample and the overall batch was ready
+    &'py PyArray1<usize>,     // clean ids
 );
 
 #[pymethods]
@@ -250,6 +251,7 @@ impl _FdDataLoader {
                     batch.snr.into_pyarray(py),
                     batch.gain.into_pyarray(py),
                     push_ret(batch.timings, (Instant::now() - t0).as_secs_f32()).into_pyarray(py),
+                    batch.ids.into_pyarray(py),
                 ))
             }
             None => {

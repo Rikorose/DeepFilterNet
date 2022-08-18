@@ -22,8 +22,8 @@ class Batch:
         # safe to assume writable.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            assert len(b) == 9, f"Got {len(b)} elements"
-            speech, noisy, erb, spec, lengths, max_freq, snr, gain, timings = b
+            assert len(b) == 10, f"Got {len(b)} elements"
+            speech, noisy, erb, spec, lengths, max_freq, snr, gain, timings, ids = b
             if erb.size <= 1:
                 self.feat_erb = None
             if spec.size <= 1:
@@ -38,6 +38,7 @@ class Batch:
             self.gain = torch.from_numpy(gain)
             self.max_freq = torch.from_numpy(max_freq.astype(np.int32)).long()
             self.timings = torch.from_numpy(timings.astype(np.float32))
+            self.ids = torch.from_numpy(ids.astype(np.int64)).long()
 
     def pin_memory(self):
         self.speech = self.speech.pin_memory()
