@@ -103,7 +103,8 @@ def evaluation_loop(
 ) -> Dict[str, float]:
     sr = df_state.sr()
     if n_workers >= 1:
-        pool_fn = mp.Pool
+        ctx = mp.get_context("spawn")
+        pool_fn = ctx.Pool
     else:
         pool_fn = DummyPool
     metrics_dict = get_metrics(sr)
