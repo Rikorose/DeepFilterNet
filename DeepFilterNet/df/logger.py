@@ -46,7 +46,8 @@ def init_logger(file: Optional[str] = None, level: str = "INFO", model: Optional
             commit = get_commit_hash()
             if commit is not None:
                 logger.info(f"Git commit: {commit}, branch: {get_branch_name()}")
-            if (jobid := os.getenv("SLURM_JOB_ID")) is not None:
+            jobid = os.getenv("SLURM_JOB_ID")
+            if jobid is not None:
                 logger.info(f"Slurm jobid: {jobid}")
             logger.level("WARNONCE", no=WARN_ONCE_NO, color="<yellow><bold>")
             logger.add(
