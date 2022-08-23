@@ -124,10 +124,7 @@ def init_df(
     load_cp = epoch is not None and not (isinstance(epoch, str) and epoch.lower() == "none")
     if not load_cp:
         checkpoint_dir = None
-    try:
-        mask_only = config.get("mask_only", cast=bool, section="train")
-    except KeyError:
-        mask_only = False
+    mask_only = config("mask_only", cast=bool, section="train", default=False, save=False)
     model, epoch = load_model_cp(checkpoint_dir, df_state, epoch=epoch, mask_only=mask_only)
     if (epoch is None or epoch == 0) and load_cp:
         logger.error("Could not find a checkpoint")
