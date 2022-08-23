@@ -564,7 +564,7 @@ impl DatasetBuilder {
             has_rirs = has_rirs || ds.dstype == DsType::RIR;
             let keys = cfg.keys_unchecked().unwrap().keys.clone();
             if ds.dstype == DsType::Speech {
-                ds_len += (keys.len() as f32 * cfg.sampling_factor()).round() as usize;
+                ds_len += ((keys.len() as f32 * cfg.sampling_factor()).round() as usize).max(1);
             }
             ds_keys.push((ds.dstype, ds.name(), keys));
             assert!(!config.contains_key(&ds.name()));
@@ -1254,7 +1254,8 @@ impl Dataset<f32> for TdDataset {
             debug_assert_eq!(&self.hdf5_handles.get(name).unwrap().keys().unwrap(), keys);
             let len = keys.len();
             let n_samples =
-                (self.config.get(name).unwrap().sampling_factor() * len as f32).round() as usize;
+                ((self.config.get(name).unwrap().sampling_factor() * len as f32).round() as usize)
+                    .max(1);
             let mut keys = keys.clone();
             if self.ds_split == Split::Train {
                 keys.shuffle(&mut thread_rng()?);
