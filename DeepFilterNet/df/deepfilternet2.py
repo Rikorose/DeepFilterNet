@@ -392,7 +392,8 @@ class DfNet(nn.Module):
         self.df_order = p.df_order
         self.df_op: Union[DfOp, MultiFrameModule]
         if p.dfop_method == "real_unfold":
-            raise ValueError("RealUnfold DF OP is now unsupported.")
+            logger.warning("RealUnfold DF OP is now unsupported. Switching to 'df'")
+            p.dfop_method = "df"
         assert p.df_output_layer != "linear", "Must be used with `groupedlinear`"
         self.df_op = MF_METHODS[p.dfop_method](
             num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead
