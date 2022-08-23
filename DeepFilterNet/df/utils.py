@@ -151,12 +151,13 @@ def get_commit_hash():
     """Returns the current git commit."""
     try:
         git_dir = get_git_root()
+        if git_dir is None:
+            return None
         args = ["git", "-C", git_dir, "rev-parse", "--short", "--verify", "HEAD"]
-        commit = subprocess.check_output(args).strip().decode()
+        return subprocess.check_output(args).strip().decode()
     except subprocess.CalledProcessError:
         # probably not in git repo
-        commit = None
-    return commit
+        return None
 
 
 def get_host() -> str:
