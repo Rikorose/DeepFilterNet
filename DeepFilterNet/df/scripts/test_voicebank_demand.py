@@ -23,8 +23,8 @@ def main(args):
     noisy_dir = os.path.join(args.dataset_dir, "noisy_testset_wav")
     clean_dir = os.path.join(args.dataset_dir, "clean_testset_wav")
     assert os.path.isdir(noisy_dir) and os.path.isdir(clean_dir)
-    clean_files = glob.glob(clean_dir + "/*.wav")
-    noisy_files = glob.glob(noisy_dir + "/*.wav")
+    clean_files = sorted(glob.glob(clean_dir + "/*.wav"))
+    noisy_files = sorted(glob.glob(noisy_dir + "/*.wav"))
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
 
