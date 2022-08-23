@@ -4,7 +4,7 @@ import os
 import random
 import subprocess
 from socket import gethostname
-from typing import Any, Set, Tuple, Union
+from typing import Any, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
@@ -128,7 +128,7 @@ def _calculate_norm_alpha(sr: int, hop_size: int, tau: float):
     return math.exp(-dt / tau)
 
 
-def check_manual_seed(seed: int = None):
+def check_manual_seed(seed: Optional[int] = None):
     """If manual seed is not specified, choose a random one and communicate it to the user."""
     seed = seed or random.randint(1, 10000)
     np.random.seed(seed)
