@@ -1,14 +1,13 @@
 import argparse
 import os
 import warnings
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 import numpy.polynomial.polynomial as poly
 import torch
 from torch import Tensor
 
-from df.evaluation_utils import as_numpy, dnsmos_api_req
 from df.io import load_audio
 from df.utils import download_file, get_cache_dir
 
@@ -141,8 +140,6 @@ def download_onnx_models():
 def dnsmos_local(
     audio: Tensor, sig: str, bak_ovr: str
 ) -> Tuple[List[float], List[float], List[float]]:
-    assert len(audio) >= SR, f"Audio to short: {audio.shape}"
-
     session_sig = get_ort_session(sig)
     session_bak_ovr = get_ort_session(bak_ovr)
 
@@ -178,6 +175,41 @@ def dnsmos_local(
     mod_bak = np.mean(predicted_mos_bak_seg)
     mod_ovr = np.mean(predicted_mos_ovr_seg)
     return mod_sig, mod_bak, mod_ovr
+
+
+def dnsmos_api_req(url: str, key: str, audio: Tensor, verbose=False) -> Dict[str, float]:
+    assert requests is not None
+    # Set the content type
+    headers = {"Content-Type": "application/json"}
+    # If authentication is enabled, set the authorization header
+    headers["Authorization"] = f"Basic {key}"
+
+    data = {"data": audio.tolist(), "filename": "audio.wav"}
+    input_data = json.dumps(data)
+
+    tries = 0
+    timeout = 50
+    while True:
+        try:
+            resp = requests.post(url, data=input_data, headers=headers, timeout=timeout)
+            score_dict = resp.json()
+            if verbose:
+                log_metrics("DNSMOS", score_dict, level="DEBUG")
+            return score_dict
+        except Exception as e:
+            if verbose:
+                print(e)
+            tries += 1
+            timeout *= 2
+            if tries < 20:
+                continue
+            raise ValueError(f"Error gettimg mos {e}")
+
+
+def as_numpy(x) -> np.ndarray:
+    if isinstance(x, torch.Tensor):
+        return x.cpu().detach().numpy()
+    return x
 
 
 if __name__ == "__main__":

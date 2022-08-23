@@ -24,6 +24,7 @@ from df.logger import log_metrics
 from df.model import ModelParams
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device
+from df.scripts.dnsmos import dnsmos_api_req, dnsmos_local, download_onnx_models
 from libdf import DF
 
 HAS_OCTAVE = True
@@ -156,7 +157,8 @@ def evaluation_loop_dir_only(
 ) -> Dict[str, float]:
     sr = 16_000
     if n_workers >= 1:
-        pool_fn = mp.Pool
+        ctx = mp.get_context("spawn")
+        pool_fn = ctx.Pool
     else:
         pool_fn = DummyPool
     metrics_dict = get_metrics(sr)
@@ -203,7 +205,7 @@ def evaluation_loop_dns(
     df_state: DF,
     model,
     noisy_files: List[str],
-    metrics: List[str] = ["p808"],  # type: ignore
+    metrics: List[str] = ["p835_local"],  # type: ignore
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
     n_workers: int = 8,
     log_percent: int = 10,
@@ -216,6 +218,7 @@ def evaluation_loop_dns(
     metrics_dict = {
         "p808": partial(DnsMosP808ApiMetric, sr=sr),
         "p835": partial(DnsMosP835ApiMetric, sr=sr),
+        "p835_local": partial(DnsMosP835LocalMetric, sr=sr),
     }
     with DummyPool(processes=max(1, n_workers)) as pool:
         metrics: List[NoisyMetric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
@@ -514,6 +517,18 @@ class DnsMosP835ApiMetric(NoisyMetric):
         return np.asarray([float(score_dict[c]) for c in ("mos_sig", "mos_bak", "mos_ovr")])
 
 
+class DnsMosP835LocalMetric(NoisyMetric):
+    def __init__(self, sr: int, pool: Pool):
+        super().__init__(
+            name=["SIGMOS", "BAKMOS", "OVLMOS"], pool=pool, source_sr=sr, target_sr=16000
+        )
+        self.sig, self.bak_ovr = download_onnx_models()
+
+    def compute_metric(self, degraded) -> Union[float, np.ndarray]:
+        assert self.sr is not None
+        return np.asarray(dnsmos_local(degraded, self.sig, self.bak_ovr))
+
+
 def stoi(clean, degraded, sr, extended=False):
     assert len(clean.shape) == 1
     if sr != 10000:
@@ -579,35 +594,6 @@ def si_sdr_speechmetrics(reference: np.ndarray, estimate: np.ndarray):
 
     sisdr = 10 * np.log10((eps + Sss) / (eps + Snn))
     return sisdr
-
-
-def dnsmos_api_req(url: str, key: str, audio: Tensor, verbose=False) -> Dict[str, float]:
-    assert requests is not None
-    # Set the content type
-    headers = {"Content-Type": "application/json"}
-    # If authentication is enabled, set the authorization header
-    headers["Authorization"] = f"Basic {key}"
-
-    data = {"data": audio.tolist(), "filename": "audio.wav"}
-    input_data = json.dumps(data)
-
-    tries = 0
-    timeout = 50
-    while True:
-        try:
-            resp = requests.post(url, data=input_data, headers=headers, timeout=timeout)
-            score_dict = resp.json()
-            if verbose:
-                log_metrics("DNSMOS", score_dict, level="DEBUG")
-            return score_dict
-        except Exception as e:
-            if verbose:
-                print(e)
-            tries += 1
-            timeout *= 2
-            if tries < 20:
-                continue
-            raise ValueError(f"Error gettimg mos {e}")
 
 
 def as_numpy(x) -> np.ndarray:
