@@ -1,7 +1,7 @@
 #!/bin/sh
 
-pytorch_v="1.10"
-cuda_version=11.1
+pytorch_v="1.12"
+cuda_version=11.3
 PYTHON_V=3.9
 MINICONDA_DIR=${MINICONDA_DIR:-"$HOME/miniconda"}
 
