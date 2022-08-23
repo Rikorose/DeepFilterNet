@@ -135,6 +135,7 @@ def init_df(
     suffix = os.path.basename(os.path.abspath(model_base_dir))
     if post_filter:
         suffix += "_pf"
+    logger.info("Running on device {}".format(get_device()))
     logger.info("Model loaded")
     return model, df_state, suffix
 
