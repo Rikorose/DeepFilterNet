@@ -23,8 +23,8 @@ def main(args):
     noisy_dir = args.dataset_dir
     noisy_files = glob.glob(noisy_dir + "/*.wav")
     n = len(noisy_files)
-    assert n == 859
     logger.info(f"Evaluating DNSMOS on enhanced noisy files for dir: {noisy_dir} ({n} files)")
+    assert n == 859
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
 
@@ -38,14 +38,13 @@ def main(args):
             dtype=torch.float32,
         )
 
-    methods = list(args.methods) if isinstance(args.methods, (list, tuple)) else [args.methods]
     metrics = evaluation_loop_dns(
         df_state,
         model,
         noisy_files,
         n_workers=args.metric_workers,
         save_audio_callback=save_audio_callback if args.output_dir is not None else None,
-        metrics=methods,
+        metrics=["p835_local"],
         csv_path_enh=args.csv_path_enh,
         csv_path_noisy=args.csv_path_noisy,
         eval_noisy=False,
@@ -59,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "dataset_dir",
         type=str,
-        help="Voicebank Demand Test set directory. Must contain 'noisy_testset_wav' and 'clean_testset_wav'.",
+        help="Test set directory containing noisy audio files.",
     )
     parser.add_argument(
         "--metric-workers",
@@ -79,13 +78,6 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Path to csv score file containing metrics of noisy audios.",
-    )
-    parser.add_argument(
-        "--methods",
-        default="p835",
-        nargs="*",
-        choices=["p808", "p835"],
-        help="Choose which method to compute P.808 or P.835. Default is P.808",
     )
     args = parser.parse_args()
     main(args)
