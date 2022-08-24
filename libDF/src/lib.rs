@@ -19,6 +19,7 @@ mod reexport_dataset_modules {
     pub mod augmentations;
     pub mod dataloader;
     pub mod dataset;
+    pub mod hdf5_key_cache;
     pub mod util;
     pub mod wav_utils;
 }
@@ -357,13 +358,24 @@ where
     }
 }
 
-fn zip3<A, B, C>(a: A, b: B, c: C) -> impl Iterator<Item = (A::Item, B::Item, C::Item)>
+pub fn zip3<A, B, C>(a: A, b: B, c: C) -> impl Iterator<Item = (A::Item, B::Item, C::Item)>
 where
     A: IntoIterator,
     B: IntoIterator,
     C: IntoIterator,
 {
     a.into_iter().zip(b.into_iter().zip(c)).map(|(x, (y, z))| (x, y, z))
+}
+pub fn rms<'a, I>(vals: I) -> f32
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut n = 0;
+    let pow_sum = vals.into_iter().fold(0., |acc, v| {
+        n += 1;
+        acc + v.powi(2)
+    });
+    (pow_sum / n as f32).sqrt()
 }
 
 #[cfg(test)]
