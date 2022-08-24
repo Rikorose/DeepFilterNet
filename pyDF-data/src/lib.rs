@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::thread;
 use std::time::Instant;
@@ -6,10 +5,8 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, TryRecvError};
 use df::augmentations::seed_from_u64;
 use df::dataloader::{DataLoader, DfDataloaderError};
-use df::dataset::{
-    DatasetBuilder, DatasetConfigCacheJson, DatasetConfigJson, Datasets, DfDatasetError,
-    FftDataset, Hdf5Cfg, Split,
-};
+use df::dataset::*;
+use df::hdf5_key_cache::*;
 use df::util::{init_logger, DfLogger, LogMessage};
 use df::Complex32;
 use ndarray::{ArrayD, ShapeError};
@@ -179,13 +176,13 @@ impl _FdDataLoader {
         };
         let msg = "Unable to join dataset builder thread";
         let valid_ds = valid_handle.join().expect(msg).to_py_err()?;
-        update_hdf5_keys_from_ds(ds_dir, &mut cfg.valid, &valid_ds);
+        fetch_hdf5_keys_from_ds(ds_dir, &mut cfg.valid, &valid_ds);
         py.check_signals()?;
         let test_ds = test_handle.join().expect(msg).to_py_err()?;
-        update_hdf5_keys_from_ds(ds_dir, &mut cfg.test, &test_ds);
+        fetch_hdf5_keys_from_ds(ds_dir, &mut cfg.test, &test_ds);
         py.check_signals()?;
         let train_ds = train_handle.join().expect(msg).to_py_err()?;
-        update_hdf5_keys_from_ds(ds_dir, &mut cfg.train, &train_ds);
+        fetch_hdf5_keys_from_ds(ds_dir, &mut cfg.train, &train_ds);
         write_hdf5_key_cache(config_path, &cfg);
         py.check_signals()?;
         let ds = Datasets {
@@ -296,59 +293,6 @@ impl _FdDataLoader {
             }
         }
         messages
-    }
-}
-fn cache_path(cfg_path: &str) -> PathBuf {
-    let mut p = Path::new(cfg_path).to_path_buf();
-    let cache_file_name = p.file_stem().unwrap().to_str().unwrap().to_owned();
-    p.set_file_name(".cache_".to_owned() + &cache_file_name);
-    p.set_extension("cfg");
-    p
-}
-fn load_hdf5_key_cache(cfg_path: &str, cfg: &mut DatasetConfigJson) {
-    let cache_path = cache_path(cfg_path);
-    if !cache_path.is_file() {
-        return;
-    }
-    log::info!(
-        "Loading HDF5 key cache from {}",
-        cache_path.to_str().unwrap_or_default()
-    );
-    match DatasetConfigCacheJson::open(cache_path.to_str().unwrap()) {
-        Err(e) => log::warn!("Could not load dataset keys cache: {}", e),
-        Ok(cache) => {
-            cfg.set_keys(Split::Train, cache.keys()).expect("Could not set cached keys");
-            cfg.set_keys(Split::Valid, cache.keys()).expect("Could not set cached keys");
-            cfg.set_keys(Split::Test, cache.keys()).expect("Could not set cached keys");
-        }
-    }
-}
-fn write_hdf5_key_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
-    let cache_path = cache_path(cfg_path);
-    let mut cache = Vec::new();
-    cache.extend(cfg.train.iter().filter_map(|x| x.keys_unchecked().cloned()));
-    cache.extend(cfg.valid.iter().filter_map(|x| x.keys_unchecked().cloned()));
-    cache.extend(cfg.test.iter().filter_map(|x| x.keys_unchecked().cloned()));
-    let cache = DatasetConfigCacheJson::new(cache);
-    cache.write(cache_path.to_str().unwrap()).expect("Failed to write cache.");
-}
-/// Upates HDF5 keys from the dataset to cfgs
-fn update_hdf5_keys_from_ds(ds_dir: &str, cfgs: &mut [Hdf5Cfg], ds: &FftDataset) {
-    for hdf5cfg in cfgs.iter_mut() {
-        let ds_path = ds_dir.to_owned() + "/" + hdf5cfg.filename();
-        let cfg = match ds.get_hdf5cfg(hdf5cfg.filename()) {
-            Some(cfg) => cfg,
-            None => {
-                log::warn!("Could not get hdf5cfg for filename {}", hdf5cfg.filename());
-                continue;
-            }
-        };
-        let hash = cfg
-            .hash()
-            .unwrap_or_else(|| cfg.hash_from_ds_path(&ds_path).expect("Could not calculate hash"));
-        if let Some(ds_keys) = cfg.load_keys(hash).expect("Could not load Hdf5Keys.") {
-            hdf5cfg.set_keys(ds_keys.clone()).expect("Could not update keys");
-        }
     }
 }
 
