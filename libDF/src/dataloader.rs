@@ -10,13 +10,12 @@ use std::time::Instant;
 use crossbeam_channel::unbounded;
 use ndarray::prelude::*;
 use ndarray_rand::rand::prelude::SliceRandom;
-use rayon;
-use rayon::{current_num_threads, prelude::*};
+use rayon::{current_num_threads, prelude::*, ThreadPoolBuildError, ThreadPoolBuilder};
 use thiserror::Error;
 
 type Result<T> = std::result::Result<T, DfDataloaderError>;
 
-use crate::{augmentations::*, dataset::*, util::*, Complex32};
+use crate::{dataset::*, util::*, Complex32};
 
 #[derive(Error, Debug)]
 pub enum DfDataloaderError {
@@ -39,7 +38,7 @@ pub enum DfDataloaderError {
     #[error("Thread Join Error: {0:?}")]
     ThreadJoinError(String),
     #[error("Threadpool Builder Error")]
-    ThreadPoolBuildError(#[from] rayon::ThreadPoolBuildError),
+    ThreadPoolBuildError(#[from] ThreadPoolBuildError),
     #[error("DF Transforms Error")]
     TransformError(#[from] crate::transforms::TransformError),
     #[error("DF Augmentation Error")]
@@ -156,7 +155,7 @@ impl DataLoader {
         hdf5::sync::sync(|| {});
         let num_workers = num_threads.unwrap_or_else(current_num_threads);
         hdf5::sync::sync(|| {});
-        rayon::ThreadPoolBuilder::new()
+        ThreadPoolBuilder::new()
             .num_threads(num_workers)
             .thread_name(|idx| format!("DataLoader Worker {}", idx))
             .start_handler(|_| hdf5::sync::sync(|| {}))
@@ -293,6 +292,9 @@ impl DataLoader {
         if self.fill_thread.is_some() {
             self.join_fill_thread()?;
         }
+        if self.overfit {
+            epoch_seed = 0;
+        }
         // Check whether we need to regenerate. Typically only required for a custom sampling factor.
         for split in Split::iter() {
             if self.get_ds_arc(split).need_generate_keys() {
@@ -307,7 +309,7 @@ impl DataLoader {
                     Ok(ds) => ds,
                     Err(_) => panic!("Could not regain ownership over dataset"),
                 };
-                ds.generate_keys()?;
+                ds.generate_keys(Some(epoch_seed as u64))?;
                 self.set_ds(split, ds);
             }
         }
@@ -316,10 +318,6 @@ impl DataLoader {
         self.cur_out_idx = 0;
         // Prepare for new epoch
         self.current_split = split;
-        if self.overfit {
-            epoch_seed = 0;
-        }
-        seed_from_u64(epoch_seed as u64);
         {
             // Recreate indices to index into the dataset and shuffle them
             let n_samples = self.dataset_len(split);
@@ -367,7 +365,7 @@ impl DataLoader {
         'outer: while self.cur_out_idx < target_idx {
             // Check if we have some buffered samples
             if let Some(s) = self.out_buf.remove(&self.cur_out_idx) {
-                ids.push(self.cur_out_idx);
+                ids.push(s.idx);
                 samples.push(s);
                 let ts1 = Instant::now();
                 timings.push((ts1 - ts0).as_secs_f32());
@@ -391,11 +389,11 @@ impl DataLoader {
                     }
                     Ok((o_idx, Ok(s))) => {
                         if o_idx == self.cur_out_idx {
+                            ids.push(s.idx);
                             samples.push(s);
                             let ts1 = Instant::now();
                             timings.push((ts1 - ts0).as_secs_f32());
                             ts0 = ts1;
-                            ids.push(o_idx);
                             self.cur_out_idx += 1;
                         } else {
                             assert!(self.out_buf.insert(o_idx, s).is_none());
