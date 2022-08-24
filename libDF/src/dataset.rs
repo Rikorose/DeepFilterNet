@@ -121,7 +121,15 @@ pub struct DatasetModified(SystemTime, u64); // Modified time and file size
 impl DatasetModified {
     fn new(file_name: &str) -> Result<Self> {
         let meta_data = fs::metadata(file_name)?;
-        Ok(DatasetModified(meta_data.modified()?, meta_data.len()))
+        let modified = meta_data.modified()?;
+        let size = meta_data.len();
+        log::trace!(
+            "Checking HDF5 key cache for {} (m: {:?}, s: {})",
+            file_name,
+            modified,
+            size
+        );
+        Ok(DatasetModified(modified, size))
     }
 }
 #[derive(Deserialize, Debug, Clone)]
@@ -166,7 +174,12 @@ impl Hdf5Cfg {
             if keys.hash == hash {
                 return Ok(Some(keys));
             }
-            println!("Hash does not match for {}", self.filename());
+            log::warn!(
+                "Hash does not match for {} (found {}, expected {})",
+                self.filename(),
+                keys.hash,
+                hash
+            );
             return Ok(None);
         }
         Ok(None)
@@ -208,11 +221,7 @@ impl DatasetConfigJson {
         Ok(cfg)
     }
     pub fn set_keys<S: Into<Split>>(&mut self, split: S, keys: &[Hdf5Keys]) -> Result<()> {
-        let s = match split.into() {
-            Split::Train => &mut self.train,
-            Split::Valid => &mut self.valid,
-            Split::Test => &mut self.test,
-        };
+        let s = self.get_mut(split);
         for cfg in s.iter_mut() {
             if let Some(key_cache) = keys.iter().find(|c| c.filename == cfg.filename()) {
                 cfg.set_keys(key_cache.clone())?;
@@ -223,19 +232,23 @@ impl DatasetConfigJson {
         Ok(())
     }
     pub fn split_config(&self, split: Split) -> DatasetSplitConfig {
-        match split {
-            Split::Train => DatasetSplitConfig {
-                hdf5s: self.train.clone(),
-                split: Split::Train,
-            },
-            Split::Valid => DatasetSplitConfig {
-                hdf5s: self.valid.clone(),
-                split: Split::Valid,
-            },
-            Split::Test => DatasetSplitConfig {
-                hdf5s: self.test.clone(),
-                split: Split::Test,
-            },
+        DatasetSplitConfig {
+            hdf5s: self.get(split).clone(),
+            split,
+        }
+    }
+    pub fn get<S: Into<Split>>(&self, split: S) -> &Vec<Hdf5Cfg> {
+        match split.into() {
+            Split::Train => &self.train,
+            Split::Valid => &self.valid,
+            Split::Test => &self.test,
+        }
+    }
+    pub fn get_mut<S: Into<Split>>(&mut self, split: S) -> &mut Vec<Hdf5Cfg> {
+        match split.into() {
+            Split::Train => &mut self.train,
+            Split::Valid => &mut self.valid,
+            Split::Test => &mut self.test,
         }
     }
 }
@@ -251,12 +264,18 @@ impl DatasetConfigCacheJson {
     pub fn open(cache_path: &str) -> Result<Self> {
         let file = fs::File::open(cache_path)?;
         let reader = BufReader::new(file);
+        log::trace!("Opening HDF5 json key cache {}", cache_path);
         let cfg = serde_json::from_reader(reader)?;
         Ok(cfg)
     }
     pub fn write(&self, cache_path: &str) -> Result<()> {
-        let file = fs::OpenOptions::new().create(true).write(true).open(cache_path)?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(cache_path)?;
         let writer = BufWriter::new(file);
+        log::trace!("Writing HDF5 keys to cache {}", cache_path);
         serde_json::to_writer(writer, &self)?;
         Ok(())
     }
@@ -461,6 +480,8 @@ impl DatasetBuilder {
             panic!("No datasets provided")
         }
         let ds = self.clone().build_td_dataset()?;
+        let split = self.datasets.unwrap().split;
+        log::trace!("Building FftDataset {}", split);
         if self.fft_size.is_none() {
             panic!("No fft size provided when building FFT dataset.")
         }
@@ -474,7 +495,6 @@ impl DatasetBuilder {
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
-        let split = self.datasets.unwrap().split;
         #[cfg(feature = "cache")]
         let cache = {
             if self.cache_valid && split == Split::Valid {
@@ -535,6 +555,7 @@ impl DatasetBuilder {
         }
         datasets.hdf5s.par_iter().try_for_each(|cfg| -> Result<()> {
             let path = ds_path.join(cfg.filename());
+            log::trace!("Opening hdf5 dataset {}", path.display());
             if (!path.is_file()) && path.read_link().is_err() {
                 log::warn!("Dataset {:?} not found. Skipping.", path);
                 return Ok(());
@@ -545,8 +566,14 @@ impl DatasetBuilder {
             cfg.store_modified_hash(modified_hash);
             let keys = cfg.load_keys(modified_hash)?.cloned();
             match keys {
-                Some(keys) => cfg.set_keys(keys)?,
-                None => cfg.set_keys_new(modified_hash, ds.keys()?)?,
+                Some(keys) => {
+                    log::trace!("Found cached hdf5 keys for {}", cfg.filename());
+                    cfg.set_keys(keys)?
+                }
+                None => {
+                    log::trace!("No cached hdf5 keys found for {}", cfg.filename());
+                    cfg.set_keys_new(modified_hash, ds.keys()?)?
+                }
             };
             if let Some(f) = self.global_sampling_f {
                 cfg.set_sampling_factor(cfg.sampling_factor() * f)
@@ -570,7 +597,7 @@ impl DatasetBuilder {
             assert!(!config.contains_key(&ds.name()));
             config.insert(ds.name(), cfg);
             log::debug!(
-                "Found {} {} dataset {} with {} samples",
+                "Opened {} {} dataset {} with {} samples",
                 &ds.dstype,
                 datasets.split,
                 ds.name(),
@@ -634,6 +661,7 @@ impl DatasetBuilder {
         } else {
             None
         };
+        log::trace!("Built TdDataset {}", ds_split);
         Ok(TdDataset {
             config,
             hdf5_handles,
@@ -1094,6 +1122,11 @@ impl Dataset<f32> for TdDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
         #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
+        log::trace!(
+            "get_sample() idx {} with seed {:?}",
+            idx,
+            seed.unwrap_or(idx as u64)
+        );
         seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
         let mut rng = thread_rng()?;
         let (mut speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
@@ -1136,6 +1169,7 @@ impl Dataset<f32> for TdDataset {
                 self.reverb.transform(&mut speech, &mut noise, || {
                     let (rir_name, rir_key) = self.rir_keys.iter().choose(&mut rng).unwrap();
                     let rir = self.read(rir_name, rir_key)?;
+                    log::trace!("Sampled RIR {} with shape {:?}", rir_key, rir.shape());
                     Ok(rir)
                 })?
             } else {
