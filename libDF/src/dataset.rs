@@ -420,7 +420,7 @@ where
     fn max_sample_len(&self) -> usize;
     fn set_seed(&mut self, seed: u64);
     fn need_generate_keys(&self) -> bool;
-    fn generate_keys(&mut self) -> Result<()>;
+    fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -882,8 +882,8 @@ impl Dataset<Complex32> for FftDataset {
         self.ds.need_generate_keys()
     }
 
-    fn generate_keys(&mut self) -> Result<()> {
-        self.ds.generate_keys()
+    fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()> {
+        self.ds.generate_keys(epoch_seed)
     }
 }
 
@@ -1052,7 +1052,7 @@ impl TdDataset {
         } else {
             None
         };
-        while cur_len < self.max_sample_len() {
+        loop {
             // Read 10% more samples since augmentation might shorten the signal
             let n_read = (self.max_samples as f32 * 1.1) as usize - cur_len;
             let mut sample = self.read_max_len(&sp_name, &sp_key, Some(n_read))?;
@@ -1075,7 +1075,11 @@ impl TdDataset {
             self.sp_augmentations.transform(&mut (&mut sample).into())?;
             cur_len += sample.len_of(Axis(1));
             speech_samples.push(sample);
-            (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+            if cur_len < self.max_sample_len() {
+                (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+            } else {
+                break;
+            }
         }
         let speech_views: Vec<ArrayView2<f32>> = speech_samples.iter().map(|s| s.view()).collect();
         let mut speech = concatenate(Axis(1), speech_views.as_slice())?;
@@ -1279,10 +1283,14 @@ impl Dataset<f32> for TdDataset {
         false
     }
 
-    fn generate_keys(&mut self) -> Result<()> {
+    fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()> {
         self.sp_keys.clear();
         self.ns_keys.clear();
         self.rir_keys.clear();
+
+        if let Some(s) = epoch_seed {
+            seed_from_u64(s)
+        }
 
         for (dstype, name, keys) in self.ds_keys.iter() {
             debug_assert_eq!(&self.hdf5_handles.get(name).unwrap().keys().unwrap(), keys);
@@ -2180,7 +2188,7 @@ mod tests {
             .bandwidth_extension(1.0)
             .build_td_dataset()
             .unwrap();
-        ds.generate_keys()?;
+        ds.generate_keys(Some(0))?;
         let mut rng = thread_rng()?;
         let sample = ds.get_sample(rng.uniform(0, ds.len()), Some(0)).unwrap();
         write_wav_arr2(
@@ -2211,7 +2219,7 @@ mod tests {
             .dataset(cfg.split_config(Split::Train))
             .df_params(n_fft, Some(n_hop), Some(nb), Some(1), Some(0.1))
             .build_fft_dataset()?;
-        ds.generate_keys()?;
+        ds.generate_keys(Some(0))?;
         let mut rng = thread_rng()?;
         let mut sample = ds.get_sample(rng.uniform(0, ds.len()), Some(0)).unwrap();
         let mut state = DFState::new(sr, n_fft, n_hop, nb, 1);
@@ -2270,7 +2278,7 @@ mod tests {
             for _epoch in 0..2 {
                 val_ds.set_seed(seed);
                 if val_ds.need_generate_keys() {
-                    val_ds.generate_keys()?
+                    val_ds.generate_keys(epoch as u64)?
                 }
                 for idx in 0..ds_len {
                     let sample = val_ds.get_sample(idx, Some(seed + idx as u64))?;
