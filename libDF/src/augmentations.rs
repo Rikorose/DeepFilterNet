@@ -755,47 +755,41 @@ pub(crate) struct RandReverbSim {
     prob_resample: f32,
     prob_decay: f32,
     sr: usize,
+    drr_f: Option<f32>, // Direct-to-Reverberant-Ratio
 }
 impl RandReverbSim {
     fn supress_late(
         &self,
         mut rir: Array2<f32>,
         sr: usize,
-        offset_ms: f32,
+        offset: usize,
         rt60: f32,
-        trim: bool,
     ) -> Result<Array2<f32>> {
-        // find first tap
-        let mut start = argmax_abs(rir.iter()).unwrap();
-        if offset_ms > 0. {
-            start += (offset_ms * sr as f32 / 1000.) as usize;
-        }
         let len = rir.len_of(Axis(1));
         let mut decay: Array2<f32> = Array2::ones((1, len));
         let dt = 1. / sr as f32;
         let rt60_level = 10f32.powi(-60 / 20);
         let tau = -rt60 / rt60_level.log10();
-        if start >= len {
+        if offset >= len {
             return Ok(rir);
         }
-        decay.slice_mut(s![0, start..]).assign(&Array1::from_iter(
-            (0..(len - start)).map(|v| (-(v as f32) * dt / tau).exp()),
+        decay.slice_mut(s![0, offset..]).assign(&Array1::from_iter(
+            (0..(len - offset)).map(|v| (-(v as f32) * dt / tau).exp()),
         ));
         rir = rir * decay;
-        if trim {
-            return self.trim(rir);
-        }
         Ok(rir)
     }
-    fn trim(&self, mut rir: Array2<f32>) -> Result<Array2<f32>> {
+    /// Trim the RIR based on the maximum reference level -80dB.
+    ///
+    /// Returns the trimed RIR and the index of the absolute maximum used as reference level.
+    fn trim(&self, mut rir: Array2<f32>, ref_idx: usize) -> Result<Array2<f32>> {
         let min_db = -80.;
         let len = rir.len_of(Axis(1));
         let rir_mono = rir.mean_axis(Axis(0)).unwrap();
-        let argmax = argmax_abs(rir_mono.iter()).unwrap();
-        let max_ref: f32 = rir_mono[argmax];
-        let min_level = 10f32.powf((min_db + max_ref.log10() * 20.) / 20.);
+        let ref_level: f32 = rir_mono[ref_idx];
+        let min_level = 10f32.powf((min_db + ref_level.log10() * 20.) / 20.);
         let mut idx = len;
-        for (i, v) in rir_mono.slice(s![argmax..]).indexed_iter() {
+        for (i, v) in rir_mono.slice(s![ref_idx..]).indexed_iter() {
             if v < &min_level {
                 idx = i;
             } else {
@@ -824,11 +818,17 @@ impl RandReverbSim {
         debug_assert!(fft_size >= len);
         fft_size
     }
-    fn pad(&self, x: &mut Array2<f32>, npad: usize) -> Result<()> {
-        if npad == 0 {
+    fn pad(&self, x: &mut Array2<f32>, pad_front: usize, pad_back: usize) -> Result<()> {
+        if pad_front == 0 && pad_back == 0 {
             return Ok(());
         }
-        x.append(Axis(1), Array2::zeros((x.len_of(Axis(0)), npad)).view())?;
+        let ch = x.len_of(Axis(0));
+        x.append(Axis(1), Array2::zeros((ch, pad_front + pad_back)).view())?;
+        if pad_front > 0 {
+            for mut x_ch in x.outer_iter_mut() {
+                x_ch.as_slice_memory_order_mut().unwrap().rotate_right(pad_front);
+            }
+        }
         Ok(())
     }
     /// Applies random reverberation to either noise or speech or both.
@@ -872,6 +872,14 @@ impl RandReverbSim {
         }
         #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
+        // Check if apply reverb to speech or noise
+        let mut rng = thread_rng()?;
+        let apply_speech = self.prob_speech > rng.uniform(0f32, 1f32);
+        let apply_noise = self.prob_noise > rng.uniform(0f32, 1f32);
+        if !(apply_speech || apply_noise) {
+            return Ok(None);
+        }
+        // Get room impulse response
         let mut rir = match rir_callback() {
             Ok(r) => r,
             Err(e) => {
@@ -888,37 +896,62 @@ impl RandReverbSim {
             let new_sr = ((new_sr / 500.).round() * 500.) as usize;
             rir = resample(rir.view(), self.sr, new_sr, Some(512))?;
         }
+        let rir_mono = rir.mean_axis(Axis(0)).unwrap();
+        let max_idx = argmax_abs(rir_mono.iter()).unwrap();
         if self.prob_decay > rng.uniform(0f32, 1f32) {
             let rt60 = rng.uniform(0.2, 1.);
-            rir = self.supress_late(rir, self.sr, 0., rt60, false)?;
+            rir = self.supress_late(rir, self.sr, max_idx, rt60)?;
         }
-        rir = self.trim(rir)?;
+        rir = self.trim(rir, max_idx)?;
         // Normalize and flip RIR for convolution
         let rir_e = rir.map(|v| v * v).sum().sqrt();
         let fft_size = self.good_fft_size(&rir);
         let cur_len = rir.len_of(Axis(1));
         let mut rir_noise = rir / rir_e;
-        self.pad(&mut rir_noise, fft_size - cur_len)?;
+        self.pad(&mut rir_noise, 0, fft_size - cur_len)?;
         // DF state for convolve FFT
         let hop_size = fft_size / 4;
         let mut state = DFState::new(self.sr, fft_size, hop_size, 1, 1);
 
         // speech_rev contains reverberant speech for mixing with noise
-        let mut speech_rev = None;
-        if apply_speech {
-            self.pad(speech, fft_size)?; // Pad since STFT will truncate at the end
-            speech_rev =
-                Some(self.convolve(speech, rir_noise.clone(), &mut state, Some(orig_len))?);
+        let pad_back = fft_size / 4 + max_idx;
+        let pad_front = fft_size - pad_back;
+        let speech_rev = if apply_speech {
+            let speech_rms = rms(speech.iter());
+            self.pad(speech, pad_front, pad_back)?; // Pad since STFT will truncate at the end
+            let speech_rev =
+                self.convolve(speech, rir_noise.clone(), &mut state, Some(orig_len))?;
             // Speech should be a slightly dereverberant signal as target
             // TODO: Make dereverberation parameters configurable.
-            let rir_speech = self.supress_late(rir_noise.clone(), self.sr, 5., 0.2, false)?;
-            *speech = self.convolve(speech, rir_speech, &mut state, Some(orig_len))?;
-            debug_assert_eq!(speech.shape(), speech_rev.as_ref().unwrap().shape());
+            //
+            // Add 5 ms extra offset since these are releveant for speech intelligibility
+            let offset = max_idx + 5 * self.sr / 1000;
+            let mut rir_speech =
+                self.supress_late(rir_noise.clone(), self.sr, offset, 0.2)?;
+            let rir_e = rir_speech.map(|v| v * v).sum().sqrt();
+            rir_speech *= 1. / rir_e;
+            // Generate target speech signal containing less reverberation
+            let speech_little_rev =
+                self.convolve(speech, rir_speech, &mut state, Some(orig_len))?;
+            // Maybe mix in some original clean speech as target
+            if let Some(f) = self.drr_f {
+                speech.slice_axis_inplace(Axis(1), Slice::from(pad_front..pad_front + orig_len));
+                *speech *= f;
+                speech.scaled_add(1. - f, &speech_little_rev);
+            } else {
+                *speech = speech_little_rev;
+            }
+            let speech_rms_after = rms(speech.iter());
+            *speech *= speech_rms / speech_rms_after;
+            debug_assert_eq!(speech.shape(), speech_rev.shape());
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
-        }
+            Some(speech_rev)
+        } else {
+            None
+        };
         if apply_noise {
             // Noisy contains reverberant noise
-            self.pad(noise, fft_size)?;
+            self.pad(noise, pad_front, pad_back)?;
             *noise = self.convolve(noise, rir_noise, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
@@ -973,7 +1006,15 @@ impl RandReverbSim {
             prob_resample: p,
             prob_decay: p,
             sr,
+            drr_f: None,
         }
+    }
+    // Include the original signal within the target by specifying the Direct-to-Reverberant ratio
+    // in [dB].
+    pub fn with_drr(mut self, f: f32) -> Self {
+        assert!(f <= 1.0 && f >= 0.0);
+        self.drr_f = Some(f);
+        self
     }
 }
 
