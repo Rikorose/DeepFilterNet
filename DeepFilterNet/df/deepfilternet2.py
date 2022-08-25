@@ -54,14 +54,14 @@ class ModelParams(DfParams):
         )
         self.df_gru_skip: str = config("DF_GRU_SKIP", default="none", section=self.section)
         self.df_output_layer: str = config(
-            "DF_OUTPUT_LAYER", default="linear", section=self.section
+            "DF_OUTPUT_LAYER", default="groupedlinear", section=self.section
         )
         self.df_pathway_kernel_size_t: int = config(
             "DF_PATHWAY_KERNEL_SIZE_T", cast=int, default=1, section=self.section
         )
         self.enc_concat: bool = config("ENC_CONCAT", cast=bool, default=False, section=self.section)
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
-        self.df_n_iter: int = config("DF_N_ITER", cast=int, default=2, section=self.section)
+        self.df_n_iter: int = config("DF_N_ITER", cast=int, default=1, section=self.section)
         self.gru_type: str = config("GRU_TYPE", default="grouped", section=self.section)
         self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
@@ -374,7 +374,7 @@ class DfNet(nn.Module):
         else:
             self.pad_feat = nn.Identity()
         self.pad_specf = p.pad_mode.endswith("specf")
-        if p.df_lookahead > 0 and self.pad_specf:
+        if p.df_lookahead > 0 and p.pad_mode.startswith("input"):
             self.pad_spec = nn.ConstantPad3d((0, 0, 0, 0, -p.df_lookahead, p.df_lookahead), 0.0)
         else:
             self.pad_spec = nn.Identity()
@@ -418,7 +418,7 @@ class DfNet(nn.Module):
         Args:
             spec (Tensor): Spectrum of shape [B, 1, T, F, 2]
             feat_erb (Tensor): ERB features of shape [B, 1, T, E]
-            feat_spec (Tensor): Complex spectrogram features of shape [B, 1, T, F']
+            feat_spec (Tensor): Complex spectrogram features of shape [B, 1, T, F', 2]
 
         Returns:
             spec (Tensor): Enhanced spectrum of shape [B, 1, T, F, 2]
@@ -432,11 +432,16 @@ class DfNet(nn.Module):
         e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
         m = self.erb_dec(emb, e3, e2, e1, e0)
 
+        # This is needed for old models that only pad the lower part of the spectrum.
+        # Newly trained models should pad the full spectrum, which enables to already include the
+        # delay in the masking stage.
+        if not self.pad_specf:
+            spec = self.pad_spec(spec)
         m = self.pad_out(m.unsqueeze(-1)).squeeze(-1)
         spec = self.mask(spec, m)
 
         if self.run_df:
-            df_coefs, df_alpha = self.df_dec(emb, c0)
+            df_coefs, _ = self.df_dec(emb, c0)
             df_coefs = self.pad_out(df_coefs)
 
             if self.pad_specf:
@@ -445,9 +450,6 @@ class DfNet(nn.Module):
                 spec_f = self.df_op(spec_f, df_coefs)
                 spec[..., : self.nb_df, :] = spec_f[..., : self.nb_df, :]
             else:
-                spec = self.pad_spec(spec)
                 spec = self.df_op(spec, df_coefs)
-        else:
-            df_alpha = torch.zeros(())
 
-        return spec, m, lsnr, df_alpha
+        return spec, m, lsnr, df_coefs
