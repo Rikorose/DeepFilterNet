@@ -1072,7 +1072,15 @@ impl TdDataset {
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
                 }
             }
+            if crate::rms(sample.iter()) < 1e-10 {
+                log::warn!("Speech sample before augmentation {} is zero!", idx);
+                continue;
+            }
             self.sp_augmentations.transform(&mut (&mut sample).into())?;
+            if crate::rms(sample.iter()) < 1e-10 {
+                log::warn!("Speech sample after augmentation {} is zero!", idx);
+                continue;
+            }
             cur_len += sample.len_of(Axis(1));
             speech_samples.push(sample);
             if cur_len < self.max_sample_len() {
