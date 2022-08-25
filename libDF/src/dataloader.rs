@@ -258,6 +258,7 @@ impl DataLoader {
 
         let worker_recievers: Vec<_> = (0..self.num_workers).map(|_| in_receiver.clone()).collect();
         let overfit = self.overfit;
+        let is_train = self.current_split == Split::Train;
         let handle = thread::spawn(move || -> Result<()> {
             worker_recievers.par_iter().try_for_each(|r| {
                 while let Ok((sample_idx, ordering_idx)) = r.recv() {
@@ -266,9 +267,10 @@ impl DataLoader {
                         return Ok(());
                     }
                     assert!(ordering_idx >= 0);
-                    let seed = Some(if overfit {
-                        epoch_seed
+                    let seed = Some(if overfit || !is_train {
+                        0
                     } else {
+                        // Only during training, provide a new seed for each epoch
                         epoch_seed + sample_idx as u64
                     });
                     let sample = match ds.get_sample(sample_idx, seed) {
