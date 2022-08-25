@@ -5,8 +5,8 @@ use df::transforms::{
 use df::{Complex32, DFState, UNIT_NORM_INIT};
 use ndarray::{Array1, Array2, Array3, Array4, ArrayD, ArrayView4, Axis, ShapeError};
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayDyn, PyReadonlyArray2, PyReadonlyArray3,
-    PyReadonlyArrayDyn,
+    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayDyn, PyReadonlyArray1, PyReadonlyArray2,
+    PyReadonlyArray3, PyReadonlyArrayDyn,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -138,7 +138,7 @@ fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
     fn erb<'py>(
         py: Python<'py>,
         input: PyReadonlyArrayDyn<Complex32>,
-        erb_fb: Vec<usize>,
+        erb_fb: PyReadonlyArray1<usize>,
         db: Option<bool>,
     ) -> PyResult<&'py PyArrayDyn<f32>> {
         // Input shape [B, C, T, F]
@@ -168,7 +168,7 @@ fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
         let mut output = Array4::zeros((bs, ch, t, erb_fb.len()));
 
         for (in_b, mut out_b) in input.outer_iter().zip(output.outer_iter_mut()) {
-            erb_transform(&in_b, db.unwrap_or(true), &mut out_b, &erb_fb).to_py_err()?;
+            erb_transform(&in_b, db.unwrap_or(true), &mut out_b, erb_fb.as_slice()?).to_py_err()?;
         }
         let output: ArrayD<f32> = match indim {
             2 => output
