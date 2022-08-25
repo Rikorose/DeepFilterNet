@@ -398,9 +398,6 @@ class Loss(nn.Module):
             factors=[1, 10],
             powers=[2, 4],
         )
-        # DfAlphaLoss
-        self.cal_f = config("factor", 0, float, section="DfAlphaLoss")  # e.g. 1e3
-        self.cal = DfAlphaLoss(self.cal_f) if self.cal_f > 0 else None
         # SpectralLoss
         self.sl_fm = config("factor_magnitude", 0, float, section="SpectralLoss")  # e.g. 1e4
         self.sl_fc = config("factor_complex", 0, float, section="SpectralLoss")
@@ -441,7 +438,6 @@ class Loss(nn.Module):
         enhanced: Tensor,
         mask: Tensor,
         lsnr: Tensor,
-        df_alpha: Optional[Tensor],
         snrs: Tensor,
         max_freq: Optional[Tensor] = None,
         multi_stage_specs: List[Tensor] = [],
@@ -486,9 +482,6 @@ class Loss(nn.Module):
                 mrsl = self.mrsl(enhanced_td, clean_td)
         if self.lsnr_f != 0:
             lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
-        if self.cal_f != 0 and self.cal is not None and df_alpha is not None:
-            lsnr_gt = self.lsnr(clean, noise=noisy - clean, max_bin=self.nb_df)
-            cal = self.cal(df_alpha, target_lsnr=lsnr_gt)
         if self.sdrl_f != 0:
             if multi_stage_td is not None:
                 ms = multi_stage_td[:, 1:]

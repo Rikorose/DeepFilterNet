@@ -367,10 +367,8 @@ def run_epoch(
                 feat_erb=feat_erb,
                 feat_spec=feat_spec,
             )
-            df_alpha, multi_stage_specs = None, []
-            if isinstance(other, Tensor):
-                df_alpha = other
-            elif isinstance(other, (list, tuple)):
+            multi_stage_specs = []
+            if isinstance(other, (list, tuple)):
                 multi_stage_specs = other
             try:
                 err = losses.forward(
@@ -379,7 +377,6 @@ def run_epoch(
                     enh,
                     m,
                     lsnr,
-                    df_alpha=df_alpha,
                     max_freq=batch.max_freq,
                     snrs=snrs,
                     multi_stage_specs=multi_stage_specs,
@@ -414,7 +411,6 @@ def run_epoch(
                                 enh.detach(),
                                 batch.snr.detach(),
                                 lsnr.detach().float(),
-                                df_alpha,
                                 os.path.join(summary_dir, "nan"),
                                 mask_loss=losses.ml,
                                 prefix=split + f"_b{batch_idx}_ds{clean_idx}_e{epoch}",
@@ -448,15 +444,12 @@ def run_epoch(
                 )
             step = str(i).rjust(len(str(max_steps)))
             log_metrics(f"[{epoch}] [{step}/{max_steps}]", l_dict)
-            if df_alpha is not None:
-                df_alpha.detach().float()
             summary_write(
                 clean.detach(),
                 noisy.detach(),
                 enh.detach(),
                 batch.snr.detach(),
                 lsnr.detach().float(),
-                df_alpha,
                 summary_dir,
                 mask_loss=losses.ml,
                 prefix=split,
@@ -571,7 +564,6 @@ def summary_write(
     enh: Tensor,
     snrs: Tensor,
     lsnr: Tensor,
-    df_alpha: Optional[Tensor],
     summary_dir: str,
     mask_loss: Optional[MaskLoss] = None,
     prefix="train",
@@ -609,11 +601,6 @@ def summary_write(
         lsnr[idx].detach().cpu().numpy(),
         fmt="%.3f",
     )
-    if df_alpha is not None:
-        np.savetxt(
-            os.path.join(summary_dir, f"{prefix}_df_alpha_snr{snr}.txt"),
-            df_alpha[idx].detach().cpu().numpy(),
-        )
 
 
 def summary_noop(*__args, **__kwargs):  # type: ignore
