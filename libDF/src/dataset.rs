@@ -594,7 +594,11 @@ impl DatasetBuilder {
                 ds_len += ((keys.len() as f32 * cfg.sampling_factor()).round() as usize).max(1);
             }
             ds_keys.push((ds.dstype, ds.name(), keys));
-            assert!(!config.contains_key(&ds.name()));
+            assert!(
+                !config.contains_key(&ds.name()),
+                "Config does not contain ds {}",
+                ds.name()
+            );
             config.insert(ds.name(), cfg);
             log::debug!(
                 "Opened {} {} dataset {} with {} samples",
@@ -657,7 +661,11 @@ impl DatasetBuilder {
         let noise_generator =
             NoiseGenerator::new(self.sr, if ds_split == Split::Train { 0.05 } else { 0.0 });
         let bw_limiter = if let Some(p) = self.p_bandwidth_ext {
-            Some(BandwidthLimiterAugmentation::new(p, self.sr))
+            if p > 0. {
+                Some(BandwidthLimiterAugmentation::new(p, self.sr))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -1073,12 +1081,20 @@ impl TdDataset {
                 }
             }
             if crate::rms(sample.iter()) < 1e-10 {
-                log::warn!("Speech sample before augmentation {} is zero!", idx);
+                log::debug!(
+                    "Speech sample before augmentation {} is zero! Choosing new one.",
+                    idx
+                );
+                (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
                 continue;
             }
             self.sp_augmentations.transform(&mut (&mut sample).into())?;
             if crate::rms(sample.iter()) < 1e-10 {
-                log::warn!("Speech sample after augmentation {} is zero!", idx);
+                log::debug!(
+                    "Speech sample after augmentation {} is zero! Choosing new one.",
+                    idx
+                );
+                (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
                 continue;
             }
             cur_len += sample.len_of(Axis(1));
@@ -1134,14 +1150,18 @@ impl Dataset<f32> for TdDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
         #[cfg(feature = "dataset_timings")]
         let t0 = Instant::now();
-        log::trace!(
-            "get_sample() idx {} with seed {:?}",
-            idx,
-            seed.unwrap_or(idx as u64)
-        );
+        let sample_seed = seed.unwrap_or(idx as u64);
+        log::trace!("get_sample() idx {} with seed {:?}", idx, sample_seed,);
         seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
         let mut rng = thread_rng()?;
         let (mut speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
+        if crate::rms(speech.iter()) < 1e-10 {
+            log::warn!(
+                "No speech signal found for idx {}, seed {}",
+                idx,
+                sample_seed
+            );
+        }
         #[cfg(feature = "dataset_timings")]
         let t_sp = Instant::now();
         // Apply low pass to the noise as well
@@ -1218,13 +1238,6 @@ impl Dataset<f32> for TdDataset {
             speech_distorted = istft(x.view_mut(), &mut state, false);
             speech_distorted.slice_axis_inplace(Axis(1), Slice::from(0..speech.len_of(Axis(1))));
         }
-        // Guard against NaN
-        nan_to_num(&mut speech, Some("(get_sample(): speech)"));
-        nan_to_num(
-            &mut speech_distorted,
-            Some("(get_sample(): speech_distorted)"),
-        );
-        nan_to_num(&mut noise, Some("(get_sample(): noise)"));
         #[cfg(feature = "dataset_timings")]
         let t_d = Instant::now(); // distortions
         let (speech, _, noisy) = mix_audio_signal(
