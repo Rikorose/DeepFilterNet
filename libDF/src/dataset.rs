@@ -1399,7 +1399,14 @@ impl Hdf5Dataset {
             }
         })
     }
+    pub fn inner(&self) -> &hdf5::File {
+        &self.file
+    }
+    pub fn inner_mut(&mut self) -> &mut hdf5::File {
+        &mut self.file
+    }
     fn init_impl(file: File) -> Result<Self> {
+        log::trace!("Init Dataset {}", file.filename());
         match get_dstype(&file) {
             None => Err(DfDatasetError::Hdf5DsTypeNotFoundError),
             Some(dstype) => {
