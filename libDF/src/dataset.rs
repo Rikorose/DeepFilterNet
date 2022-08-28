@@ -1771,13 +1771,12 @@ impl Hdf5Dataset {
         let len = end - start;
         rdr.seek_absgp(None, 0)?;
         let mut srr = OggStreamReader::from_ogg_reader(rdr)?;
-        let mut trunc_start = 0;
         if start > 0 {
             match srr.seek_absgp_pg(start as u64) {
                 Ok(()) => (),
                 Err(e) => {
                     log::trace!("Error seeking in vorbis file {}: {:?}", key, e);
-                    trunc_start = start;
+                    // Decode the vorbis file from start and truncate at the end.
                 }
             }
         }
@@ -1805,7 +1804,7 @@ impl Hdf5Dataset {
             }
             pck = srr.read_dec_packet_itl()?;
         }
-        let start_pos = (out.len() / ch + trunc_start).saturating_sub(len);
+        let start_pos = (out.len() / ch).saturating_sub(len);
         let mut out = Array2::from_shape_vec((out.len() / ch, ch), out)?;
         // We already have a coarse range. The start may contain more samples from its
         // corresponding ogg page. The end is already exact. Thus, truncate the beginning.
