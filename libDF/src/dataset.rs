@@ -1419,20 +1419,30 @@ impl Hdf5Dataset {
         &mut self.file
     }
     fn init_impl(file: File) -> Result<Self> {
-        log::trace!("Init Dataset {}", file.filename());
+        let n = file.filename();
+        log::trace!("Init Dataset {}", n);
         match get_dstype(&file) {
             None => Err(DfDatasetError::Hdf5DsTypeNotFoundError),
             Some(dstype) => {
                 let sr = match file.attr("sr") {
-                    Err(_e) => None,
+                    Err(_e) => {
+                        log::warn!("Failed to get sr from {}", n);
+                        None
+                    }
                     Ok(attr) => Some(attr.read_scalar::<usize>().unwrap()),
                 };
                 let max_freq = match file.attr("max_freq") {
-                    Err(_e) => None,
+                    Err(_e) => {
+                        log::warn!("Failed to get max_freq from {}", n);
+                        None
+                    }
                     Ok(attr) => Some(attr.read_scalar::<usize>().unwrap()),
                 };
                 let codec = match file.attr("codec") {
-                    Err(_e) => None,
+                    Err(_e) => {
+                        log::warn!("Failed to get codec from {}", n);
+                        None
+                    }
                     Ok(attr) => match attr.read_scalar::<VarLenUnicode>().unwrap().as_str() {
                         "pcm" => Some(Codec::PCM),
                         "vorbis" => Some(Codec::Vorbis),
@@ -1441,7 +1451,10 @@ impl Hdf5Dataset {
                     },
                 };
                 let dtype = match file.attr("dtype") {
-                    Err(_e) => None,
+                    Err(_e) => {
+                        log::warn!("Failed to get dtype from {}", n);
+                        None
+                    }
                     Ok(attr) => match attr.read_scalar::<VarLenUnicode>().unwrap().as_str() {
                         "float32" => Some(DType::F32),
                         "int16" => Some(DType::I16),
