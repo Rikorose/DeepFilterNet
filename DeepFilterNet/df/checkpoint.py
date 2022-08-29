@@ -97,7 +97,7 @@ def read_cp(
         for key in missing:
             logger.warning(f"Missing key: '{key}'")
         for key in unexpected:
-            if key.endswith(".h0"):
+            if key.endswith(".h0") or "erb_comp" in key:
                 continue
             logger.warning(f"Unexpected key: {key}")
         return epoch
