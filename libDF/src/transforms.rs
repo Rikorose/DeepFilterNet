@@ -425,13 +425,13 @@ pub(crate) fn resample(
 ///   - `n_bins_overlap`: Instead of starting at bin correspinging to `freq` start `n_bins_overlap` lower.
 pub(crate) fn ext_bandwidth_spectral(
     x: &mut Array3<Complex32>,
-    freq: usize,
+    freq: f32,
     sr: usize,
     n_bins_overlap: Option<usize>,
 ) {
     let full_n_bins = x.len_of(Axis(2)); // Number of bins of non-downampled signal
     let n_ov = n_bins_overlap.unwrap_or(0); // Overlap at the edge of the downsampled spectrum
-    let down_n_bins = full_n_bins * freq * 2 / sr - n_ov; // Number of bins containing energy in downsampled signal
+    let down_n_bins = (full_n_bins as f32 * freq * 2. / sr as f32) as usize - n_ov; // Number of bins containing energy in downsampled signal
     let min_bin = full_n_bins * 4000 * 2 / sr + 1; // Only start from 4kHz
     let max_copy_bins = down_n_bins - min_bin; // Number of bins to copy per iteration
     let missing_bins = full_n_bins - down_n_bins;
@@ -450,38 +450,101 @@ pub(crate) fn ext_bandwidth_spectral(
     }
 }
 
-/// Estimate bandwidth by finding the highest frequency bin containing a sufficient amount of
-/// energy.
+fn bw_filterbank(center_freqs: &[f32], cutoff_bins: &[f32; 8]) -> Result<Array2<f32>> {
+    // fb for bands [0-8, 8-10, 10-12, 12-16, 16-18, 18-20, 20-22, 22-24] kHz.
+    // assumes 48 kHz sampling rate.
+    let n_freqs = center_freqs.len();
+    let mut out = Array2::zeros((n_freqs, 8));
+    for (&f, mut o) in center_freqs.iter().zip(out.outer_iter_mut()) {
+        let o = o.as_slice_mut().unwrap();
+        if f <= cutoff_bins[0] {
+            o[0] += 1.
+        } else if f <= cutoff_bins[1] {
+            o[1] += 1.
+        } else if f <= cutoff_bins[2] {
+            o[2] += 1.
+        } else if f <= cutoff_bins[3] {
+            o[3] += 1.
+        } else if f <= cutoff_bins[4] {
+            o[4] += 1.
+        } else if f <= cutoff_bins[5] {
+            o[5] += 1.
+        } else if f <= cutoff_bins[6] {
+            o[6] += 1.
+        } else {
+            o[7] += 1.
+        }
+    }
+    let sum = out.sum_axis(Axis(0)).into_shape((1, 8))?;
+    Ok(out / sum)
+}
+
+/// Compute r2c FFT frequency of given the number of frequencies (`n_fft/2+1`).
+pub fn rfftfreqs(n: usize, sr: usize) -> Vec<f32> {
+    (0..n)
+        .map(|x| x as f32 * (sr / 2) as f32 / (n - 1) as f32)
+        .collect::<Vec<f32>>()
+}
+
+/// Estimate bandwidth by finding the highest frequency bin containing a sufficient amount of energy.
+/// A minimum sampling rate of 16 kHz is assumed.
+///
+/// The algorithm works as follows:
+///     1. Reduce the frequency bins into the following bands `[0-8,8-10,10-12,12-16,16-18,18-20,20-22,22-24]` kHz.
+///        This matches the following sampling rates: `[16,20,24,32,36,40,44,48]` kHz.
+///        Note, that non-standard srs like 36 kHz with 18 kHz cut off frequency is included since
+///        codecs like mp3 may cut off some speech parts at 18 kHz.
+///     2. Compute mapping from bw-filterbank to frequency bins
+///     3. Within non-overlapping chhunks of size `window_size` compute max energy in [dB].
+///        If max < `db_cut_off`, assume sampling rate corresponding to the bw-filterbank band.
+///     4. Return median of indices found in 3.
+///
+/// Args:
+///     - `input`: Complex spectrum of shape (C, T, F)
+///     - `sr`: Sampling rate of the non-downampled time-domain signal
+///     - `db_cut_off`: Energy threshold (e.g. `120.`)
+///     - `window_size`: Window length in samples to estimate bandwidth
 pub(crate) fn estimate_bandwidth(
     input: ArrayView3<Complex32>,
-    db_cut_off: f32,
-    n_avg: usize,
+    sr: usize,
+    mut db_cut_off: f32,
+    window_size: usize,
 ) -> usize {
-    // input shape [C, T, F]
-    let f_db = input
-        .mean_axis(Axis(1))
-        .unwrap()
+    assert_eq!(sr, 48000, "bw_filterbank() assumes 48 kHz sampling rate.");
+    if db_cut_off > 0. {
+        db_cut_off *= -1.;
+    }
+    // 1. Init bandwidth filterbank
+    let b_c = [
+        8000., 10000., 12000., 16000., 18000., 20000., 22000., 24000.,
+    ];
+    let sr = 48000;
+    let n_freqs = input.len_of(Axis(2));
+    let center_freqs = rfftfreqs(n_freqs, sr);
+    let fb = bw_filterbank(&center_freqs, &b_c).unwrap();
+    let mut f_db = input
+        .map(|x| (x.norm() + 1e-16).log10() * 20.)
         .mean_axis(Axis(0))
         .unwrap()
-        .map(|x| (x.norm() + 1e-16).log10() * 10.);
-    let n_freqs = f_db.len();
-    let f_db_diff =
-        (f_db.slice(s![..n_freqs - n_avg]).to_owned() - f_db.slice(s![n_avg..])) / n_avg as f32;
-    let i = argmax(&f_db_diff).unwrap_or(n_freqs);
-    if f_db_diff[i] < db_cut_off || i < n_freqs / 4 {
-        return n_freqs;
+        .dot(&fb);
+    // 2. Compute mapping of bw-filterbank bins to original frequency bins.
+    let mut c_map = [0; 8];
+    for (i, fb_r) in fb.outer_iter().enumerate() {
+        for (&fb_v, c) in fb_r.iter().zip(c_map.iter_mut()) {
+            if fb_v > 0. {
+                *c = i
+            }
+        }
     }
-    // Some corrections if we are at a boundary of n_freqs/2, n_freqs/3, etc.
-    if i == n_freqs - 1 {
-        return n_freqs;
-    } else if i == n_freqs / 2 || i == n_freqs / 2 + 2 {
-        return n_freqs / 2 + 1;
-    } else if i == n_freqs / 3 || i == n_freqs / 3 + 2 {
-        return n_freqs / 3 + 1;
-    } else if i == n_freqs / 4 || i == n_freqs / 4 + 2 {
-        return n_freqs / 4 + 1;
+    // 3. Find cutoff indice for each frame of size `window_size`.
+    let mut idcs: Vec<usize> = Vec::with_capacity(input.len_of(Axis(1)) / window_size + 1);
+    for w in f_db.axis_chunks_iter_mut(Axis(0), window_size) {
+        let m = w.axis_iter(Axis(1)).map(|x| find_max(x).unwrap());
+        let c = m.skip(1).position(|x| x < db_cut_off).unwrap_or(7);
+        idcs.push(c_map[c]);
     }
-    i
+    // 4. Return median of found indices
+    return median(&mut idcs);
 }
 
 pub(crate) struct NonNan(f32);
@@ -570,7 +633,10 @@ where
     })
 }
 
-pub(crate) fn median(x: &mut [f32]) -> f32 {
+pub(crate) fn median<T>(x: &mut [T]) -> T
+where
+    T: PartialOrd<T> + Copy,
+{
     x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = x.len() / 2;
     x[mid]
@@ -599,6 +665,36 @@ where
     let mut high = std::f32::MIN;
     vals.into_iter().enumerate().for_each(|(i, v)| {
         if v > &high {
+            high = v.abs();
+            index = i;
+        }
+    });
+    Ok(index)
+}
+
+pub(crate) fn argmin<'a, I>(vals: I) -> Result<usize>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut index = 0;
+    let mut high = std::f32::MAX;
+    vals.into_iter().enumerate().for_each(|(i, v)| {
+        if v < &high {
+            high = *v;
+            index = i;
+        }
+    });
+    Ok(index)
+}
+
+pub(crate) fn argmin_abs<'a, I>(vals: I) -> Result<usize>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut index = 0;
+    let mut high = std::f32::MAX;
+    vals.into_iter().enumerate().for_each(|(i, v)| {
+        if v < &high {
             high = v.abs();
             index = i;
         }
@@ -680,31 +776,32 @@ mod tests {
 
     #[test]
     fn test_estimate_bandwidth() -> Result<()> {
-        let (sample, mut sr) = setup();
-        let sample = resample(sample.view(), sr, sr / 2, None).unwrap();
-        sr /= 2;
+        let (sample, sr) = setup();
         write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
 
-        let fft_size = sr / 50;
+        let fft_size = 960;
+        assert!(sr % fft_size == 0); // So that we have nice center freqs
         let hop_size = fft_size / 2;
         let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
         let x = stft(sample.view(), &mut state, true);
-        assert_eq!(estimate_bandwidth(x.view(), 8., 2), fft_size / 2 + 1);
+        let ws = 200; // window size
+        let c_db = 120.; //cut of db
+        let cf = rfftfreqs(fft_size / 2 + 1, sr); // center frequencies
+        let idx = estimate_bandwidth(x.view(), sr, c_db, ws);
+        assert_eq!(cf[idx], 22000.);
 
         let sample_f2 = low_pass_resample(sample.view(), sr / 4, sr).unwrap();
         write_wav_arr2("../out/resampled_f2.wav", sample_f2.view(), sr as u32).unwrap();
         let x_f2 = stft(sample_f2.view(), &mut state, true);
-        assert_eq!(estimate_bandwidth(x_f2.view(), 8., 2), fft_size / 4 + 1);
+        let idx = estimate_bandwidth(x_f2.view(), sr, c_db, ws);
+        assert_eq!(cf[idx], 12000.);
 
         let sample_f3 = low_pass_resample(sample.view(), sr / 6, sr).unwrap();
         write_wav_arr2("../out/resampled_f3.wav", sample_f3.view(), sr as u32).unwrap();
         let x_f3 = stft(sample_f3.view(), &mut state, true);
-        assert_eq!(estimate_bandwidth(x_f3.view(), 8., 2), fft_size / 6 + 1);
+        let idx = estimate_bandwidth(x_f3.view(), sr, c_db, ws);
+        assert_eq!(cf[idx], 8000.);
 
-        let sample_f4 = low_pass_resample(sample.view(), sr / 8, sr).unwrap();
-        write_wav_arr2("../out/resampled_f4.wav", sample_f4.view(), sr as u32).unwrap();
-        let x_f4 = stft(sample_f4.view(), &mut state, true);
-        assert_eq!(estimate_bandwidth(x_f4.view(), 8., 2), fft_size / 8 + 1);
         Ok(())
     }
 
@@ -712,20 +809,29 @@ mod tests {
     fn test_ext_bandwidth_spectral() {
         let (sample, sr) = setup();
         let fft_size = sr / 50;
+        dbg!(fft_size);
         let hop_size = fft_size / 2;
         let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
         let mut x = stft(sample.view(), &mut state, true);
 
-        let f_cut_off = 20000;
-        let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
-        write_wav_arr2("../out/sample_f2.wav", sample_f2.view(), sr as u32).unwrap();
-        let mut x2 = stft(sample_f2.view(), &mut state, true);
+        let cf = rfftfreqs(fft_size / 2 + 1, sr);
+        let idx = estimate_bandwidth(x.view(), sr, -120., 5);
+        let f_cut_off = cf[idx];
+        dbg!(idx, f_cut_off);
+        let mut x2 = x.clone();
         ext_bandwidth_spectral(&mut x2, f_cut_off, sr, Some(4));
+        let sample_ext = istft(x2.view_mut(), &mut state, true);
+        write_wav_arr2("../out/sample_ext.wav", sample_ext.view(), sr as u32).unwrap();
+
+        let f_cut_off=12000;
+        let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
+        let mut x3 = stft(sample_f2.view(), &mut state, true);
+        ext_bandwidth_spectral(&mut x3, f_cut_off as f32, sr, Some(4));
+        let sample_f2_ext = istft(x3.view_mut(), &mut state, true);
+        write_wav_arr2("../out/sample_f2_ext.wav", sample_f2_ext.view(), sr as u32).unwrap();
 
         let sample = istft(x.view_mut(), &mut state, true);
         write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
-        let sample_f2 = istft(x2.view_mut(), &mut state, true);
-        write_wav_arr2("../out/sample_f2_ext.wav", sample_f2.view(), sr as u32).unwrap();
     }
 
     #[test]

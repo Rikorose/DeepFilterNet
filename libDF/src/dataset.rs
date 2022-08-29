@@ -815,7 +815,7 @@ impl Dataset<Complex32> for FftDataset {
         let speech = stft(sample.get_speech_view()?, &mut state, false);
         let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
         if let Some(f) = sample.downsample_freq {
-            ext_bandwidth_spectral(&mut noisy, f, sr, Some(4));
+            ext_bandwidth_spectral(&mut noisy, f as f32, sr, Some(4));
         }
 
         // Feature calculation (normalization)
@@ -1071,12 +1071,11 @@ impl TdDataset {
             if self.bw_limiter.is_some() {
                 // Extend clean speech to make sure it covers the full spectrum
                 let mut spec = stft(sample.view(), state.as_mut().unwrap(), false);
-                let max_bin = estimate_bandwidth(spec.view(), 8., 2);
+                let max_bin = estimate_bandwidth(spec.view(), self.sr, -120., 10);
                 let n_bins = fft_size / 2 + 1;
-                // Extend bandwidth only if max 80% are missing.
-                if max_bin < n_bins && max_bin > (n_bins as f32 * 0.8) as usize {
+                if max_bin < n_bins{
                     let f = max_bin * self.sr / 2 / n_bins;
-                    ext_bandwidth_spectral(&mut spec, f, self.sr, Some(16));
+                    ext_bandwidth_spectral(&mut spec, f as f32, self.sr, Some(16));
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
                 }
             }
@@ -2322,10 +2321,10 @@ mod tests {
         let mut mixture_cache = BTreeMap::new();
         log::info!("Dataset length: {}", ds_len);
         for seed in [42, 43] {
-            for _epoch in 0..2 {
+            for epoch in 0..2 {
                 val_ds.set_seed(seed);
                 if val_ds.need_generate_keys() {
-                    val_ds.generate_keys(epoch as u64)?
+                    val_ds.generate_keys(Some(epoch as u64))?
                 }
                 for idx in 0..ds_len {
                     let sample = val_ds.get_sample(idx, Some(seed + idx as u64))?;
