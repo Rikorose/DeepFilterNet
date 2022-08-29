@@ -36,7 +36,7 @@ class DfParams:
         # Pad mode. By default, padding will be handled on the input side:
         # - `input`, which pads the input features passed to the model
         # - `output`, which pads the output spectrogram corresponding to `df_lookahead`
-        self.pad_mode: str = config("PAD_MODE", default="input_specf", section="DF")
+        self.pad_mode: str = config("PAD_MODE", default="input", section="DF")
 
 
 class Config:
@@ -116,8 +116,8 @@ class Config:
             raise ValueError("No configuration loaded")
         if not self.parser.has_section(section.lower()):
             self.parser.add_section(section.lower())
-        if option in os.environ:
-            value = os.environ[option]
+        if option.upper() in os.environ:
+            value = os.environ[option.upper()]
             if save:
                 self.parser.set(section, option, self.tostr(value, cast))
         elif self.parser.has_option(section, option):
