@@ -22,16 +22,16 @@ def save_sample(group, key: str, codec: str, out_dir: str, sr: int, n_channels: 
     ds = group[key]
     if codec == "pcm":
         sample = torch.from_numpy(ds[...])
+        if sample.dim() == 1:
+            sample.unsqueeze_(0)
     else:
-        ic(ds.shape)
         sample = load_encoded(ds, codec)
-        ic(sample.shape)
     outname = f"{out_dir}/{key}"
     if not outname.endswith(".wav"):
         outname += ".wav"
     print(outname)
     if n_channels is not None and n_channels > 0:
-        assert sample.dim() == 2
+        assert sample.dim() == 2, f"but got sample with shape {sample.shape}"
         sample = sample[:n_channels]
     ta.save(outname, sample, sample_rate=sr)
 
