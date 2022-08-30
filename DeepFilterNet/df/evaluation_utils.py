@@ -1,5 +1,4 @@
 import csv
-import json
 import os
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
@@ -20,20 +19,14 @@ from torchaudio.transforms import Resample
 
 from df.enhance import df_features
 from df.io import get_resample_params, load_audio, resample, save_audio
-from df.logger import log_metrics
 from df.model import ModelParams
+from df.scripts.dnsmos import dnsmos_api_req, dnsmos_local, download_onnx_models
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device
-from df.scripts.dnsmos import dnsmos_api_req, dnsmos_local, download_onnx_models
 from libdf import DF
 
 HAS_OCTAVE = True
 RESAMPLE_METHOD = "sinc_fast"
-
-try:
-    import requests
-except ImportError:
-    requests = None
 
 try:
     import semetrics
@@ -114,8 +107,8 @@ def evaluation_loop(
         for noisyfn, cleanfn in log_progress(
             zip(noisy_files, clean_files), len(noisy_files), log_percent
         ):
-            noisy, _ = load_audio(noisyfn, sr)
-            clean, _ = load_audio(cleanfn, sr)
+            noisy, _ = load_audio(noisyfn, sr, method=RESAMPLE_METHOD)
+            clean, _ = load_audio(cleanfn, sr, method=RESAMPLE_METHOD)
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
             enh = enhance(model, df_state, noisy)[0]
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
@@ -172,12 +165,12 @@ def evaluation_loop_dir_only(
         for cleanfn, enhfn, noisyfn in log_progress(
             zip(clean_files, enh_files, noisy_files), len(noisy_files), log_percent
         ):
-            clean, _ = load_audio(cleanfn, sr)
-            enh, _ = load_audio(enhfn, sr)
+            clean, _ = load_audio(cleanfn, sr, method=RESAMPLE_METHOD)
+            enh, _ = load_audio(enhfn, sr, method=RESAMPLE_METHOD)
             logger.debug(f"Processing clean {cleanfn}")
             logger.debug(f"Processing enh {enhfn}")
             if noisyfn is not None:
-                noisy, _ = load_audio(noisyfn, sr)
+                noisy, _ = load_audio(noisyfn, sr, method=RESAMPLE_METHOD)
                 logger.debug(f"Processing noisy {noisyfn}")
             for m in metrics:
                 m.add(clean=clean, enhanced=enh, noisy=noisy, fn=os.path.basename(cleanfn))
@@ -223,7 +216,7 @@ def evaluation_loop_dns(
     with DummyPool(processes=max(1, n_workers)) as pool:
         metrics: List[NoisyMetric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
         for noisyfn in log_progress(noisy_files, len(noisy_files), log_percent):
-            noisy, _ = load_audio(noisyfn, sr)
+            noisy, _ = load_audio(noisyfn, sr, method=RESAMPLE_METHOD)
             logger.debug(f"Processing {os.path.basename(noisyfn)}")
             enh = enhance(model, df_state, noisy)[0]
             noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
