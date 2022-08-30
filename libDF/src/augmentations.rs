@@ -926,8 +926,7 @@ impl RandReverbSim {
             //
             // Add 5 ms extra offset since these are releveant for speech intelligibility
             let offset = max_idx + 5 * self.sr / 1000;
-            let mut rir_speech =
-                self.supress_late(rir_noise.clone(), self.sr, offset, 0.2)?;
+            let mut rir_speech = self.supress_late(rir_noise.clone(), self.sr, offset, 0.2)?;
             let rir_e = rir_speech.map(|v| v * v).sum().sqrt();
             rir_speech *= 1. / rir_e;
             // Generate target speech signal containing less reverberation
@@ -1012,7 +1011,7 @@ impl RandReverbSim {
     // Include the original signal within the target by specifying the Direct-to-Reverberant ratio
     // in [dB].
     pub fn with_drr(mut self, f: f32) -> Self {
-        assert!(f <= 1.0 && f >= 0.0);
+        assert!((0.0..=1.0).contains(&f));
         self.drr_f = Some(f);
         self
     }
