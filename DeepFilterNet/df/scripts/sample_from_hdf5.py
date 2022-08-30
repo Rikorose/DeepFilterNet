@@ -9,7 +9,6 @@ import h5py
 import numpy as np
 import torch
 import torchaudio as ta
-from icecream import ic
 
 
 def load_encoded(buffer: np.ndarray, codec: str):
