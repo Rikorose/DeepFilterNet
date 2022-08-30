@@ -544,7 +544,7 @@ pub(crate) fn estimate_bandwidth(
         idcs.push(c_map[c]);
     }
     // 4. Return median of found indices
-    return median(&mut idcs);
+    median(&mut idcs)
 }
 
 pub(crate) struct NonNan(f32);
@@ -823,7 +823,7 @@ mod tests {
         let sample_ext = istft(x2.view_mut(), &mut state, true);
         write_wav_arr2("../out/sample_ext.wav", sample_ext.view(), sr as u32).unwrap();
 
-        let f_cut_off=12000;
+        let f_cut_off = 12000;
         let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
         let mut x3 = stft(sample_f2.view(), &mut state, true);
         ext_bandwidth_spectral(&mut x3, f_cut_off as f32, sr, Some(4));
