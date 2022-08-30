@@ -1,7 +1,8 @@
 import argparse
+import json
 import os
 import warnings
-from typing import List, Tuple, Dict
+from typing import Dict, List, Tuple
 
 import numpy as np
 import numpy.polynomial.polynomial as poly
@@ -9,7 +10,13 @@ import torch
 from torch import Tensor
 
 from df.io import load_audio
+from df.logger import log_metrics
 from df.utils import download_file, get_cache_dir
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 URL_P808 = "https://dnsmos.azurewebsites.net/score"
 URL_P835 = "https://dnsmos.azurewebsites.net/v1/dnsmosp835/score"
