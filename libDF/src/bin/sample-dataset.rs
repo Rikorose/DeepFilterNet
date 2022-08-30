@@ -99,7 +99,7 @@ fn main() -> Result<()> {
     let snrs = train_cfg
         .get("dataloader_snrs")
         .unwrap()
-        .split(",")
+        .split(',')
         .map(|x| x.parse::<i8>().unwrap())
         .collect();
     let mut state = DFState::new(sr, fft_size, hop_size, nb_erb, min_nb_erb_freqs);

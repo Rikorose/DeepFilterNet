@@ -51,7 +51,16 @@ logging = ["log"]
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
 cache = ["sled", "bincode"]
-bin = ["clap", "anyhow", "ctrlc", "log", "env_logger", "rand", "ndarray-rand"]
+bin = [
+  "clap",
+  "anyhow",
+  "ctrlc",
+  "log",
+  "env_logger",
+  "rust-ini",
+  "rand",
+  "ndarray-rand",
+]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -83,6 +92,7 @@ bincode = { version = "2.0.0-rc", default-features = false, features = [
 ], optional = true }
 env_logger = { version = "0.9", optional = true }
 clap = { version = "3.2", optional = true, features = ["derive"] }
+rust-ini = { version = "^0.18", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
