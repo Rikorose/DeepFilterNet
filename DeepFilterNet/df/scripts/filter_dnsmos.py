@@ -9,7 +9,6 @@ import h5py
 import numpy as np
 import torch
 import torchaudio as ta
-from icecream import ic
 from torch import Tensor
 
 import df.scripts.dnsmos as dnsmos
@@ -37,9 +36,10 @@ def to_int16(audio: Tensor) -> Tensor:
 def main(args):
     onnx_sig, onnx_bak_ovr = dnsmos.download_onnx_models()
     if args.mos is not None:
-        assert len(args.mos)==3
-    t = args.mos
-    print(t)
+        assert len(args.mos) == 3
+        t = args.mos
+    else:
+        t = [4.2, 4.5, 4.0]
 
     with h5py.File(args.hdf5_input, "r") as h5_read, h5py.File(args.hdf5_filtered, "a") as h5_write:
         print(f"Opened datatset {args.hdf5_input}")
@@ -69,11 +69,15 @@ def main(args):
                 print(f"{key} ...", end="", flush=True)
                 assert audio.dim() <= 2
                 # For now, only single channel is supported
-                assert audio.dim() == 1 or audio.shape[0] == 1
-
+                if audio.dim() == 1:
+                    audio.unsqueeze_(0)
                 audio = to_f32(audio)
-                resampled = resample(audio.squeeze(), sr, dnsmos.SR)
-                (sig, bak, ovr) = dnsmos.dnsmos_local(resampled, onnx_sig, onnx_bak_ovr)
+                for ch in range(audio.shape[0]):
+                    resampled = resample(audio[ch], sr, dnsmos.SR)
+                    (ch_sig, ch_bak, ch_ovr) = dnsmos.dnsmos_local(
+                        resampled, onnx_sig, onnx_bak_ovr
+                    )
+                sig, bak, ovr = np.mean(ch_sig), np.mean(ch_bak), np.mean(ch_ovr)
                 print(f" sig: {sig:.2f}, bak: {bak:.2f}, ovr: {ovr:.2f} ... ", end="")
                 if sig > t[0] and bak > t[1] and ovr > t[2]:
                     print("copying.")
@@ -100,7 +104,13 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("hdf5_input", type=str)
-    parser.add_argument("--mos", type=float, default=None, nargs=3, help="Minimum values of SIG, BAK and OVR MOS values. Defaults to [4.2, 4.5, 4.0]")
+    parser.add_argument(
+        "--mos",
+        type=float,
+        default=None,
+        nargs=3,
+        help="Minimum values of SIG, BAK and OVR MOS values. Defaults to [4.2, 4.5, 4.0]",
+    )
     parser.add_argument("--hdf5_filtered", type=str, default=None)
     parser.add_argument("--codec", type=str, default=None)
     args = parser.parse_args()
