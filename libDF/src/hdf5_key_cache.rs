@@ -1,7 +1,6 @@
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 
 use crate::dataset::*;
-
 
 /// Generate path of json cache file containing the HDF5 keys.
 pub fn cache_path(cfg_path: &str) -> PathBuf {
@@ -44,7 +43,7 @@ pub fn write_hdf5_key_cache(cfg_path: &str, cfg: &DatasetConfigJson) {
     cache.write(cache_path.to_str().unwrap()).expect("Failed to write cache.");
 }
 /// Fetch latest HDF5 keys and update the corresponding Hdf5Cfgs.
-/// 
+///
 /// This method is supposed to be called after TdDataset initialization so that the HDF5 keys are
 /// stored within each Hdf5Cfg. Thus, we can serialize Hdf5Cfg to json and reuse the cached keys for
 /// the next initialization.
