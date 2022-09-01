@@ -1134,6 +1134,7 @@ impl TdDataset {
                 continue;
             }
             if find_max_abs(ns.as_slice().unwrap())? < 1e-10 {
+                log::debug!("No energy found in noise {}, ds {}", ns_key, ns_name);
                 continue;
             }
             self.ns_augmentations.transform(&mut (&mut ns).into())?;

@@ -637,6 +637,12 @@ pub(crate) fn median<T>(x: &mut [T]) -> T
 where
     T: PartialOrd<T> + Copy,
 {
+    if x.len() == 1 {
+        return x[0];
+    }
+    if x.is_empty() {
+        panic!("Empty input slice");
+    }
     x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = x.len() / 2;
     x[mid]
