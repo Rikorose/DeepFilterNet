@@ -267,16 +267,22 @@ impl DataLoader {
                         return Ok(());
                     }
                     assert!(ordering_idx >= 0);
-                    let seed = Some(if overfit || !is_train {
+                    let seed = if overfit {
                         0
-                    } else {
+                    } else if is_train {
                         // Only during training, provide a new seed for each epoch
                         epoch_seed + sample_idx as u64
-                    });
-                    let sample = match ds.get_sample(sample_idx, seed) {
+                    } else {
+                        // During valid/test, only use sample_idx as seed
+                        sample_idx as u64
+                    };
+                    let sample = match ds.get_sample(sample_idx, Some(seed)) {
                         Ok(s) => Ok(s),
                         Err(e) => {
-                            eprintln!("Error during get_sample(): {:?}", e);
+                            eprintln!(
+                                "Error during get_sample() (idx: {}, seed {:?}): {:?}",
+                                sample_idx, seed, e
+                            );
                             Err(e.into())
                         }
                     };
