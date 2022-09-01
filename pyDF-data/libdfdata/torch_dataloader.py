@@ -169,6 +169,7 @@ class PytorchDataLoader:
                     self.data_queue,
                     torch.cuda.current_device(),
                     self.pin_memory_thread_done_event,
+                    None,
                 ),
                 name="PinMemoryLoop",
             )
