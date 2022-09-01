@@ -197,6 +197,11 @@ class Config:
             if "df_lookahead" in sec_deepfilternet:
                 sec_df["df_lookahead"] = sec_deepfilternet["df_lookahead"]
                 del sec_deepfilternet["df_lookahead"]
+        if self.parser.has_section("train") and "p_reverb" in self.parser["train"]:
+            if not self.parser.has_section("distortion"):
+                self.parser.add_section("distortion")
+            self.parser["distortion"]["p_reverb"] = self.parser["train"]["p_reverb"]
+            del self.parser["train"]["p_reverb"]
 
     def _fix_clc(self):
         """Renaming of some groups/options for compatibility with old models."""
