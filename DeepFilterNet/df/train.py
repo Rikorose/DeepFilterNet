@@ -40,6 +40,7 @@ debug = False
 log_timings = False
 state: Optional[DF] = None
 istft: Optional[nn.Module]
+MAX_NANS = 50
 
 
 @logger.catch
@@ -148,7 +149,7 @@ def main():
         nb_erb=p.nb_erb,
         nb_spec=p.nb_df,
         norm_alpha=get_norm_alpha(log=False),
-        p_reverb=config("p_reverb", 0.2, float, section="train"),
+        p_reverb=config("p_reverb", 0.2, float, section="distortion"),
         p_bw_ext=config("p_bandwidth_ext", 0.0, float, section="distortion"),
         p_clipping=config("p_clipping", 0.0, float, section="distortion"),
         p_air_absorption=config("p_air_absorption", 0.0, float, section="distortion"),
@@ -386,7 +387,7 @@ def run_epoch(
                     logger.warning("NaN in loss computation: {}. Skipping backward.".format(str(e)))
                     check_finite_module(model)
                     n_nans += 1
-                    if n_nans > 10:
+                    if n_nans > MAX_NANS:
                         raise e
                     continue
                 raise e
@@ -399,9 +400,6 @@ def run_epoch(
                     if "nan" in e_str.lower() or "non-finite" in e_str:
                         check_finite_module(model)
                         logger.error(e_str)
-                        n_nans += 1
-                        if n_nans > 10:
-                            raise e
                         os.makedirs(os.path.join(summary_dir, "nan"), exist_ok=True)
                         for batch_idx in range(clean.shape[0]):
                             clean_idx = batch.ids[batch_idx].item()
@@ -413,10 +411,13 @@ def run_epoch(
                                 lsnr.detach().float(),
                                 os.path.join(summary_dir, "nan"),
                                 mask_loss=losses.ml,
-                                prefix=split + f"_b{batch_idx}_ds{clean_idx}_e{epoch}",
+                                prefix=split + f"_e{epoch}_i{i}_b{batch_idx}_ds{clean_idx}",
                                 idx=batch_idx,
                             )
                         cleanup(err, noisy, clean, enh, m, feat_erb, feat_spec, batch)
+                        n_nans += 1
+                        if n_nans > MAX_NANS:
+                            raise e
                         continue
                     else:
                         raise e
