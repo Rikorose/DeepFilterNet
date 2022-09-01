@@ -363,8 +363,12 @@ def run_epoch(
         clean = batch.speech.to(dev, non_blocking=True)
         snrs = batch.snr.to(dev, non_blocking=True)
         with set_detect_anomaly(detect_anomaly and is_train), set_grad_enabled(is_train):
+            if not is_train:
+                input = as_real(noisy).clone()
+            else:
+                input = as_real(noisy)
             enh, m, lsnr, other = model.forward(
-                spec=as_real(noisy),
+                spec=input,
                 feat_erb=feat_erb,
                 feat_spec=feat_spec,
             )
