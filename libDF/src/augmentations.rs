@@ -941,7 +941,7 @@ impl RandReverbSim {
                 *speech = speech_little_rev;
             }
             let speech_rms_after = rms(speech.iter());
-            *speech *= speech_rms / speech_rms_after;
+            *speech *= speech_rms / (speech_rms_after + 1e-10);
             debug_assert_eq!(speech.shape(), speech_rev.shape());
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
             Some(speech_rev)
