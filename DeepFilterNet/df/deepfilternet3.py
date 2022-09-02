@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Final, List, Optional, Tuple, Union
+from typing import Final, List, Optional, Tuple
 
 import torch
 from loguru import logger
@@ -9,16 +9,13 @@ from df.config import Csv, DfParams, config
 from df.modules import (
     Conv2dNormAct,
     ConvTranspose2dNormAct,
-    DfOp,
-    GroupedGRU,
-    GroupedLinear,
     GroupedLinearEinsum,
     Mask,
     SqueezedGRU,
     erb_fb,
     get_device,
 )
-from df.multiframe import MF_METHODS, MultiFrameModule
+from df.multiframe import MF_METHODS
 from libdf import DF
 
 
@@ -225,7 +222,6 @@ class DfOutputReshapeMF(nn.Module):
 
     def forward(self, coefs: Tensor) -> Tensor:
         # [B, T, F, O*2] -> [B, O, T, F, 2]
-        # ic(coefs.shape)
         new_shape = list(coefs.shape)
         new_shape[-1] = -1
         new_shape.append(2)
@@ -365,14 +361,13 @@ class DfNet(nn.Module):
 
         spec_m = self.mask(spec, m)
 
-        df_coefs = torch.zeros((), device=spec.device)
         if self.run_df:
             df_coefs, _ = self.df_dec(emb, c0)
             df_coefs = self.df_out_transform(df_coefs)
             spec = self.df_op(spec, df_coefs)
-            ic(spec.shape)
             spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
         else:
+            df_coefs = torch.zeros((), device=spec.device)
             spec = spec_m
 
         return spec, m, lsnr, df_coefs
