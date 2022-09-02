@@ -12,7 +12,6 @@ from time import sleep
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 import h5py
-from icecream import ic
 
 TIMESTAMP_FORMAT = "%Y%m%d%H%M"
 timestamp = datetime.now().strftime("%Y%m%d%H%M")
@@ -44,7 +43,7 @@ def _cp(src, tgt, *rsync_args) -> bool:
     try:
         subprocess.check_call(["rsync", "-aL", *rsync_args, src, tgt], stderr=subprocess.DEVNULL)
         return True
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         # print(f"Failed to copy file {src}: {e.returncode}", file=stderr)
         if os.path.exists(tgt):
             os.remove(tgt)
