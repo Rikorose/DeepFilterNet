@@ -2,6 +2,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import random
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -11,9 +12,13 @@ from time import sleep
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 import h5py
+from icecream import ic
 
 TIMESTAMP_FORMAT = "%Y%m%d%H%M"
 timestamp = datetime.now().strftime("%Y%m%d%H%M")
+
+HOSTS = [f"lme{n}" for n in (50, 51, 52, 53, 170, 171, 221, 222, 223)] + ["fs"]
+OWN = os.uname()[1]
 
 
 @dataclass
@@ -35,21 +40,45 @@ def du(path):
     )
 
 
-def cp(src, tgt, verbose=0):
-    """Copy a file via rsync"""
-    info = []
-    if verbose == 1:
-        info = ["--info=name,stats"]
-    elif verbose > 1:
-        info = ["--info=name,stats2"]
+def _cp(src, tgt, *rsync_args) -> bool:
     try:
-        subprocess.check_call(["rsync", "-aL", *info, src, tgt])
+        subprocess.check_call(["rsync", "-aL", *rsync_args, src, tgt], stderr=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError as e:
+        # print(f"Failed to copy file {src}: {e.returncode}", file=stderr)
+        if os.path.exists(tgt):
+            os.remove(tgt)
+        return False
+
+
+def _cp_or_link(src, tgt, *rsync_args):
+    try:
+        subprocess.check_call(["rsync", "-aL", *rsync_args, src, tgt])
     except subprocess.CalledProcessError as e:
         print(f"Failed to copy file {src}: {e.returncode}", file=stderr)
         if os.path.exists(tgt):
             os.remove(tgt)
         print("Linking instead", file=stderr, flush=True)
         ln(src, tgt)
+
+
+def cp(src, tgt, try_other_hosts: bool = False, verbose=0):
+    """Copy a file via rsync"""
+    info = []
+    if verbose == 1:
+        info = ["--info=name,stats"]
+    elif verbose > 1:
+        info = ["--info=name,stats2"]
+    if try_other_hosts:
+        hosts = [h for h in HOSTS if h != OWN]
+        random.shuffle(hosts)
+        # Iterate through existing hosts and try to copy from here
+        for h in hosts:
+            if h == "fs":
+                break
+            if _cp(h + ":" + tgt, tgt, *info):
+                return
+    _cp_or_link(src, tgt, *info)
 
 
 def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool = False):
@@ -99,7 +128,12 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
 
 
 def copy_datasets(
-    src_dir: str, target_dir: str, cfg_path: str, max_gb: float, lock: Optional[str] = None
+    src_dir: str,
+    target_dir: str,
+    cfg_path: str,
+    max_gb: float,
+    lock: Optional[str] = None,
+    try_other_hosts: bool = False,
 ):
     print(f"Copying datasets from {src_dir} to {target_dir}", flush=True)
     copied = set()
@@ -162,7 +196,7 @@ def copy_datasets(
                         continue
                     print("copying", fn_src, flush=True)
                     cur_gb += new_gb
-                    futures[executor.submit(cp, fn_src, fn_tgt)] = fn_tgt
+                    futures[executor.submit(cp, fn_src, fn_tgt, try_other_hosts)] = fn_tgt
     for future in concurrent.futures.as_completed(futures):
         print("Completed", futures[future], flush=True)
 
@@ -206,6 +240,7 @@ if __name__ == "__main__":
     cp_parser.add_argument("data_cfg")
     cp_parser.add_argument("--max-gb", type=float, default=100)
     cp_parser.add_argument("--lock", "-l", type=str, default=None)
+    cp_parser.add_argument("--other-hosts", action="store_true")
     cleanup_parser = subparsers.add_parser("cleanup")
     cleanup_parser.add_argument("target_dir")
     cleanup_parser.add_argument("--lock", type=str, default=None)
@@ -214,7 +249,9 @@ if __name__ == "__main__":
         parser.print_help()
         exit(1)
     if args.subparser_name in ("cp", "copy-datasets"):
-        copy_datasets(args.src_dir, args.target_dir, args.data_cfg, args.max_gb, args.lock)
+        copy_datasets(
+            args.src_dir, args.target_dir, args.data_cfg, args.max_gb, args.lock, args.other_hosts
+        )
     else:
         if args.lock is not None:
             remove_lock(args.target_dir, args.lock + ".read")

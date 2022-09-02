@@ -123,7 +123,7 @@ if [[ -d /scratch ]] && [[ $COPY_DATA -eq 1 ]]; then
   echo "Setting up data dir in $NEW_DATA_DIR"
   mkdir -p "$NEW_DATA_DIR"
   python3 "$PROJECT_HOME"/scripts/copy_datadir.py cp "$DATA_DIR" "$NEW_DATA_DIR" "$DATA_CFG" \
-    --lock "$MODEL_NAME" --max-gb "$COPY_MAX_GB"
+    --lock "$MODEL_NAME" --max-gb "$COPY_MAX_GB" --other-hosts
   DATA_DIR="$NEW_DATA_DIR"
 fi
 
