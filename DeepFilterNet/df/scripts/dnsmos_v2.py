@@ -19,19 +19,26 @@ INPUT_LENGTH = 9.01
 
 def main(args):
     file: str = args.file
+    verbose = args.debug
     target_value: List[float] = args.target_value
     audio = load_audio(file, sr=SR, verbose=False)[0].squeeze(0)
     sig_bak_ovr = download_onnx_model()
     dnsmos = dnsmos_local(audio, sig_bak_ovr)
-    for d in dnsmos:
-        print(d, end=" ")
-    print()
+    if verbose:
+        for d in dnsmos:
+            print(d, end=" ")
+        print()
     if target_value is not None:
         if len(target_value) > 0:
             assert len(target_value) == len(dnsmos)
         for d, t in zip(dnsmos, target_value):
             if not isclose(d, t):
-                print(f"Is not close to target: {target_value}")
+                str_format = 3 * " {:.14f}"
+                print("Is not close to target:")
+                print(f"Predicted: {str_format.format(*dnsmos)}")
+                print(f"Target:    {str_format.format(*target_value)}")
+                diff = (np.asarray(target_value) - np.asarray(dnsmos)).tolist()
+                print(f"Diff:      {str_format.format(*diff)}")
                 exit(2)
     exit(0)
 
@@ -87,6 +94,10 @@ def dnsmos_local(audio: Tensor, onnx: str) -> Tuple[float, float, float]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-value", "-t", type=float, nargs="*")
+    parser.add_argument("--debug", "-d", "-v", action="store_true")
+    parser.add_argument("--local", "-l", action="store_true")
     parser.add_argument("file", type=str, help="Path to audio file for DNSMOS evaluation.")
     args = parser.parse_args()
+    if args.local:
+        print("'--local' is deprecated now. DNSMOS is always run locally.")
     main(args)
