@@ -71,7 +71,7 @@ def main(args):
     file: str = args.file
     target_mos: List[float] = args.target_mos
     verbose = args.debug
-    audio = load_audio(file, sr=SR, verbose=False)[0].squeeze(0)
+    audio = load_audio(file, sr=SR, verbose=verbose)[0].squeeze(0)
     if not args.api:
         assert args.method == "p835"
         sig, bak_ovr = download_onnx_models()
