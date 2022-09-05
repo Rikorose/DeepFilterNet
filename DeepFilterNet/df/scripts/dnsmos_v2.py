@@ -95,4 +95,5 @@ if __name__ == "__main__":
     parser.add_argument("--debug", "-d", "-v", action="store_true")
     parser.add_argument("file", type=str, help="Path to audio file for DNSMOS evaluation.")
     args = parser.parse_args()
+    init_logger(level="DEBUG" if args.debug else "INFO")
     main(args)

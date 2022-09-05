@@ -11,7 +11,7 @@ from loguru import logger
 from torch import Tensor
 
 from df.io import load_audio
-from df.logger import log_metrics
+from df.logger import init_logger, log_metrics
 from df.utils import download_file, get_cache_dir
 
 try:
@@ -231,4 +231,5 @@ if __name__ == "__main__":
     parser.add_argument("--target-mos", "-t", type=float, nargs="*")
     parser.add_argument("file", type=str, help="Path to audio file for DNSMOS evaluation.")
     args = parser.parse_args()
+    init_logger(level="DEBUG" if args.debug else "INFO")
     main(args)
