@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import numpy.polynomial.polynomial as poly
 import torch
+from loguru import logger
 from torch import Tensor
 
 from df.io import load_audio
@@ -25,6 +26,7 @@ URL_ONNX = "https://github.com/microsoft/DNS-Challenge/raw/6017eee40aaa39373c15f
 COEFS_SIG = np.array([9.651228012789436761e-01, 6.592637550310214145e-01, 7.572372955623894730e-02])
 COEFS_BAK = np.array([-3.733460011101781717e00, 2.700114234092929166e00, -1.721332907340922813e-01])
 COEFS_OVR = np.array([8.924546794696789354e-01, 6.609981731940616223e-01, 7.600269530243179694e-02])
+NAMES = ("SIG", "BAK","OVL")
 SR = 16000
 INPUT_LENGTH = 9
 
@@ -68,10 +70,10 @@ def get_ort_session(onnx: str):
 
 def main(args):
     file: str = args.file
-    target_value: List[float] = args.target_value
+    target_mos: List[float] = args.target_mos
     verbose = args.debug
     audio = load_audio(file, sr=SR, verbose=False)[0].squeeze(0)
-    if args.local:
+    if not args.api:
         assert args.method == "p835"
         sig, bak_ovr = download_onnx_models()
         dnsmos = dnsmos_local(audio, sig, bak_ovr)
@@ -90,21 +92,15 @@ def main(args):
                 float(dnsmos_api_req(URL_P835, key, audio, verbose=verbose)[c])
                 for c in ("mos_sig", "mos_bak", "mos_ovr")
             ]
-    if verbose:
-        for d in dnsmos:
-            print(d, end=" ")
-        print()
-    if target_value is not None:
-        if len(target_value) > 0:
-            assert len(target_value) == len(dnsmos)
-        for d, t in zip(dnsmos, target_value):
+    log_metrics("Predicted", {n: v for (n, v) in zip(NAMES, dnsmos)})
+    if target_mos is not None:
+        if len(target_mos) > 0:
+            assert len(target_mos) == len(dnsmos)
+        log_metrics("Target   ", {n: v for (n, v) in zip(NAMES, target_mos)})
+        for d, t in zip(dnsmos, target_mos):
             if not isclose(d, t):
-                str_format = 3 * " {:.14f}"
-                print("Is not close to target:")
-                print(f"Predicted: {str_format.format(*dnsmos)}")
-                print(f"Target:    {str_format.format(*target_value)}")
-                diff = (np.asarray(target_value) - np.asarray(dnsmos)).tolist()
-                print(f"Diff:      {str_format.format(*diff)}")
+                diff = (np.asarray(target_mos) - np.asarray(dnsmos)).tolist()
+                log_metrics("Diff     ", {n: v for (n, v) in zip(NAMES, diff)}, level="ERROR")
                 exit(2)
     exit(0)
 
@@ -228,10 +224,11 @@ def as_numpy(x) -> np.ndarray:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", "-m", default="p835", choices=["p808", "p835"])
-    parser.add_argument("--local", "-l", action="store_true")
+    parser.add_argument("--no-local", action="store_true", dest="api")
+    parser.add_argument("--api", action="store_true", dest="api")
     parser.add_argument("--api-key", "-k", type=str, default=None)
     parser.add_argument("--debug", "-d", "-v", action="store_true")
-    parser.add_argument("--target-value", "-t", type=float, nargs="*")
+    parser.add_argument("--target-mos", "-t", type=float, nargs="*")
     parser.add_argument("file", type=str, help="Path to audio file for DNSMOS evaluation.")
     args = parser.parse_args()
     main(args)
