@@ -56,7 +56,7 @@ jobs:
       - name: Build DeepFilterLib wheel
         run: |
           sudo python3 -m pip install maturin
-          maturin build --release -o dist --no-sdist \
+          maturin build --release -o dist \
             -i python3.9 \
             --target ${{ matrix.platform.target }} \
             --manylinux ${{ matrix.manylinux }} \
