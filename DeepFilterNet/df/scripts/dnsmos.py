@@ -7,7 +7,6 @@ from typing import Dict, List, Tuple
 import numpy as np
 import numpy.polynomial.polynomial as poly
 import torch
-from loguru import logger
 from torch import Tensor
 
 from df.io import load_audio
@@ -26,7 +25,7 @@ URL_ONNX = "https://github.com/microsoft/DNS-Challenge/raw/6017eee40aaa39373c15f
 COEFS_SIG = np.array([9.651228012789436761e-01, 6.592637550310214145e-01, 7.572372955623894730e-02])
 COEFS_BAK = np.array([-3.733460011101781717e00, 2.700114234092929166e00, -1.721332907340922813e-01])
 COEFS_OVR = np.array([8.924546794696789354e-01, 6.609981731940616223e-01, 7.600269530243179694e-02])
-NAMES = ("SIG", "BAK","OVL")
+NAMES = ("SIG", "BAK", "OVL")
 SR = 16000
 INPUT_LENGTH = 9
 
