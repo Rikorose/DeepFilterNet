@@ -68,9 +68,9 @@ class MultiFrameModule(nn.Module, ABC):
         self.frame_size = frame_size
         self.real = real
         if real:
-            self.pad_real = nn.ConstantPad3d((0, 0, 0, 0, frame_size - 1, 0), 0.0)
+            self.pad = nn.ConstantPad3d((0, 0, 0, 0, frame_size - 1 - lookahead, lookahead), 0.0)
         else:
-            self.pad = nn.ConstantPad2d((0, 0, frame_size - 1, 0), 0.0)
+            self.pad = nn.ConstantPad2d((0, 0, frame_size - 1 - lookahead, lookahead), 0.0)
         self.need_unfold = frame_size > 1
         self.lookahead = lookahead
 
