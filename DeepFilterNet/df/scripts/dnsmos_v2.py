@@ -23,7 +23,7 @@ def main(args):
     file: str = args.file
     verbose = args.debug
     target_mos: List[float] = args.target_mos
-    audio = load_audio(file, sr=SR, verbose=False)[0].squeeze(0)
+    audio = load_audio(file, sr=SR, verbose=verbose)[0].squeeze(0)
     sig_bak_ovr = download_onnx_model()
     dnsmos = dnsmos_local(audio, sig_bak_ovr)
     log_metrics("Predicted", {n: v for (n, v) in zip(NAMES, dnsmos)})
