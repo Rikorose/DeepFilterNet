@@ -90,15 +90,21 @@ def main(args):
                 float(dnsmos_api_req(URL_P835, key, audio, verbose=verbose)[c])
                 for c in ("mos_sig", "mos_bak", "mos_ovr")
             ]
-    for d in dnsmos:
-        print(d, end=" ")
-    print()
+    if verbose:
+        for d in dnsmos:
+            print(d, end=" ")
+        print()
     if target_value is not None:
         if len(target_value) > 0:
             assert len(target_value) == len(dnsmos)
         for d, t in zip(dnsmos, target_value):
             if not isclose(d, t):
-                print(f"Is not close to target: {target_value}")
+                str_format = 3 * " {:.14f}"
+                print("Is not close to target:")
+                print(f"Predicted: {str_format.format(*dnsmos)}")
+                print(f"Target:    {str_format.format(*target_value)}")
+                diff = (np.asarray(target_value) - np.asarray(dnsmos)).tolist()
+                print(f"Diff:      {str_format.format(*diff)}")
                 exit(2)
     exit(0)
 
