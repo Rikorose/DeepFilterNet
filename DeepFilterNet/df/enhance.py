@@ -18,6 +18,8 @@ from df.modules import get_device
 from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
 from libdf import DF, erb, erb_norm, unit_norm
 
+DEFAULT_MODELS = ("DeepFilterNet", "DeepFilterNet2")
+
 
 def main(args):
     model, df_state, suffix = init_df(
@@ -51,6 +53,13 @@ def main(args):
         save_audio(
             file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=False
         )
+
+
+def get_model_basedir(m: str) -> str:
+    is_default_model = m in DEFAULT_MODELS
+    if is_default_model:
+        return maybe_download_model(m)
+    return m
 
 
 def init_df(
@@ -87,15 +96,8 @@ def init_df(
         install()
     except ImportError:
         pass
-    use_default_model = False
-    if model_base_dir == "DeepFilterNet":
-        default_model = "DeepFilterNet"
-        use_default_model = True
-    elif model_base_dir == "DeepFilterNet2":
-        use_default_model = True
-    if model_base_dir is None or use_default_model:
-        use_default_model = True
-        model_base_dir = maybe_download_model(default_model)
+    use_default_model = model_base_dir is None or model_base_dir in DEFAULT_MODELS
+    model_base_dir = get_model_basedir(model_base_dir or default_model)
 
     if not os.path.isdir(model_base_dir):
         raise NotADirectoryError("Base directory not found at {}".format(model_base_dir))
