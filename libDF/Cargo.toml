@@ -28,8 +28,8 @@ path = "src/bin/fix-sample-attrs-hdf5.rs"
 required-features = ["dataset", "bin"]
 
 [[bin]]
-name = "df-tract"
-path = "src/bin/tract.rs"
+name = "enhance-wav"
+path = "src/bin/enhance_wav.rs"
 required-features = ["bin", "tract"]
 
 [features]
