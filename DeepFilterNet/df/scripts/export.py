@@ -1,36 +1,246 @@
 import os
+import shutil
 from copy import deepcopy
+from typing import Dict, Iterable, List, Tuple, Union
 
+import numpy as np
+import onnx
+import onnx.checker
+import onnx.helper
+import onnxruntime as ort
 import torch
+from loguru import logger
+from torch import Tensor
 
-from df.enhance import ModelParams, df_features, init_df, setup_df_argument_parser
+from df.enhance import (
+    ModelParams,
+    df_features,
+    enhance,
+    get_model_basedir,
+    init_df,
+    parse_epoch_type,
+    setup_df_argument_parser,
+)
+from df.io import get_test_sample, save_audio
 from libdf import DF
 
 
+def shapes_dict(
+    tensors: Tuple[Tensor], names: Union[Tuple[str], List[str]]
+) -> Dict[str, Tuple[int]]:
+    if len(tensors) != len(names):
+        logger.warning(
+            f"  Number of tensors ({len(tensors)}) does not match provided names: {names}"
+        )
+    return {k: v.shape for (k, v) in zip(names, tensors)}
+
+
+def onnx_simplify(
+    path: str, input_data: Dict[str, Tensor], input_shapes: Dict[str, Iterable[int]]
+) -> str:
+    import onnxsim
+
+    model = onnx.load(path)
+    model_simp, check = onnxsim.simplify(
+        model,
+        input_data=input_data,
+        test_input_shapes=input_shapes,
+    )
+    model_n = os.path.splitext(os.path.basename(path))[0]
+    assert check, "Simplified ONNX model could not be validated"
+    logger.debug(model_n + ": " + onnx.helper.printable_graph(model.graph))
+    try:
+        onnx.checker.check_model(model_simp, full_check=True)
+    except Exception as e:
+        logger.error(f"Failed to simplify model {model_n}. Skipping.")
+        return path
+    # new_path = os.path.join(os.path.dirname(path), model_n + "_simplified.onnx")
+    onnx.save_model(model_simp, path)
+    return path
+
+
+def onnx_check(path: str, input_dict: Dict[str, Tensor], output_names: Tuple[str]):
+    model = onnx.load(path)
+    logger.debug(os.path.basename(path) + ": " + onnx.helper.printable_graph(model.graph))
+    onnx.checker.check_model(model, full_check=True)
+    sess = ort.InferenceSession(path)
+    return sess.run(output_names, {k: v.numpy() for (k, v) in input_dict.items()})
+
+
+def export_impl(
+    path: str,
+    model: torch.nn.Module,
+    inputs: Tuple[Tensor, ...],
+    input_names: List[str],
+    output_names: List[str],
+    dynamic_axes: Dict[str, Dict[int, str]],
+    jit: bool = True,
+    opset_version=14,
+    check: bool = True,
+    simplify: bool = True,
+):
+    export_dir = os.path.dirname(path)
+    if not os.path.isdir(export_dir):
+        logger.info(f"Creating export directory: {export_dir}")
+        os.makedirs(export_dir)
+    model_name = os.path.splitext(os.path.basename(path))[0]
+    logger.info(f"Exporting model '{model_name}' to {export_dir}")
+
+    input_shapes = shapes_dict(inputs, input_names)
+    logger.info(f"  Input shapes: {input_shapes}")
+
+    outputs = model(*inputs)
+    output_shapes = shapes_dict(outputs, output_names)
+    logger.info(f"  Output shapes: {output_shapes}")
+
+    if jit:
+        model = torch.jit.script(model, example_inputs=[tuple(a for a in inputs)])
+
+    logger.info(f"  Dynamic axis: {dynamic_axes}")
+    torch.onnx.export(
+        model=deepcopy(model),
+        f=path,
+        args=inputs,
+        input_names=input_names,
+        dynamic_axes=dynamic_axes,
+        output_names=output_names,
+        opset_version=opset_version,
+        keep_initializers_as_inputs=False,
+    )
+
+    input_dict = {k: v for (k, v) in zip(input_names, inputs)}
+    if check:
+        onnx_outputs = onnx_check(path, input_dict, tuple(output_names))
+        for (name, out, onnx_out) in zip(output_names, outputs, onnx_outputs):
+            try:
+                np.testing.assert_allclose(
+                    out.numpy().squeeze(), onnx_out.squeeze(), rtol=1e-6, atol=1e-5
+                )
+            except AssertionError as e:
+                logger.warning(f"  Elements not close for {name}: {e}")
+    if simplify:
+        path = onnx_simplify(path, input_dict, shapes_dict(inputs, input_names))
+        logger.info(f"  Saved simplified model {path}")
+
+    return outputs
+
+
 @torch.no_grad()
-def export(model, export_dir: str, df_state: DF):
+def export(
+    model, export_dir: str, df_state: DF, check: bool = True, simplify: bool = True, opset=14
+):
     model = deepcopy(model).to("cpu")
     model.eval()
     p = ModelParams()
     audio = torch.randn((1, 1 * p.sr))
     spec, feat_erb, feat_spec = df_features(audio, df_state, p.nb_df, device="cpu")
-    enh = model(spec, feat_erb, feat_spec)[0]
-    print(enh.shape)
-    torch.onnx.export(
-        model=deepcopy(model),
-        f=os.path.join(export_dir, "deepfilternet2.onnx"),
-        args=(spec, feat_erb, feat_spec),
-        input_names=["spec", "feat_erb", "feat_spec"],
-        dynamic_axes={
-            "spec": {3: "time"},
-            "feat_erb": {3: "time"},
-            "feat_spec": {3: "time"},
-            "enh": {3: "time"},
-            "m": {3: "time"},
-            "lsnr": {2: "time"},
-        },
-        output_names=["enh", "m", "lsnr"],
-        opset_version=14,
+
+    # Export full model
+    path = os.path.join(export_dir, "deepfilternet2.onnx")
+    input_names = ["spec", "feat_erb", "feat_spec"]
+    dynamic_axes = {
+        "spec": {2: "time", 0: "batch_size"},
+        "feat_erb": {2: "time", 0: "batch_size"},
+        "feat_spec": {2: "time", 0: "batch_size"},
+        "enh": {2: "time", 0: "batch_size"},
+        "m": {2: "time", 0: "batch_size"},
+        "lsnr": {1: "time", 0: "batch_size"},
+    }
+    inputs = (spec, feat_erb, feat_spec)
+    output_names = ["enh", "m", "lsnr", "coefs"]
+    try:
+        enh, m, lsnr, coefs = export_impl(
+            path,
+            model,
+            inputs=inputs,
+            input_names=input_names,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            jit=False,
+            check=check,
+            simplify=simplify,
+            opset_version=opset,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to export model: {e}")
+
+    # Export encoder
+    feat_spec = feat_spec.transpose(1, 4).squeeze(4)  # re/im into channel axis
+    path = os.path.join(export_dir, "enc.onnx")
+    inputs = (feat_erb, feat_spec)
+    input_names = ["feat_erb", "feat_spec"]
+    dynamic_axes = {
+        "feat_erb": {2: "time", 0: "batch_size"},
+        "feat_spec": {2: "time", 0: "batch_size"},
+        "e0": {2: "time", 0: "batch_size"},
+        "e1": {2: "time", 0: "batch_size"},
+        "e2": {2: "time", 0: "batch_size"},
+        "e3": {2: "time", 0: "batch_size"},
+        "emb": {1: "time", 0: "batch_size"},
+        "c0": {2: "time", 0: "batch_size"},
+        "lsnr": {1: "time", 0: "batch_size"},
+    }
+    output_names = ["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"]
+    e0, e1, e2, e3, emb, c0, lsnr = export_impl(
+        path,
+        model.enc,
+        inputs=inputs,
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        jit=True,
+        check=check,
+        simplify=simplify,
+        opset_version=opset,
+    )
+
+    # Export erb decoder
+    inputs = (emb.clone(), e3, e2, e1, e0)
+    input_names = ["emb", "e3", "e2", "e1", "e0"]
+    output_names = ["m"]
+    dynamic_axes = {
+        "emb": {1: "time", 0: "batch_size"},
+        "e3": {2: "time", 0: "batch_size"},
+        "e2": {2: "time", 0: "batch_size"},
+        "e1": {2: "time", 0: "batch_size"},
+        "e0": {2: "time", 0: "batch_size"},
+        "m": {2: "time", 0: "batch_size"},
+    }
+    path = os.path.join(export_dir, "erb_dec.onnx")
+    m = export_impl(
+        path,
+        model.erb_dec,
+        inputs=inputs,
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        jit=True,
+        check=check,
+        simplify=simplify,
+        opset_version=opset,
+    )
+
+    # Export df decoder
+    inputs = (emb.clone(), c0)
+    input_names = ["emb", "c0"]
+    output_names = ["coefs"]
+    dynamic_axes = {
+        "emb": {1: "time", 0: "batch_size"},
+        "c0": {2: "time", 0: "batch_size"},
+        "coefs": {1: "time", 0: "batch_size"},
+    }
+    path = os.path.join(export_dir, "df_dec.onnx")
+    coefs = export_impl(
+        path,
+        model.df_dec,
+        inputs=inputs,
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        jit=False,
+        check=check,
+        simplify=simplify,
+        opset_version=opset,
     )
 
 
@@ -42,14 +252,38 @@ def main(args):
         log_level=args.log_level,
         log_file="export.log",
         config_allow_defaults=True,
+        epoch=args.epoch,
     )
+    sample = get_test_sample(df_state.sr())
+    enhanced = enhance(model, df_state, sample, True)
+    save_audio("out/enhanced.wav", enhanced, df_state.sr())
     if not os.path.isdir(args.export_dir):
         os.makedirs(args.export_dir)
-    export(model, args.export_dir, df_state=df_state)
+    export(
+        model,
+        args.export_dir,
+        df_state=df_state,
+        opset=args.opset,
+        check=args.check,
+        simplify=args.simplify,
+    )
+    if get_model_basedir(args.model_base_dir) != args.export_dir:
+        shutil.copyfile(
+            os.path.join(get_model_basedir(args.model_base_dir), "config.ini"),
+            os.path.join(args.export_dir, "config.ini"),
+        )
 
 
 if __name__ == "__main__":
     parser = setup_df_argument_parser()
     parser.add_argument("export_dir", help="Directory for exporting the onnx model.")
+    parser.add_argument(
+        "--no-check",
+        help="Don't check models with onnx checker.",
+        action="store_false",
+        dest="check",
+    )
+    parser.add_argument("--simplify", help="Simply onnx models using onnxsim.", action="store_true")
+    parser.add_argument("--opset", help="ONNX opset version", type=int, default=12)
     args = parser.parse_args()
     main(args)
