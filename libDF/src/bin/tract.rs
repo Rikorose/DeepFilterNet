@@ -59,6 +59,49 @@ struct Args {
     files: Vec<PathBuf>,
 }
 
+pub struct DfModelParams {
+    enc: PathBuf,
+    erb_dec: PathBuf,
+    df_dec: PathBuf,
+}
+impl DfModelParams {
+    fn new(enc: PathBuf, erb_dec: PathBuf, df_dec: PathBuf) -> Self {
+        Self {
+            enc,
+            erb_dec,
+            df_dec,
+        }
+    }
+}
+
+pub struct DfParams {
+    config: PathBuf,
+    pub n_ch: usize,
+    post_filter: bool,
+    min_db_thresh: f32,
+    max_db_erb_thresh: f32,
+    max_db_df_thresh: f32,
+}
+impl DfParams {
+    fn new(
+        config: PathBuf,
+        n_ch: usize,
+        post_filter: bool,
+        min_db_thresh: f32,
+        max_db_erb_thresh: f32,
+        max_db_df_thresh: f32,
+    ) -> Self {
+        Self {
+            config,
+            n_ch,
+            post_filter,
+            min_db_thresh,
+            max_db_erb_thresh,
+            max_db_df_thresh,
+        }
+    }
+}
+
 pub type TractModel = TypedSimpleState<TypedModel, TypedSimplePlan<TypedModel>>;
 
 pub struct DfTract {
@@ -78,6 +121,9 @@ pub struct DfTract {
     df_order: usize,
     alpha: f32,
     post_filter: bool,
+    min_db_thresh: f32,
+    max_db_erb_thresh: f32,
+    max_db_df_thresh: f32,
     df_states: Vec<DFState>,
     spec_buf: Tensor,
     erb_buf: Tensor,
@@ -87,33 +133,33 @@ pub struct DfTract {
 }
 
 impl DfTract {
-    pub fn new(
-        enc: &Path,
-        erb_dec: &Path,
-        df_dec: &Path,
-        config: &Path,
-        n_ch: usize,
-        post_filter: bool,
-    ) -> Result<Self> {
-        if !enc.is_file() {
+    pub fn new(models: &DfModelParams, params: &DfParams) -> Result<Self> {
+        if !models.enc.is_file() {
             return Err(anyhow!("Encoder file not found"));
         }
-        if !erb_dec.is_file() {
+        if !models.erb_dec.is_file() {
             return Err(anyhow!("ERB decoder file not found"));
         }
-        if !df_dec.is_file() {
+        if !models.df_dec.is_file() {
             return Err(anyhow!("DF decoder file not found"));
         }
-        if !config.is_file() {
+        if !params.config.is_file() {
             return Err(anyhow!("Config file not found"));
         }
-        let config = Ini::load_from_file(config)?;
+        let config = Ini::load_from_file(params.config.as_path())?;
         let model_cfg = config.section(Some("deepfilternet")).unwrap();
         let df_cfg = config.section(Some("df")).unwrap();
 
-        let enc = SimpleState::new(init_encoder(enc, df_cfg, n_ch)?)?;
-        let erb_dec = SimpleState::new(init_erb_decoder(erb_dec, model_cfg, df_cfg, n_ch)?)?;
-        let (df_dec, _df_init_delay) = init_df_decoder(df_dec, model_cfg, df_cfg, n_ch)?;
+        let ch = params.n_ch;
+        let enc = SimpleState::new(init_encoder(models.enc.as_path(), df_cfg, ch)?)?;
+        let erb_dec = SimpleState::new(init_erb_decoder(
+            models.erb_dec.as_path(),
+            model_cfg,
+            df_cfg,
+            ch,
+        )?)?;
+        let (df_dec, _df_init_delay) =
+            init_df_decoder(models.df_dec.as_path(), model_cfg, df_cfg, ch)?;
         let df_dec = SimpleState::new(df_dec)?;
 
         let sr = df_cfg.get("sr").unwrap().parse::<usize>()?;
@@ -160,7 +206,7 @@ impl DfTract {
             conv_lookahead,
             df_lookahead,
             sr,
-            ch: n_ch,
+            ch,
             fft_size,
             hop_size,
             nb_erb,
@@ -169,13 +215,16 @@ impl DfTract {
             n_freqs,
             df_order,
             alpha,
+            min_db_thresh: params.min_db_thresh,
+            max_db_erb_thresh: params.max_db_erb_thresh,
+            max_db_df_thresh: params.max_db_df_thresh,
             spec_buf,
             erb_buf,
             cplx_buf,
             m_zeros,
             rolling_spec_buf,
             df_states,
-            post_filter,
+            post_filter: params.post_filter,
         };
         m.init()?;
 
@@ -249,8 +298,13 @@ impl DfTract {
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap().into_tensor();
         let emb = enc_emb.pop().unwrap().into_tensor();
-        let (apply_erb, apply_df) = if lsnr < -12. {
+        //         let (apply_erb, apply_df) = match lsnr {
+        // (self.min_db_thresh..self.max_db_erb_thresh).contains(&lsnr) =>
+        //         }
+        let (apply_erb, apply_df) = if lsnr < self.min_db_thresh || lsnr > self.max_db_erb_thresh {
             (false, false)
+        } else if lsnr > self.max_db_df_thresh {
+            (true, false)
         } else {
             (true, true)
         };
@@ -330,30 +384,24 @@ fn main() -> Result<()> {
     env_logger::builder().filter_level(level).init();
 
     // Initialize with 1 channel
-    let mut ch: usize = 1;
-    let mut model: DfTract = DfTract::new(
-        args.onnx_enc.as_path(),
-        args.onnx_erb_dec.as_path(),
-        args.onnx_df_dec.as_path(),
-        args.cfg.as_path(),
-        ch,
+    let models = DfModelParams::new(args.onnx_enc, args.onnx_erb_dec, args.onnx_df_dec);
+    let mut params = DfParams::new(
+        args.cfg,
+        1,
         args.post_filter,
-    )?;
+        args.min_db_thresh,
+        args.max_db_erb_thresh,
+        args.max_db_df_thresh,
+    );
+    let mut model: DfTract = DfTract::new(&models, &params)?;
     let mut sr = model.sr;
     assert!(args.out_dir.is_dir());
     for file in args.files {
         let reader = ReadWav::new(file.to_str().unwrap())?;
         // Check if we need to adjust to multiple channels
-        if ch != reader.channels {
-            ch = reader.channels;
-            model = DfTract::new(
-                args.onnx_enc.as_path(),
-                args.onnx_erb_dec.as_path(),
-                args.onnx_df_dec.as_path(),
-                args.cfg.as_path(),
-                ch,
-                args.post_filter,
-            )?;
+        if params.n_ch != reader.channels {
+            params.n_ch = reader.channels;
+            model = DfTract::new(&models, &params)?;
             sr = model.sr;
         }
         assert_eq!(sr, reader.sr);
