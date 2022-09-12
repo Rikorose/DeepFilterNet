@@ -18,7 +18,6 @@ from df.enhance import (
     enhance,
     get_model_basedir,
     init_df,
-    parse_epoch_type,
     setup_df_argument_parser,
 )
 from df.io import get_test_sample, save_audio
@@ -52,7 +51,7 @@ def onnx_simplify(
     try:
         onnx.checker.check_model(model_simp, full_check=True)
     except Exception as e:
-        logger.error(f"Failed to simplify model {model_n}. Skipping.")
+        logger.error(f"Failed to simplify model {model_n}. Skipping: {e}")
         return path
     # new_path = os.path.join(os.path.dirname(path), model_n + "_simplified.onnx")
     onnx.save_model(model_simp, path)
@@ -207,7 +206,7 @@ def export(
         "m": {2: "time", 0: "batch_size"},
     }
     path = os.path.join(export_dir, "erb_dec.onnx")
-    m = export_impl(
+    m = export_impl(  # noqa
         path,
         model.erb_dec,
         inputs=inputs,
@@ -230,7 +229,7 @@ def export(
         "coefs": {1: "time", 0: "batch_size"},
     }
     path = os.path.join(export_dir, "df_dec.onnx")
-    coefs = export_impl(
+    coefs = export_impl(  # noqa
         path,
         model.df_dec,
         inputs=inputs,
