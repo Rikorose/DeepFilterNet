@@ -726,8 +726,11 @@ class GroupedLinearEinsum(nn.Module):
         new_shape = list(x.shape)[:-1] + [self.groups, self.ws]
         x = x.view(new_shape)
         # The better way, but not supported by torchscript
-        # x = x.unflatten(-1, (self.groups, self.ws))  # [..., G, I/G]
-        x = torch.einsum("...gi,...gih->...gh", x, self.weight)  # [..., G, H/G]
+        #     x = x.unflatten(-1, (self.groups, self.ws))  # [..., G, I/G]
+        # This is also not supported by tract:
+        #     x = torch.einsum("btgi,gih->btgh", x, self.weight)  # [..., G, H/G]
+        # Thus, lets to some manual reshaping and multiplication:
+        x = x.unsqueeze(-1).mul(self.weight.unsqueeze(0).unsqueeze(0)).sum(-2)
         x = x.flatten(2, 3)  # [B, T, H]
         return x
 
