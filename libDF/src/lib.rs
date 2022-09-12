@@ -27,6 +27,8 @@ mod reexport_dataset_modules {
 pub use reexport_dataset_modules::*;
 #[cfg(feature = "cache")]
 mod cache;
+#[cfg(feature = "tract")]
+pub mod tract;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
     9.265 * (freq_hz / (24.7 * 9.265)).ln_1p()
