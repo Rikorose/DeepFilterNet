@@ -493,10 +493,11 @@ class DfNet(nn.Module):
         spec = self.mask(spec, m)
         df_coefs, df_alpha = self.df_dec(emb, c0)
 
-        for _ in range(self.df_iter):
-            if self.use_alpha:
-                spec = self.df_op(spec, df_coefs, df_alpha)
-            else:
-                spec = self.df_op(spec, df_coefs)
+        if self.run_df:
+            for _ in range(self.df_iter):
+                if self.use_alpha:
+                    spec = self.df_op(spec, df_coefs, df_alpha)
+                else:
+                    spec = self.df_op(spec, df_coefs)
 
         return spec, m, lsnr, df_alpha
