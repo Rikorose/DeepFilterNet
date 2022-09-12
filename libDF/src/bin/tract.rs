@@ -111,9 +111,9 @@ impl DfTract {
         let model_cfg = config.section(Some("deepfilternet")).unwrap();
         let df_cfg = config.section(Some("df")).unwrap();
 
-        let enc = SimpleState::new(init_encoder(&enc, df_cfg, n_ch)?)?;
-        let erb_dec = SimpleState::new(init_erb_decoder(&erb_dec, model_cfg, df_cfg, n_ch)?)?;
-        let (df_dec, df_init_delay) = init_df_decoder(&df_dec, model_cfg, df_cfg, n_ch)?;
+        let enc = SimpleState::new(init_encoder(enc, df_cfg, n_ch)?)?;
+        let erb_dec = SimpleState::new(init_erb_decoder(erb_dec, model_cfg, df_cfg, n_ch)?)?;
+        let (df_dec, _df_init_delay) = init_df_decoder(df_dec, model_cfg, df_cfg, n_ch)?;
         let df_dec = SimpleState::new(df_dec)?;
 
         let sr = df_cfg.get("sr").unwrap().parse::<usize>()?;
@@ -230,7 +230,7 @@ impl DfTract {
             self.df_states.iter_mut(),
         ) {
             let spec = slice_as_mut_complex(rbuf.as_slice_mut().unwrap());
-            state.analysis(&ns_ch.as_slice().unwrap(), spec);
+            state.analysis(ns_ch.as_slice().unwrap(), spec);
             state.feat_erb(spec, self.alpha, erb_ch.as_slice_mut().unwrap());
             // TODO: Workaround transpose by directly computing transposed complex features:
             // state.feat_cplx_t(&spec[..nb_df], alpha, cplx_buf_t.as_slice_mut()?);
@@ -342,7 +342,7 @@ fn main() -> Result<()> {
     let mut sr = model.sr;
     assert!(args.out_dir.is_dir());
     for file in args.files {
-        let reader = ReadWav::new(&file.to_str().unwrap())?;
+        let reader = ReadWav::new(file.to_str().unwrap())?;
         // Check if we need to adjust to multiple channels
         if ch != reader.channels {
             ch = reader.channels;
