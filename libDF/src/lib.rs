@@ -50,6 +50,8 @@ pub struct DFState {
     analysis_scratch: Vec<Complex32>,
     synthesis_mem: Vec<f32>,
     synthesis_scratch: Vec<Complex32>,
+    mean_norm_state: Vec<f32>,
+    unit_norm_state: Vec<f32>,
 }
 
 pub fn erb_fb(sr: usize, fft_size: usize, nb_bands: usize, min_nb_freqs: usize) -> Vec<usize> {
@@ -111,12 +113,15 @@ impl DFState {
         let erb = erb_fb(sr, fft_size, nb_bands, min_nb_freqs);
 
         let pi = std::f64::consts::PI;
+        // Initialize the vorbis window: sin(pi/2*sin^2(pi*n/N))
         let mut window = vec![0.0; fft_size];
         for (i, w) in window.iter_mut().enumerate() {
             let sin = (0.5 * pi * (i as f64 + 0.5) / window_size_h as f64).sin();
             *w = (0.5 * pi * sin * sin).sin() as f32;
         }
         let wnorm = 1. / (window_size.pow(2) as f32 / (2 * frame_size) as f32);
+        let mean_norm_state = Vec::new();
+        let unit_norm_state = Vec::new();
 
         DFState {
             sr,
@@ -132,6 +137,8 @@ impl DFState {
             synthesis_scratch,
             window,
             wnorm,
+            mean_norm_state,
+            unit_norm_state,
         }
     }
 
@@ -156,6 +163,57 @@ impl DFState {
         debug_assert_eq!(input.len(), self.freq_size);
         debug_assert_eq!(output.len(), self.frame_size);
         frame_synthesis(input, output, self)
+    }
+
+    pub fn init_norm_states(&mut self, nb_df_freqs: usize) {
+        self.init_mean_norm_state();
+        self.init_unit_norm_state(nb_df_freqs);
+    }
+
+    pub fn init_mean_norm_state(&mut self) {
+        let min = MEAN_NORM_INIT[0];
+        let max = MEAN_NORM_INIT[1];
+        let nb_erb = self.erb.len();
+        let step = (max - min) / (nb_erb - 1) as f32;
+        let mut state = Vec::with_capacity(nb_erb);
+        for i in 0..nb_erb {
+            state.push(min + i as f32 * step);
+        }
+        self.mean_norm_state = state;
+    }
+    pub fn init_unit_norm_state(&mut self, nb_freqs: usize) {
+        let min = UNIT_NORM_INIT[0];
+        let max = UNIT_NORM_INIT[1];
+        let step = (max - min) / (nb_freqs - 1) as f32;
+        let mut state = Vec::with_capacity(nb_freqs);
+        for i in 0..nb_freqs {
+            state.push(min + i as f32 * step);
+        }
+        self.unit_norm_state = state;
+    }
+
+    pub fn feat_erb(&mut self, input: &[Complex32], alpha: f32, output: &mut [f32]) {
+        compute_band_corr(output, input, input, &self.erb); // ERB FB
+        for o in output.iter_mut() {
+            *o = (*o + 1e-10).log10() * 10.;
+        }
+        band_mean_norm_erb(output, &mut self.mean_norm_state, alpha); // Exponential mean norm
+    }
+
+    pub fn feat_cplx(&mut self, input: &[Complex32], alpha: f32, output: &mut [Complex32]) {
+        output.clone_from_slice(input);
+        band_unit_norm(output, &mut self.unit_norm_state, alpha)
+    }
+
+    pub fn feat_cplx_t(&mut self, input: &[Complex32], alpha: f32, output: &mut [f32]) {
+        band_unit_norm_t(input, &mut self.unit_norm_state, alpha, output)
+    }
+
+    pub fn apply_mask(&self, output: &mut [Complex32], gains: &mut [f32], pf: bool) {
+        if pf {
+            post_filter(gains);
+        }
+        apply_interp_band_gain(output, gains, &self.erb)
     }
 }
 
@@ -189,6 +247,25 @@ pub fn band_unit_norm(xs: &mut [Complex32], state: &mut [f32], alpha: f32) {
     for (x, s) in xs.iter_mut().zip(state.iter_mut()) {
         *s = x.norm() * (1. - alpha) + *s * alpha;
         *x /= s.sqrt();
+    }
+}
+
+/// Band unit norm, but with transposed output type. I.e. out contains first all real elements,
+/// followed by all imaginary elements. This memory layout is different from Complex32 slice which
+/// contains real and imaginary part as interleaved values.
+pub fn band_unit_norm_t(xs: &[Complex32], state: &mut [f32], alpha: f32, out: &mut [f32]) {
+    debug_assert_eq!(xs.len(), state.len());
+    debug_assert_eq!(xs.len(), out.len() / 2);
+    let (o_re, o_im) = out.split_at_mut(xs.len());
+    for (x, s, o_re, o_im) in zip4(
+        xs.iter(),
+        state.iter_mut(),
+        o_re.iter_mut(),
+        o_im.iter_mut(),
+    ) {
+        *s = x.norm() * (1. - alpha) + *s * alpha;
+        *o_re /= s.sqrt();
+        *o_im /= s.sqrt();
     }
 }
 
@@ -226,7 +303,7 @@ pub fn band_compr(out: &mut [f32], x: &[f32], erb_fb: &[usize]) {
     }
 }
 
-fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], erb_fb: &[usize])
+pub fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], erb_fb: &[usize])
 where
     T: MulAssign<f32>,
 {
@@ -358,6 +435,25 @@ where
     }
 }
 
+pub fn post_filter(gains: &mut [f32]) {
+    debug_assert!(gains.len() % 4 == 0);
+    let beta = 0.02f32;
+    let eps = 1e-12;
+    let pi = std::f32::consts::PI;
+    // Run in efficient size-4 chunks
+    let mut g_sin = [0.0; 4];
+    for g in gains.chunks_exact_mut(4) {
+        g_sin[0] = (g[0] * (g[0] * pi / 2.0).sin()).max(eps);
+        g_sin[1] = (g[1] * (g[1] * pi / 2.0).sin()).max(eps);
+        g_sin[2] = (g[2] * (g[2] * pi / 2.0).sin()).max(eps);
+        g_sin[3] = (g[3] * (g[3] * pi / 2.0).sin()).max(eps);
+        g[0] = (1.0 + beta) * g[0] / (1.0 + beta * (g[0] / g_sin[0]).powi(2));
+        g[1] = (1.0 + beta) * g[1] / (1.0 + beta * (g[1] / g_sin[1]).powi(2));
+        g[2] = (1.0 + beta) * g[2] / (1.0 + beta * (g[2] / g_sin[2]).powi(2));
+        g[3] = (1.0 + beta) * g[3] / (1.0 + beta * (g[3] / g_sin[3]).powi(2));
+    }
+}
+
 pub fn zip3<A, B, C>(a: A, b: B, c: C) -> impl Iterator<Item = (A::Item, B::Item, C::Item)>
 where
     A: IntoIterator,
@@ -365,6 +461,40 @@ where
     C: IntoIterator,
 {
     a.into_iter().zip(b.into_iter().zip(c)).map(|(x, (y, z))| (x, y, z))
+}
+pub fn zip4<A, B, C, D>(
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item)>
+where
+    A: IntoIterator,
+    B: IntoIterator,
+    C: IntoIterator,
+    D: IntoIterator,
+{
+    a.into_iter()
+        .zip(b.into_iter().zip(c.into_iter().zip(d)))
+        .map(|(w, (x, (y, z)))| (w, x, y, z))
+}
+pub fn zip5<A, B, C, D, E>(
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+    e: E,
+) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item, E::Item)>
+where
+    A: IntoIterator,
+    B: IntoIterator,
+    C: IntoIterator,
+    D: IntoIterator,
+    E: IntoIterator,
+{
+    a.into_iter()
+        .zip(b.into_iter().zip(c.into_iter().zip(d.into_iter().zip(e))))
+        .map(|(v, (w, (x, (y, z))))| (v, w, x, y, z))
 }
 pub fn rms<'a, I>(vals: I) -> f32
 where
