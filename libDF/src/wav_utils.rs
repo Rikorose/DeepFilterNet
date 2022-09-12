@@ -24,6 +24,7 @@ pub struct ReadWav {
     pub channels: usize,
     pub sr: usize,
     pub len: usize,
+    pub dtype: hound::SampleFormat,
 }
 
 impl ReadWav {
@@ -40,18 +41,24 @@ impl ReadWav {
             }
             Ok(r) => r,
         };
-        let channels = reader.spec().channels as usize;
-        let sr = reader.spec().sample_rate as usize;
+        let spec = reader.spec();
+        let channels = spec.channels as usize;
+        let sr = spec.sample_rate as usize;
         let len = reader.len() as usize / channels;
+        let dtype = spec.sample_format;
         Ok(ReadWav {
             reader,
             channels,
             sr,
             len,
+            dtype,
         })
     }
-    pub fn iter(&mut self) -> impl Iterator<Item = f32> + '_ {
-        read_wav_raw(&mut self.reader)
+    pub fn iter(&mut self) -> Box<dyn Iterator<Item = f32> + '_> {
+        match self.dtype {
+            hound::SampleFormat::Int => Box::new(read_wav_raw_i16(&mut self.reader)),
+            hound::SampleFormat::Float => Box::new(read_wav_raw_f32(&mut self.reader)),
+        }
     }
     pub fn samples_vec(mut self) -> Result<Vec<Vec<f32>>, WavUtilsError> {
         let mut out = vec![Vec::<f32>::new(); self.channels];
@@ -76,8 +83,11 @@ impl ReadWav {
     }
 }
 
-fn read_wav_raw<R: Read>(reader: &mut WavReader<R>) -> impl Iterator<Item = f32> + '_ {
+fn read_wav_raw_i16<R: Read>(reader: &mut WavReader<R>) -> impl Iterator<Item = f32> + '_ {
     reader.samples::<i16>().map(|s| s.unwrap() as f32 / 32767.0)
+}
+fn read_wav_raw_f32<R: Read>(reader: &mut WavReader<R>) -> impl Iterator<Item = f32> + '_ {
+    reader.samples::<f32>().map(|s| s.unwrap())
 }
 
 pub fn read_wav(path: &str) -> Result<(Vec<Vec<f32>>, u32), WavUtilsError> {
@@ -85,7 +95,7 @@ pub fn read_wav(path: &str) -> Result<(Vec<Vec<f32>>, u32), WavUtilsError> {
     let ch = reader.spec().channels as usize;
     let sr = reader.spec().sample_rate;
     let mut out = vec![Vec::<f32>::new(); ch];
-    let mut samples = read_wav_raw(&mut reader);
+    let mut samples = read_wav_raw_i16(&mut reader);
     'outer: loop {
         for out_ch in out.iter_mut() {
             match samples.next() {
