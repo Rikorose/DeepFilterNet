@@ -330,7 +330,7 @@ impl DataLoader {
             // Recreate indices to index into the dataset and shuffle them
             let n_samples = self.dataset_len(split);
             let sample_idcs: Vec<usize> = if self.overfit {
-                println!("Overfitting on one batch.");
+                log::info!("Overfitting on one batch.");
                 (0..n_samples).cycle().take(n_samples).collect()
             } else {
                 let mut tmp = (0..n_samples).collect::<Vec<usize>>();
