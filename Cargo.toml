@@ -7,6 +7,16 @@ members = [
   "pyDF-data"
 ]
 
+[profile.dev]
+opt-level = 1
+incremental = false
+lto = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+strip = true
