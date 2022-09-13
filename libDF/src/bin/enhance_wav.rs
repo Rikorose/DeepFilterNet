@@ -22,13 +22,17 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Encoder onnx file
-    onnx_enc: PathBuf,
+    #[clap(long)]
+    onnx_enc: Option<PathBuf>,
     /// Erb decoder onnx file
-    onnx_erb_dec: PathBuf,
+    #[clap(long)]
+    onnx_erb_dec: Option<PathBuf>,
     /// DF decoder onnx file
-    onnx_df_dec: PathBuf,
+    #[clap(long)]
+    onnx_df_dec: Option<PathBuf>,
     /// Model config file
-    cfg: PathBuf,
+    #[clap(long)]
+    cfg: Option<PathBuf>,
     /// Enable postfilter
     #[clap(short, long)]
     post_filter: bool,
@@ -61,15 +65,33 @@ fn main() -> Result<()> {
     env_logger::builder().filter_level(level).init();
 
     // Initialize with 1 channel
-    let models = DfModelParams::new(args.onnx_enc, args.onnx_erb_dec, args.onnx_df_dec);
-    let mut params = DfParams::new(
-        args.cfg,
-        1,
-        args.post_filter,
-        args.min_db_thresh,
-        args.max_db_erb_thresh,
-        args.max_db_df_thresh,
-    );
+    let (models, mut params) = if args.onnx_enc.is_some() {
+        let models = DfModelParams::new(args.onnx_enc.unwrap(), args.onnx_erb_dec.unwrap(), args.onnx_df_dec.unwrap());
+        let params = DfParams::new(
+            args.cfg.unwrap(),
+            1,
+            args.post_filter,
+            args.min_db_thresh,
+            args.max_db_erb_thresh,
+            args.max_db_df_thresh,
+        );
+        (models, params)
+    } else {
+        let models = DfModelParams::from_bytes(
+            include_bytes!("../../../models/DeepFilterNet2_onnx/enc.onnx"),
+            include_bytes!("../../../models/DeepFilterNet2_onnx/erb_dec.onnx"),
+            include_bytes!("../../../models/DeepFilterNet2_onnx/df_dec.onnx"),
+        );
+        let params = DfParams::with_bytes_config(
+            include_bytes!("../../../models/DeepFilterNet2_onnx/config.ini"),
+            1,
+            args.post_filter,
+            args.min_db_thresh,
+            args.max_db_erb_thresh,
+            args.max_db_df_thresh,
+        );
+        (models, params)
+    };
     let mut model: DfTract = DfTract::new(&models, &params)?;
     let mut sr = model.sr;
     assert!(args.out_dir.is_dir());

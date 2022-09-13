@@ -1,3 +1,4 @@
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -11,22 +12,65 @@ use tract_pulse::{internal::ToDim, model::*};
 use crate::*;
 
 pub struct DfModelParams {
-    enc: PathBuf,
-    erb_dec: PathBuf,
-    df_dec: PathBuf,
+    enc: Option<PathBuf>,
+    erb_dec: Option<PathBuf>,
+    df_dec: Option<PathBuf>,
+    enc_buf: Option<&'static [u8]>,
+    erb_dec_buf: Option<&'static [u8]>,
+    df_dec_buf: Option<&'static [u8]>,
 }
 impl DfModelParams {
     pub fn new(enc: PathBuf, erb_dec: PathBuf, df_dec: PathBuf) -> Self {
         Self {
-            enc,
-            erb_dec,
-            df_dec,
+            enc: Some(enc),
+            erb_dec: Some(erb_dec),
+            df_dec: Some(df_dec),
+            enc_buf: None,
+            erb_dec_buf: None,
+            df_dec_buf: None,
+        }
+    }
+    pub fn from_bytes(
+        enc_buf: &'static [u8],
+        erb_dec_buf: &'static [u8],
+        df_dec_buf: &'static [u8],
+    ) -> Self {
+        Self {
+            enc: None,
+            erb_dec: None,
+            df_dec: None,
+            enc_buf: Some(enc_buf),
+            erb_dec_buf: Some(erb_dec_buf),
+            df_dec_buf: Some(df_dec_buf),
+        }
+    }
+    pub fn paths(&self) -> Option<(&PathBuf, &PathBuf, &PathBuf)> {
+        if self.enc.is_some() && self.erb_dec.is_some() && self.df_dec.is_some() {
+            Some((
+                self.enc.as_ref().unwrap(),
+                self.erb_dec.as_ref().unwrap(),
+                self.df_dec.as_ref().unwrap(),
+            ))
+        } else {
+            None
+        }
+    }
+    pub fn bytes(&self) -> Option<(&'static [u8], &'static [u8], &'static [u8])> {
+        if self.enc_buf.is_some() && self.erb_dec_buf.is_some() && self.df_dec_buf.is_some() {
+            Some((
+                self.enc_buf.unwrap(),
+                self.erb_dec_buf.unwrap(),
+                self.df_dec_buf.unwrap(),
+            ))
+        } else {
+            None
         }
     }
 }
 
 pub struct DfParams {
-    config: PathBuf,
+    config: Option<PathBuf>,
+    config_bytes: Option<&'static [u8]>,
     pub n_ch: usize,
     post_filter: bool,
     min_db_thresh: f32,
@@ -43,7 +87,26 @@ impl DfParams {
         max_db_df_thresh: f32,
     ) -> Self {
         Self {
-            config,
+            config: Some(config),
+            config_bytes: None,
+            n_ch,
+            post_filter,
+            min_db_thresh,
+            max_db_erb_thresh,
+            max_db_df_thresh,
+        }
+    }
+    pub fn with_bytes_config(
+        config: &'static [u8],
+        n_ch: usize,
+        post_filter: bool,
+        min_db_thresh: f32,
+        max_db_erb_thresh: f32,
+        max_db_df_thresh: f32,
+    ) -> Self {
+        Self {
+            config: None,
+            config_bytes: Some(config),
             n_ch,
             post_filter,
             min_db_thresh,
@@ -85,33 +148,47 @@ pub struct DfTract {
 
 impl DfTract {
     pub fn new(models: &DfModelParams, params: &DfParams) -> Result<Self> {
-        if !models.enc.is_file() {
-            return Err(anyhow!("Encoder file not found"));
-        }
-        if !models.erb_dec.is_file() {
-            return Err(anyhow!("ERB decoder file not found"));
-        }
-        if !models.df_dec.is_file() {
-            return Err(anyhow!("DF decoder file not found"));
-        }
-        if !params.config.is_file() {
-            return Err(anyhow!("Config file not found"));
-        }
-        let config = Ini::load_from_file(params.config.as_path())?;
+        let config = if let Some(config) = params.config.as_ref() {
+            if !config.is_file() {
+                return Err(anyhow!("Config file not found"));
+            }
+            Ini::load_from_file(config.as_path())?
+        } else {
+            Ini::read_from(&mut Cursor::new(params.config_bytes.unwrap()))?
+        };
         let model_cfg = config.section(Some("deepfilternet")).unwrap();
         let df_cfg = config.section(Some("df")).unwrap();
-
         let ch = params.n_ch;
-        let enc = SimpleState::new(init_encoder(models.enc.as_path(), df_cfg, ch)?)?;
-        let erb_dec = SimpleState::new(init_erb_decoder(
-            models.erb_dec.as_path(),
-            model_cfg,
-            df_cfg,
-            ch,
-        )?)?;
-        let (df_dec, _df_init_delay) =
-            init_df_decoder(models.df_dec.as_path(), model_cfg, df_cfg, ch)?;
-        let df_dec = SimpleState::new(df_dec)?;
+
+        let (enc, erb_dec, df_dec, _df_init_delay) =
+            if let Some((enc, erb_dec, df_dec)) = models.paths() {
+                if !enc.is_file() {
+                    return Err(anyhow!("Encoder file not found"));
+                }
+                if !erb_dec.is_file() {
+                    return Err(anyhow!("ERB decoder file not found"));
+                }
+                if !df_dec.is_file() {
+                    return Err(anyhow!("DF decoder file not found"));
+                }
+                let enc = init_encoder(enc.as_path(), df_cfg, ch)?;
+                let erb_dec = init_erb_decoder(erb_dec.as_path(), model_cfg, df_cfg, ch)?;
+                let (df_dec, _df_init_delay) =
+                    init_df_decoder(df_dec.as_path(), model_cfg, df_cfg, ch)?;
+                (enc, erb_dec, df_dec, _df_init_delay)
+            } else if let Some((enc, erb_dec, df_dec)) = models.bytes() {
+                let enc = init_encoder_from_read(&mut Cursor::new(enc), df_cfg, ch)?;
+                let erb_dec =
+                    init_erb_decoder_from_read(&mut Cursor::new(erb_dec), model_cfg, df_cfg, ch)?;
+                let (df_dec, _df_init_delay) =
+                    init_df_decoder_from_read(&mut Cursor::new(df_dec), model_cfg, df_cfg, ch)?;
+                (enc, erb_dec, df_dec, _df_init_delay)
+            } else {
+                panic!("No model params found.");
+            };
+        let enc = SimpleState::new(enc.into_runnable()?)?;
+        let erb_dec = SimpleState::new(erb_dec.into_runnable()?)?;
+        let df_dec = SimpleState::new(df_dec.into_runnable()?)?;
 
         let sr = df_cfg.get("sr").unwrap().parse::<usize>()?;
         let hop_size = df_cfg.get("hop_size").unwrap().parse::<usize>()?;
@@ -229,7 +306,7 @@ impl DfTract {
             self.cplx_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.df_states.iter_mut(),
         ) {
-            let spec = slice_as_mut_complex(rbuf.as_slice_mut().unwrap());
+            let spec = as_slice_mut_complex(rbuf.as_slice_mut().unwrap());
             state.analysis(ns_ch.as_slice().unwrap(), spec);
             state.feat_erb(spec, self.alpha, erb_ch.as_slice_mut().unwrap());
             // TODO: Workaround transpose by directly computing transposed complex features:
@@ -237,7 +314,7 @@ impl DfTract {
             state.feat_cplx(
                 &spec[..self.nb_df],
                 self.alpha,
-                slice_as_mut_complex(cplx_ch.as_slice_mut().unwrap()),
+                as_slice_mut_complex(cplx_ch.as_slice_mut().unwrap()),
             );
         }
 
@@ -287,7 +364,7 @@ impl DfTract {
             .map(|x| x.as_slice_mut().unwrap())
             .unwrap_or(self.m_zeros.as_mut_slice());
         for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
-            state.apply_mask(slice_as_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
+            state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
         }
 
         let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
@@ -317,7 +394,7 @@ impl DfTract {
             enh.axis_iter_mut(Axis(0)),
         ) {
             state.synthesis(
-                slice_as_mut_complex(spec_ch.to_owned().as_slice_mut().unwrap()),
+                as_slice_mut_complex(spec_ch.to_owned().as_slice_mut().unwrap()),
                 enh_ch.as_slice_mut().unwrap(),
             );
         }
@@ -350,16 +427,16 @@ fn df(
     debug_assert_eq!(nb_df, coefs.shape()[2]);
     debug_assert_eq!(ch, spec_out.shape()[0]);
     let mut o_f: ArrayViewMut2<Complex32> =
-        array_as_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
+        as_array_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
             .into_dimensionality()?;
     // Zero relevant frequency bins of output
     o_f.slice_mut(s![.., ..nb_df]).fill(Complex32::default());
     let coefs_arr: ArrayView3<Complex32> =
-        array_as_complex(coefs.to_array_view::<f32>()?, &[ch, df_order, nb_df])
+        as_arrayview_complex(coefs.to_array_view::<f32>()?, &[ch, df_order, nb_df])
             .into_dimensionality()?;
     // Transform spec to an complex array and iterate over time frames of spec and coefs
     let spec_iter = spec.iter().map(|s| {
-        array_as_complex(s.to_array_view::<f32>().unwrap(), &[ch, n_freqs])
+        as_arrayview_complex(s.to_array_view::<f32>().unwrap(), &[ch, n_freqs])
             .into_dimensionality::<Ix2>()
             .unwrap()
     });
@@ -377,11 +454,11 @@ fn df(
     Ok(())
 }
 
-fn init_encoder(
-    m: &Path,
+fn init_encoder_impl(
+    mut m: InferenceModel,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedSimplePlan<TypedModel>> {
+) -> Result<TypedModel> {
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
@@ -389,12 +466,9 @@ fn init_encoder(
     let feat_erb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, 1, s, nb_erb));
     let feat_spec = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, 2, s, nb_df));
 
-    let mut m = tract_onnx::onnx()
-        .model_for_path(m)?
-        .with_input_fact(0, feat_erb)?
-        .with_input_fact(1, feat_spec)?;
-
     m = m
+        .with_input_fact(0, feat_erb)?
+        .with_input_fact(1, feat_spec)?
         .with_input_names(&["feat_erb", "feat_spec"])?
         .with_output_names(&["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"])?;
 
@@ -405,16 +479,29 @@ fn init_encoder(
     let pulsed = PulsedModel::new(&m, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init encoder with delay: {}", delay);
-    let m = pulsed.into_typed()?.into_optimized()?.into_runnable()?;
+    let m = pulsed.into_typed()?.into_optimized()?;
     Ok(m)
 }
+fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<TypedModel> {
+    let m = tract_onnx::onnx().model_for_path(m)?;
+    init_encoder_impl(m, df_cfg, n_ch)
+}
 
-fn init_erb_decoder(
-    m: &Path,
+fn init_encoder_from_read(
+    m: &mut dyn Read,
+    df_cfg: &ini::Properties,
+    n_ch: usize,
+) -> Result<TypedModel> {
+    let m = tract_onnx::onnx().model_for_read(m)?;
+    init_encoder_impl(m, df_cfg, n_ch)
+}
+
+fn init_erb_decoder_impl(
+    mut m: InferenceModel,
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedSimplePlan<TypedModel>> {
+) -> Result<TypedModel> {
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
@@ -432,15 +519,12 @@ fn init_erb_decoder(
         shapefactoid!(n_ch, layer_width, s, nb_erb),
     );
 
-    let mut m = tract_onnx::onnx()
-        .model_for_path(m)?
+    m = m
         .with_input_fact(0, emb)?
         .with_input_fact(1, e3)?
         .with_input_fact(2, e2)?
         .with_input_fact(3, e1)?
-        .with_input_fact(4, e0)?;
-
-    m = m
+        .with_input_fact(4, e0)?
         .with_input_names(&["emb", "e3", "e2", "e1", "e0"])?
         .with_output_names(&["m"])?;
 
@@ -451,16 +535,34 @@ fn init_erb_decoder(
     let pulsed = PulsedModel::new(&m, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init ERB decoder with delay: {}", delay);
-    let m = pulsed.into_typed()?.into_optimized()?.into_runnable()?;
+    let m = pulsed.into_typed()?.into_optimized()?;
     Ok(m)
 }
-
-fn init_df_decoder(
+fn init_erb_decoder(
     m: &Path,
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedSimplePlan<TypedModel>, usize)> {
+) -> Result<TypedModel> {
+    let m = tract_onnx::onnx().model_for_path(m)?;
+    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
+}
+fn init_erb_decoder_from_read(
+    m: &mut dyn Read,
+    net_cfg: &ini::Properties,
+    df_cfg: &ini::Properties,
+    n_ch: usize,
+) -> Result<TypedModel> {
+    let m = tract_onnx::onnx().model_for_read(m)?;
+    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
+}
+
+fn init_df_decoder_impl(
+    mut m: InferenceModel,
+    net_cfg: &ini::Properties,
+    df_cfg: &ini::Properties,
+    n_ch: usize,
+) -> Result<(TypedModel, usize)> {
     let s = tract_pulse::fact::stream_dim();
 
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
@@ -473,12 +575,11 @@ fn init_df_decoder(
     );
     let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
 
-    let mut m = tract_onnx::onnx()
-        .model_for_path(m)?
+    m = m
         .with_input_fact(0, emb)?
-        .with_input_fact(1, c0)?;
-
-    m = m.with_input_names(&["emb", "c0"])?.with_output_names(&["coefs"])?;
+        .with_input_fact(1, c0)?
+        .with_input_names(&["emb", "c0"])?
+        .with_output_names(&["coefs"])?;
 
     m.analyse(true)?;
     let mut m = m.into_typed()?;
@@ -487,8 +588,26 @@ fn init_df_decoder(
     let pulsed = PulsedModel::new(&m, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init DF decoder with delay: {}", delay);
-    let m = pulsed.into_typed()?.into_optimized()?.into_runnable()?;
+    let m = pulsed.into_typed()?.into_optimized()?;
     Ok((m, delay))
+}
+fn init_df_decoder(
+    m: &Path,
+    net_cfg: &ini::Properties,
+    df_cfg: &ini::Properties,
+    n_ch: usize,
+) -> Result<(TypedModel, usize)> {
+    let m = tract_onnx::onnx().model_for_path(m)?;
+    init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
+}
+fn init_df_decoder_from_read(
+    m: &mut dyn Read,
+    net_cfg: &ini::Properties,
+    df_cfg: &ini::Properties,
+    n_ch: usize,
+) -> Result<(TypedModel, usize)> {
+    let m = tract_onnx::onnx().model_for_read(m)?;
+    init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
 
 fn calc_norm_alpha(sr: usize, hop_size: usize, tau: f32) -> f32 {
@@ -503,7 +622,7 @@ fn calc_norm_alpha(sr: usize, hop_size: usize, tau: f32) -> f32 {
     a
 }
 
-pub fn slice_as_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
+pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut Complex32;
         let len = buffer.len();
@@ -511,7 +630,7 @@ pub fn slice_as_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     }
 }
 
-pub fn slice_as_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
+pub fn as_slice_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut f32;
         let len = buffer.len();
@@ -519,7 +638,27 @@ pub fn slice_as_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
     }
 }
 
-pub fn array_as_complex<'a>(
+pub fn slice_as_arrayview<'a>(
+    buffer: &[f32],
+    shape: &[usize], // having an explicit shape parameter allows to also squeeze axes.
+) -> ArrayViewD<'a, f32> {
+    debug_assert_eq!(buffer.len(), shape.iter().product::<usize>());
+    unsafe {
+        let ptr = buffer.as_ptr(); // as *mut Complex32;
+        ArrayViewD::from_shape_ptr(shape, ptr)
+    }
+}
+pub fn mut_slice_as_arrayviewmut<'a>(
+    buffer: &mut [f32],
+    shape: &[usize], // having an explicit shape parameter allows to also squeeze axes.
+) -> ArrayViewMutD<'a, f32> {
+    debug_assert_eq!(buffer.len(), shape.iter().product::<usize>());
+    unsafe {
+        let ptr = buffer.as_mut_ptr(); // as *mut Complex32;
+        ArrayViewMutD::from_shape_ptr(shape, ptr)
+    }
+}
+pub fn as_arrayview_complex<'a>(
     buffer: ArrayViewD<'a, f32>,
     shape: &[usize], // having an explicit shape parameter allows to also squeeze axes.
 ) -> ArrayViewD<'a, Complex32> {
@@ -530,7 +669,7 @@ pub fn array_as_complex<'a>(
         ArrayViewD::from_shape_ptr(shape, ptr)
     }
 }
-pub fn array_as_mut_complex<'a>(
+pub fn as_array_mut_complex<'a>(
     buffer: ArrayViewMutD<'a, f32>,
     shape: &[usize], // having an explicit shape parameter allows to also squeeze axes.
 ) -> ArrayViewMutD<'a, Complex32> {
