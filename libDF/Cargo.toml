@@ -56,18 +56,18 @@ logging = ["log"]
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
 cache = ["sled", "bincode"]
-bin = [
-  "clap",
-  "anyhow",
-  "ctrlc",
-  "log",
-  "env_logger",
-  "rust-ini",
-  "rand",
-  "ndarray-rand",
-]
+bin = ["clap", "anyhow", "ctrlc", "log", "env_logger", "rand", "ndarray-rand"]
 use-jemalloc = ["jemallocator"]
-tract = ["tract-core", "tract-onnx", "tract-pulse", "tract-hir"]
+tract = [
+  "tract-core",
+  "tract-onnx",
+  "tract-pulse",
+  "tract-hir",
+  "rust-ini",
+  "ndarray",
+  "anyhow",
+  "log",
+]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -106,7 +106,7 @@ tract-pulse = { version = "^0.17.7", optional = true }
 tract-hir = { version = "^0.17.7", optional = true }
 
 [target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_env = "musl"), not(target_arch = "riscv64")))'.dependencies]
-jemallocator = {version = "0.5.0", optional = true}
+jemallocator = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
