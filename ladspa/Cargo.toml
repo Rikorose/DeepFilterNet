@@ -1,0 +1,16 @@
+[package]
+name = "deep-filter-ladspa"
+version = "0.1.0"
+authors = ["Hendrik Schröter"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wmidi = "3.1.0"
+deep_filter = { path = "../libDF", features = ["tract", "use-jemalloc"] }
+ladspa = "0.3.4"
+ndarray = "^0.15"
+env_logger = "0.9"
+log = { version = "0.4", features = ["std"] }
