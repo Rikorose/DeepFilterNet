@@ -329,12 +329,14 @@ impl DfTract {
         //         let (apply_erb, apply_df) = match lsnr {
         // (self.min_db_thresh..self.max_db_erb_thresh).contains(&lsnr) =>
         //         }
-        let (apply_erb, apply_df) = if lsnr < self.min_db_thresh || lsnr > self.max_db_erb_thresh {
-            (false, false)
+        let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
+            (false, true, false)
+        } else if lsnr > self.max_db_erb_thresh {
+            (false, false, false)
         } else if lsnr > self.max_db_df_thresh {
-            (true, false)
+            (true, false, false)
         } else {
-            (true, true)
+            (true, false, true)
         };
         let (run_erb, run_df) = (true, true); // for now
 
@@ -358,13 +360,15 @@ impl DfTract {
         } else {
             None
         };
-        let pf = if apply_erb { self.post_filter } else { false };
-        let m = m
-            .as_mut()
-            .map(|x| x.as_slice_mut().unwrap())
-            .unwrap_or(self.m_zeros.as_mut_slice());
-        for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
-            state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
+        if apply_erb || apply_erb_zeros {
+            let pf = if apply_erb { self.post_filter } else { false };
+            let m = m
+                .as_mut()
+                .map(|x| x.as_slice_mut().unwrap())
+                .unwrap_or(self.m_zeros.as_mut_slice());
+            for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
+                state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
+            }
         }
 
         let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
