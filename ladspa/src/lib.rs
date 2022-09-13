@@ -9,7 +9,7 @@ static INIT_LOGGER: Once = Once::new();
 
 struct DfMono {
     df: DfTract,
-    inbuf: Vec<f32>,
+    inframe: Vec<f32>,
     outframe: Vec<f32>,
     outbuf: VecDeque<f32>,
 }
@@ -41,14 +41,14 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
     );
     let m = DfTract::new(&models, &params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
-    let inbuf = Vec::with_capacity(m.hop_size);
+    let inframe = Vec::with_capacity(m.hop_size);
     let outbuf = VecDeque::with_capacity(m.hop_size);
     let outframe = vec![0f32; m.hop_size];
     let plugin = DfMono {
         df: m,
-        inbuf,
-        outbuf,
+        inframe,
         outframe,
+        outbuf,
     };
     log::info!("Initilized DeepFilter_Mono plugin.");
     Box::new(plugin)
@@ -95,7 +95,7 @@ impl Plugin for DfMono {
             output.len()
         );
 
-        // 1. Pass alrady processed samples to the output buffer
+        // Pass alrady processed samples to the output buffer
         if output.len() <= self.outbuf.len() {
             o_idx = output.len().max(self.outbuf.len());
             for o in output.iter_mut().take(o_idx) {
@@ -103,22 +103,22 @@ impl Plugin for DfMono {
             }
         }
 
-        // 2. Check self.inbuf has some samples from previous run calls and fill up
-        let missing = n.saturating_sub(self.inbuf.len());
-        if !self.inbuf.is_empty() && missing > 0 {
-            self.inbuf.extend_from_slice(&input[..missing]);
-            debug_assert_eq!(self.inbuf.len(), n);
+        // Check self.inbuf has some samples from previous run calls and fill up
+        let missing = n.saturating_sub(self.inframe.len());
+        if !self.inframe.is_empty() && missing > 0 {
+            self.inframe.extend_from_slice(&input[..missing]);
+            debug_assert_eq!(self.inframe.len(), n);
             i_idx = missing;
         }
 
         // Check if self.inbuf has enough samples and process
         debug_assert!(
-            self.inbuf.len() <= n,
+            self.inframe.len() <= n,
             "inbuf len should not exceed frame size."
         );
-        if self.inbuf.len() == n {
+        if self.inframe.len() == n {
             let mut used_outframe = false;
-            let i_f = slice_as_arrayview(self.inbuf.as_slice(), &[1, n])
+            let i_f = slice_as_arrayview(self.inframe.as_slice(), &[1, n])
                 .into_dimensionality::<Ix2>()
                 .unwrap();
             let o_f = mut_slice_as_arrayviewmut(
@@ -146,7 +146,7 @@ impl Plugin for DfMono {
                 }
                 o_idx += n_copy;
             }
-            self.inbuf.clear();
+            self.inframe.clear();
         }
 
         // Check if new input has enough samples and run
@@ -173,7 +173,7 @@ impl Plugin for DfMono {
                 .unwrap();
                 let i_rms = df::rms(i_f.iter());
                 self.df.process(i_f, o_f).unwrap();
-                let o_rms = df::rms(output[o_idx-n..o_idx].iter());
+                let o_rms = df::rms(output[o_idx - n..o_idx].iter());
                 if used_outframe {
                     // Copy samples from self.outframe to output
                     let n_copy = (output.len().saturating_sub(o_idx)).min(n);
@@ -197,7 +197,7 @@ impl Plugin for DfMono {
 
         // Check if input has remaining samples that have not been processed and save them for later
         if i_idx < input.len() {
-            self.inbuf.extend_from_slice(&input[i_idx..]);
+            self.inframe.extend_from_slice(&input[i_idx..]);
         }
     }
 }
@@ -229,7 +229,7 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
             unique_id: ID_MONO,
             label: "deep_filter_mono",
             properties: ladspa::PROP_NONE,
-            name: "DeepFilter_Mono",
+            name: "DeepFilter Mono",
             maker: "Hendrik Schröter",
             copyright: "MIT/Apache",
             ports: vec![
