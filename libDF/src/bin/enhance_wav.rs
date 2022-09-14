@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Instant, process::exit};
+use std::{path::PathBuf, process::exit, time::Instant};
 
 use anyhow::Result;
 use clap::Parser;
