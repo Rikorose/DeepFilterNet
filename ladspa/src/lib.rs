@@ -25,7 +25,7 @@ const ID_STEREO: u64 = 7843796;
 
 pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
     INIT_LOGGER.call_once(|| {
-        let _ = env_logger::builder().filter_level(log::LevelFilter::Info).init();
+        env_logger::builder().filter_level(log::LevelFilter::Info).init();
     });
 
     let models = DfModelParams::from_bytes(
@@ -59,7 +59,7 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
 
 pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
     INIT_LOGGER.call_once(|| {
-        let _ = env_logger::builder().filter_level(log::LevelFilter::Info).init();
+        env_logger::builder().filter_level(log::LevelFilter::Info).init();
     });
 
     let models = DfModelParams::from_bytes(
@@ -174,7 +174,7 @@ impl Plugin for DfMono {
         // Check if new input has enough samples and run
         if input.len() - i_idx >= n {
             let n_frames = (input.len() - i_idx) / (n);
-            for i in 0..n_frames {
+            for _ in 0..n_frames {
                 let mut used_outframe = false;
 
                 let i_f = slice_as_arrayview(&input[i_idx..i_idx + n], &[1, n])
@@ -321,10 +321,10 @@ impl StereoBuffer {
     pub fn len(&self) -> usize {
         self.idx
     }
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.idx == 0
-    }
+    // #[inline]
+    // pub fn is_empty(&self) -> bool {
+    //     self.idx == 0
+    // }
     #[inline]
     pub fn clear(&mut self) {
         self.idx = 0;
@@ -357,12 +357,12 @@ impl StereoBuffer {
         [&left[..self.idx], &right[..self.idx]]
     }
     #[inline]
-    pub fn as_arrayview<'a>(&'a self) -> ArrayView2<'a, f32> {
+    pub fn as_arrayview(&self) -> ArrayView2<f32> {
         debug_assert!(self.idx > 0);
         slice_as_arrayview(&self.b, &[2, self.idx]).into_dimensionality().unwrap()
     }
     #[inline]
-    pub fn as_arrayviewmut<'a>(&'a mut self) -> ArrayViewMut2<'a, f32> {
+    pub fn as_arrayviewmut(&mut self) -> ArrayViewMut2<f32> {
         debug_assert!(self.idx > 0);
         mut_slice_as_arrayviewmut(&mut self.b, &[2, self.idx])
             .into_dimensionality()
