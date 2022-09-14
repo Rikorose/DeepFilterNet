@@ -57,7 +57,9 @@ class ModelParams(DfParams):
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.df_n_iter: int = config("DF_N_ITER", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
-        self.enc_lin_groups: int = config("ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section)
+        self.enc_lin_groups: int = config(
+            "ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section
+        )
         self.dfop_method: str = config("DFOP_METHOD", cast=str, default="df", section=self.section)
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
