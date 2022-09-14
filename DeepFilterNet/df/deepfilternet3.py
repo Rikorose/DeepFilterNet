@@ -56,8 +56,8 @@ class ModelParams(DfParams):
         self.enc_concat: bool = config("ENC_CONCAT", cast=bool, default=False, section=self.section)
         self.df_num_layers: int = config("DF_NUM_LAYERS", cast=int, default=3, section=self.section)
         self.df_n_iter: int = config("DF_N_ITER", cast=int, default=1, section=self.section)
-        self.gru_groups: int = config("GRU_GROUPS", cast=int, default=1, section=self.section)
         self.lin_groups: int = config("LINEAR_GROUPS", cast=int, default=1, section=self.section)
+        self.enc_lin_groups: int = config("ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section)
         self.dfop_method: str = config("DFOP_METHOD", cast=str, default="df", section=self.section)
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
@@ -110,7 +110,7 @@ class Encoder(nn.Module):
         self.emb_in_dim = p.conv_ch * p.nb_erb // 4
         self.emb_out_dim = p.emb_hidden_dim
         df_fc_emb = GroupedLinearEinsum(
-            p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.lin_groups
+            p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.enc_lin_groups
         )
         self.df_fc_emb = nn.Sequential(df_fc_emb, nn.ReLU(inplace=True))
         if p.enc_concat:
@@ -241,7 +241,6 @@ class DfDecoder(nn.Module):
         self.df_n_layers = p.df_num_layers
         self.df_order = p.df_order
         self.df_bins = p.nb_df
-        self.gru_groups = p.gru_groups
         self.df_out_ch = out_channels if out_channels > 0 else p.df_order * 2
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
