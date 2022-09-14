@@ -138,7 +138,7 @@ impl ValidCache {
         Ok(bytes_to_u64(&bytes))
     }
     pub fn cache_sample(&self, key: u64, sample: &Sample<Complex32>) -> Result<()> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = std::time::Instant::now();
         if !self.should_cache()? {
             return Ok(());
@@ -155,7 +155,7 @@ impl ValidCache {
             Err(e) => return Err(e.into()),
         };
         self.increment_len()?;
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         log::trace!(
             "Cached sample in {:?} us",
             (t0 - std::time::Instant::now()).as_micros()
@@ -163,7 +163,7 @@ impl ValidCache {
         Ok(())
     }
     pub fn load_sample(&self, key: u64) -> Result<Option<Sample<Complex32>>> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = std::time::Instant::now();
         let key = u64_to_ivec(key);
         let slice = match self.db.get(key)? {
@@ -171,7 +171,7 @@ impl ValidCache {
             None => return Ok(None),
         };
         let (sample, _) = bincode::serde::decode_from_slice(slice.as_ref(), self.config)?;
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         log::trace!(
             "Loaded cached sample in {:?} us",
             (t0 - std::time::Instant::now()).as_micros()

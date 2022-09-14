@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
-#[cfg(feature = "dataset_timings")]
+#[cfg(feature = "timings")]
 use std::time::Instant;
 
 use ndarray::{concatenate, prelude::*, Slice};
@@ -88,16 +88,16 @@ impl Compose {
     }
 
     pub fn transform(&self, x: &mut TransformInput) -> Result<()> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let mut t0 = Instant::now();
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let mut timings = Vec::new();
         for t in self.transforms.iter() {
             match t.transform(x) {
                 Ok(()) => (),
                 Err(e) => log::error!("{:?}", e),
             };
-            #[cfg(feature = "dataset_timings")]
+            #[cfg(feature = "timings")]
             {
                 let t1 = Instant::now();
                 let d = (t1 - t0).as_micros();
@@ -107,7 +107,7 @@ impl Compose {
                 t0 = t1;
             }
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         if log::log_enabled!(log::Level::Trace) && !timings.is_empty() {
             log::trace!(
                 "Calculated augmentation transforms in {:?}",
@@ -870,7 +870,7 @@ impl RandReverbSim {
         if !(apply_speech || apply_noise) {
             return Ok(None);
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         // Check if apply reverb to speech or noise
         let mut rng = thread_rng()?;
@@ -954,7 +954,7 @@ impl RandReverbSim {
             *noise = self.convolve(noise, rir_noise, &mut state, Some(orig_len))?;
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         if log::log_enabled!(log::Level::Trace) {
             log::trace!("Calculated RandReverbSim in {:?}", Instant::now() - t0);
         }
@@ -1036,13 +1036,13 @@ impl BandwidthLimiterAugmentation {
         }
     }
     pub fn transform(&self, audio: &mut Array2<f32>, max_freq: usize) -> Result<usize> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let mut rng = thread_rng()?;
         let &f = self.cut_off_freqs.iter().filter(|&f| *f < max_freq).choose(&mut rng).unwrap();
         let d = low_pass_resample(audio.view(), f, self.sr).unwrap();
         audio.clone_from(&d);
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
                 "Calculated BandwidthLimiterAugmentation in {:?}",
@@ -1180,7 +1180,7 @@ impl AirAbsorptionAugmentation {
         self.air_absorption.get(key)
     }
     pub fn apply(&self, spec: &mut Array3<Complex32>, coefs: &[f32; 9], d: f32) {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let atten_vals = coefs.map(|c| (-d * c).exp());
         let n_freqs = spec.len_of(Axis(2));
@@ -1188,7 +1188,7 @@ impl AirAbsorptionAugmentation {
         for (mut f, a) in spec.axis_iter_mut(Axis(2)).zip(atten_vals) {
             f.mapv_inplace(|x| x.scale(a));
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
                 "Calculated AirAbsorptionAugmentation in {:?}",

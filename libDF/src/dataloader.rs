@@ -352,7 +352,7 @@ impl DataLoader {
     where
         C: Collate<Complex32>,
     {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let bs = self.batch_size(self.current_split);
         let mut timings = Vec::with_capacity(bs);
@@ -411,7 +411,7 @@ impl DataLoader {
             }
             tries = 0;
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t1 = Instant::now();
 
         let out = if self.drained && (self.drop_last || samples.is_empty()) {
@@ -432,7 +432,7 @@ impl DataLoader {
             batch.timings = timings;
             Some(batch)
         };
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         if log::log_enabled!(log::Level::Trace) {
             let t2 = Instant::now();
             log::trace!(

@@ -1,7 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt;
-#[cfg(feature = "dataset_timings")]
+#[cfg(feature = "timings")]
 use std::fmt::Write as _;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -11,7 +11,7 @@ use std::io::{Cursor, Read, Seek};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
-#[cfg(feature = "dataset_timings")]
+#[cfg(feature = "timings")]
 use std::time::Instant;
 use std::time::SystemTime;
 
@@ -793,7 +793,7 @@ impl FftDataset {
 }
 impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         #[cfg(feature = "cache")]
         let hash = if let Some(cache) = self.cache.as_ref() {
@@ -853,7 +853,7 @@ impl Dataset<Complex32> for FftDataset {
             log::trace!("Caching sample for idx {} (hash: {})", idx, hash);
             cache.cache_sample(hash, &sample)?;
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         log::trace!(
             "FD sample: {:?} ms",
             (std::time::Instant::now() - t0).as_millis()
@@ -982,7 +982,7 @@ impl TdDataset {
         key: &str,
         max_samples: Option<usize>,
     ) -> Result<Array2<f32>> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let max_samples = max_samples.unwrap_or(self.max_samples);
         let x = match self._read_from_hdf5(key, ds_name, Some(max_samples)) {
@@ -1018,7 +1018,7 @@ impl TdDataset {
                 key,
                 self.ds_codec(ds_name)
             );
-            #[cfg(feature = "dataset_timings")]
+            #[cfg(feature = "timings")]
             let _ = write!(msg, " in {} ms", (Instant::now() - t0).as_millis());
             log::trace!("{}", msg);
         }
@@ -1148,7 +1148,7 @@ impl TdDataset {
 
 impl Dataset<f32> for TdDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<f32>> {
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let sample_seed = seed.unwrap_or(idx as u64);
         log::trace!("get_sample() idx {} with seed {:?}", idx, sample_seed,);
@@ -1162,7 +1162,7 @@ impl Dataset<f32> for TdDataset {
                 sample_seed
             );
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t_sp = Instant::now();
         // Apply low pass to the noise as well
         let mut noise_low_pass = if max_freq < self.sr / 2 {
@@ -1189,7 +1189,7 @@ impl Dataset<f32> for TdDataset {
         let &gain = self.gains.choose(&mut rng).unwrap();
         // Truncate to speech len, combine noises and mix to noisy
         let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains.as_slice()))?;
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t_ns = Instant::now();
         // Optionally we may also introduce some distortions to the speech signal.
         // These distortions will be only present in the noisy mixture, with the aim to reconstruce
@@ -1238,7 +1238,7 @@ impl Dataset<f32> for TdDataset {
             speech_distorted = istft(x.view_mut(), &mut state, false);
             speech_distorted.slice_axis_inplace(Axis(1), Slice::from(0..speech.len_of(Axis(1))));
         }
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         let t_d = Instant::now(); // distortions
         let (speech, _, noisy) = mix_audio_signal(
             speech,
@@ -1247,7 +1247,7 @@ impl Dataset<f32> for TdDataset {
             snr as f32,
             gain as f32,
         )?;
-        #[cfg(feature = "dataset_timings")]
+        #[cfg(feature = "timings")]
         if log::log_enabled!(log::Level::Trace) {
             let te = std::time::Instant::now();
             log::trace!(
