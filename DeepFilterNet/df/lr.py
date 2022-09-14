@@ -45,14 +45,8 @@ def cosine_scheduler(
     for i in range(num_cycles):
         cycle_base_value = base_value * cycle_decay**i
         iters = np.arange(cycle_lengths[i])
-        schedule = np.array(
-            [
-                final_value
-                + 0.5
-                * (cycle_base_value - final_value)
-                * (1 + math.cos(math.pi * i / (len(iters))))
-                for i in iters
-            ]
+        schedule = final_value + 0.5 * (cycle_base_value - final_value) * (
+            1 + np.cos(np.pi * iters / len(iters))
         )
         schedule_cycles.append(schedule)
 
