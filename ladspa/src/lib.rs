@@ -40,6 +40,7 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
         -15.,
         30.,
         30.,
+        ReduceMask::MEAN,
     );
     let m = DfTract::new(&models, &params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
@@ -73,6 +74,7 @@ pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin +
         -15.,
         30.,
         30.,
+        ReduceMask::MEAN,
     );
     let m = DfTract::new(&models, &params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
@@ -231,8 +233,6 @@ impl Plugin for DfStereo {
         let input_r = ports[1].unwrap_audio();
         let mut output_l = ports[2].unwrap_audio_mut();
         let mut output_r = ports[3].unwrap_audio_mut();
-        dbg!(input_l.len(), output_l.len());
-
         log::info!(
             "DfStereo::run() with input {} and output {}",
             input_l.len(),
@@ -295,7 +295,6 @@ impl Plugin for DfStereo {
 
         // Check if input has remaining samples that have not been processed and save them for later
         if i_idx < input_l.len() {
-            dbg!(i_idx, n, self.inframe.len(), input_l.len());
             self.inframe.extend(&input_l[i_idx..], &input_r[i_idx..]);
         }
     }
