@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, time::Instant, process::exit};
 
 use anyhow::Result;
 use clap::Parser;
@@ -45,6 +45,9 @@ struct Args {
     /// Max dB local SNR threshold for running DF decoder
     #[clap(long, value_parser, default_value_t = 35.)]
     max_db_df_thresh: f32,
+    /// If used with multiple channels, reduce the mask with max (1) or mean (2)
+    #[clap(long, value_parser, default_value_t = 1)]
+    reduce_mask: i32,
     /// Logging verbosity
     #[clap(short, long)]
     verbose: bool,
@@ -66,7 +69,15 @@ fn main() -> Result<()> {
 
     // Initialize with 1 channel
     let (models, mut params) = if args.onnx_enc.is_some() {
-        let models = DfModelParams::new(args.onnx_enc.unwrap(), args.onnx_erb_dec.unwrap(), args.onnx_df_dec.unwrap());
+        let models = DfModelParams::new(
+            args.onnx_enc.unwrap(),
+            args.onnx_erb_dec.unwrap(),
+            args.onnx_df_dec.unwrap(),
+        );
+        if args.cfg.is_none() {
+            log::error!("Config not provided.");
+            exit(1)
+        }
         let params = DfParams::new(
             args.cfg.unwrap(),
             1,
@@ -74,6 +85,7 @@ fn main() -> Result<()> {
             args.min_db_thresh,
             args.max_db_erb_thresh,
             args.max_db_df_thresh,
+            args.reduce_mask.try_into().unwrap(),
         );
         (models, params)
     } else {
@@ -89,6 +101,7 @@ fn main() -> Result<()> {
             args.min_db_thresh,
             args.max_db_erb_thresh,
             args.max_db_df_thresh,
+            args.reduce_mask.try_into().unwrap(),
         );
         (models, params)
     };

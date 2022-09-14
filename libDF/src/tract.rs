@@ -68,6 +68,22 @@ impl DfModelParams {
     }
 }
 
+#[derive(Clone)]
+pub enum ReduceMask {
+    MAX = 1,
+    MEAN = 2,
+}
+impl TryFrom<i32> for ReduceMask {
+    type Error = ();
+
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            x if x == ReduceMask::MAX as i32 => Ok(ReduceMask::MAX),
+            x if x == ReduceMask::MEAN as i32 => Ok(ReduceMask::MEAN),
+            _ => Err(()),
+        }
+    }
+}
 pub struct DfParams {
     config: Option<PathBuf>,
     config_bytes: Option<&'static [u8]>,
@@ -76,6 +92,7 @@ pub struct DfParams {
     min_db_thresh: f32,
     max_db_erb_thresh: f32,
     max_db_df_thresh: f32,
+    reduce_mask: ReduceMask,
 }
 impl DfParams {
     pub fn new(
@@ -85,6 +102,7 @@ impl DfParams {
         min_db_thresh: f32,
         max_db_erb_thresh: f32,
         max_db_df_thresh: f32,
+        reduce_mask: ReduceMask,
     ) -> Self {
         Self {
             config: Some(config),
@@ -94,6 +112,7 @@ impl DfParams {
             min_db_thresh,
             max_db_erb_thresh,
             max_db_df_thresh,
+            reduce_mask,
         }
     }
     pub fn with_bytes_config(
@@ -103,6 +122,7 @@ impl DfParams {
         min_db_thresh: f32,
         max_db_erb_thresh: f32,
         max_db_df_thresh: f32,
+        reduce_mask: ReduceMask,
     ) -> Self {
         Self {
             config: None,
@@ -112,6 +132,7 @@ impl DfParams {
             min_db_thresh,
             max_db_erb_thresh,
             max_db_df_thresh,
+            reduce_mask,
         }
     }
 }
@@ -138,6 +159,7 @@ pub struct DfTract {
     pub min_db_thresh: f32,
     pub max_db_erb_thresh: f32,
     pub max_db_df_thresh: f32,
+    pub reduce_mask: ReduceMask,
     df_states: Vec<DFState>,
     spec_buf: Tensor,
     erb_buf: Tensor,
@@ -246,6 +268,7 @@ impl DfTract {
             min_db_thresh: params.min_db_thresh,
             max_db_erb_thresh: params.max_db_erb_thresh,
             max_db_df_thresh: params.max_db_df_thresh,
+            reduce_mask: params.reduce_mask.clone(),
             spec_buf,
             erb_buf,
             cplx_buf,
@@ -352,8 +375,19 @@ impl DfTract {
             );
             if apply_erb {
                 let mut m = self.erb_dec.run(dec_input)?;
-                let m = m.pop().unwrap().into_tensor().into_shape(&[self.ch, self.nb_erb])?;
-                Some(m.into_array()?.mean_axis(Axis(0)).unwrap())
+                let mut m = m
+                    .pop()
+                    .unwrap()
+                    .into_tensor()
+                    .into_shape(&[self.ch, self.nb_erb])?
+                    .into_array()?;
+                if self.ch > 1 {
+                    m = match self.reduce_mask {
+                        ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
+                        ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
+                    };
+                }
+                Some(m)
             } else {
                 None
             }
@@ -573,11 +607,11 @@ fn init_df_decoder_impl(
     let n_hidden = net_cfg.get("emb_hidden_dim").unwrap().parse::<usize>()?;
     let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
 
+    let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
     let c0 = InferenceFact::dt_shape(
         f32::datum_type(),
         shapefactoid!(n_ch, layer_width, s, nb_df),
     );
-    let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
 
     m = m
         .with_input_fact(0, emb)?
