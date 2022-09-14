@@ -18,7 +18,8 @@ from df.modules import get_device
 from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
 from libdf import DF, erb, erb_norm, unit_norm
 
-DEFAULT_MODELS = ("DeepFilterNet", "DeepFilterNet2")
+PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2")
+DEFAULT_MODEL = "DeepFilterNet2"
 
 
 def main(args):
@@ -55,8 +56,10 @@ def main(args):
         )
 
 
-def get_model_basedir(m: str) -> str:
-    is_default_model = m in DEFAULT_MODELS
+def get_model_basedir(m: Optional[str]) -> str:
+    if m is None:
+        m = DEFAULT_MODEL
+    is_default_model = m in PRETRAINED_MODELS
     if is_default_model:
         return maybe_download_model(m)
     return m
@@ -69,7 +72,7 @@ def init_df(
     log_file: Optional[str] = "enhance.log",
     config_allow_defaults: bool = False,
     epoch: Union[str, int, None] = "best",
-    default_model: str = "DeepFilterNet2",
+    default_model: str = DEFAULT_MODEL,
 ) -> Tuple[nn.Module, DF, str]:
     """Initializes and loads config, model and deep filtering state.
 
@@ -96,7 +99,7 @@ def init_df(
         install()
     except ImportError:
         pass
-    use_default_model = model_base_dir is None or model_base_dir in DEFAULT_MODELS
+    use_default_model = model_base_dir is None or model_base_dir in PRETRAINED_MODELS
     model_base_dir = get_model_basedir(model_base_dir or default_model)
 
     if not os.path.isdir(model_base_dir):
@@ -191,7 +194,7 @@ def enhance(
     return audio
 
 
-def maybe_download_model(name: str = "DeepFilterNet") -> str:
+def maybe_download_model(name: str = DEFAULT_MODEL) -> str:
     """Download a DeepFilterNet model.
 
     Args:
