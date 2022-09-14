@@ -51,7 +51,7 @@ dataset = [
   "roots",
   "log",
 ]
-dataset_timings = []
+timings = []
 logging = ["log"]
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
