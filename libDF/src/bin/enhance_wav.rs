@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::exit, time::Instant};
+use std::{path::PathBuf, time::Instant};
 
 use anyhow::Result;
 use clap::Parser;
@@ -21,18 +21,9 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Encoder onnx file
-    #[clap(long)]
-    onnx_enc: Option<PathBuf>,
-    /// Erb decoder onnx file
-    #[clap(long)]
-    onnx_erb_dec: Option<PathBuf>,
-    /// DF decoder onnx file
-    #[clap(long)]
-    onnx_df_dec: Option<PathBuf>,
-    /// Model config file
-    #[clap(long)]
-    cfg: Option<PathBuf>,
+    /// Path to model tar.gz
+    #[clap(short, long)]
+    model: Option<PathBuf>,
     /// Enable postfilter
     #[clap(short, long)]
     post_filter: bool,
@@ -68,52 +59,31 @@ fn main() -> Result<()> {
     env_logger::builder().filter_level(level).init();
 
     // Initialize with 1 channel
-    let (models, mut params) = if args.onnx_enc.is_some() {
-        let models = DfModelParams::new(
-            args.onnx_enc.unwrap(),
-            args.onnx_erb_dec.unwrap(),
-            args.onnx_df_dec.unwrap(),
-        );
-        if args.cfg.is_none() {
-            log::error!("Config not provided.");
-            exit(1)
-        }
-        let params = DfParams::new(
-            args.cfg.unwrap(),
-            1,
-            args.post_filter,
-            args.min_db_thresh,
-            args.max_db_erb_thresh,
-            args.max_db_df_thresh,
-            args.reduce_mask.try_into().unwrap(),
-        );
-        (models, params)
+    let mut r_params = RuntimeParams::new(
+        1,
+        args.post_filter,
+        args.min_db_thresh,
+        args.max_db_erb_thresh,
+        args.max_db_df_thresh,
+        args.reduce_mask.try_into().unwrap(),
+    );
+    let df_params = if let Some(tar) = args.model {
+        DfParams::new(tar)?
     } else {
-        let models = DfModelParams::from_bytes(
-            include_bytes!("../../../models/DeepFilterNet2_onnx/enc.onnx"),
-            include_bytes!("../../../models/DeepFilterNet2_onnx/erb_dec.onnx"),
-            include_bytes!("../../../models/DeepFilterNet2_onnx/df_dec.onnx"),
-        );
-        let params = DfParams::with_bytes_config(
-            include_bytes!("../../../models/DeepFilterNet2_onnx/config.ini"),
-            1,
-            args.post_filter,
-            args.min_db_thresh,
-            args.max_db_erb_thresh,
-            args.max_db_df_thresh,
-            args.reduce_mask.try_into().unwrap(),
-        );
-        (models, params)
+        DfParams::from_bytes(include_bytes!("../../../models/DeepFilterNet2_onnx.tar.gz"))?
     };
-    let mut model: DfTract = DfTract::new(&models, &params)?;
+    let mut model: DfTract = DfTract::new(df_params.clone(), &r_params)?;
     let mut sr = model.sr;
-    assert!(args.out_dir.is_dir());
+    if !args.out_dir.is_dir() {
+        log::info!("Creating output directory: {}", args.out_dir.display());
+        std::fs::create_dir_all(args.out_dir.clone())?
+    }
     for file in args.files {
         let reader = ReadWav::new(file.to_str().unwrap())?;
         // Check if we need to adjust to multiple channels
-        if params.n_ch != reader.channels {
-            params.n_ch = reader.channels;
-            model = DfTract::new(&models, &params)?;
+        if r_params.n_ch != reader.channels {
+            r_params.n_ch = reader.channels;
+            model = DfTract::new(df_params.clone(), &r_params)?;
             sr = model.sr;
         }
         assert_eq!(sr, reader.sr);

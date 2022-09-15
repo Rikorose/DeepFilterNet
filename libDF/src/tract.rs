@@ -1,9 +1,14 @@
+use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "timings")]
+use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use flate2::read::GzDecoder;
 use ini::Ini;
 use ndarray::{prelude::*, Axis};
+use tar::Archive;
 use tract_core::internal::tract_smallvec::alloc::collections::VecDeque;
 use tract_core::prelude::*;
 use tract_onnx::{prelude::*, tract_hir::shapefactoid};
@@ -11,60 +16,58 @@ use tract_pulse::{internal::ToDim, model::*};
 
 use crate::*;
 
-pub struct DfModelParams {
-    enc: Option<PathBuf>,
-    erb_dec: Option<PathBuf>,
-    df_dec: Option<PathBuf>,
-    enc_buf: Option<&'static [u8]>,
-    erb_dec_buf: Option<&'static [u8]>,
-    df_dec_buf: Option<&'static [u8]>,
+#[derive(Clone)]
+pub struct DfParams {
+    config: Ini,
+    enc: Vec<u8>,
+    erb_dec: Vec<u8>,
+    df_dec: Vec<u8>,
 }
-impl DfModelParams {
-    pub fn new(enc: PathBuf, erb_dec: PathBuf, df_dec: PathBuf) -> Self {
-        Self {
-            enc: Some(enc),
-            erb_dec: Some(erb_dec),
-            df_dec: Some(df_dec),
-            enc_buf: None,
-            erb_dec_buf: None,
-            df_dec_buf: None,
-        }
-    }
-    pub fn from_bytes(
-        enc_buf: &'static [u8],
-        erb_dec_buf: &'static [u8],
-        df_dec_buf: &'static [u8],
-    ) -> Self {
-        Self {
-            enc: None,
-            erb_dec: None,
-            df_dec: None,
-            enc_buf: Some(enc_buf),
-            erb_dec_buf: Some(erb_dec_buf),
-            df_dec_buf: Some(df_dec_buf),
-        }
-    }
-    pub fn paths(&self) -> Option<(&PathBuf, &PathBuf, &PathBuf)> {
-        if self.enc.is_some() && self.erb_dec.is_some() && self.df_dec.is_some() {
-            Some((
-                self.enc.as_ref().unwrap(),
-                self.erb_dec.as_ref().unwrap(),
-                self.df_dec.as_ref().unwrap(),
-            ))
+
+fn extract_targz<R: Read>(f: R) -> Result<(Ini, Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let tar = GzDecoder::new(f);
+    let mut archive = Archive::new(tar);
+    let mut enc = Vec::new();
+    let mut erb_dec = Vec::new();
+    let mut df_dec = Vec::new();
+    let mut cfg = Ini::new();
+    for e in archive.entries().context("Could not extract models from tar file.")? {
+        let mut file = e.context("Could not open model tar entry.")?;
+        let path = file.path().unwrap();
+        if path.ends_with("enc.onnx") {
+            file.read_to_end(&mut enc)?;
+        } else if path.ends_with("erb_dec.onnx") {
+            file.read_to_end(&mut erb_dec)?;
+        } else if path.ends_with("df_dec.onnx") {
+            file.read_to_end(&mut df_dec)?;
+        } else if path.ends_with("config.ini") {
+            cfg = Ini::read_from(&mut file).context("Could not load config from tar file.")?;
         } else {
-            None
+            log::warn!("Found non-matching item in model tar file: {:?}", path)
         }
     }
-    pub fn bytes(&self) -> Option<(&'static [u8], &'static [u8], &'static [u8])> {
-        if self.enc_buf.is_some() && self.erb_dec_buf.is_some() && self.df_dec_buf.is_some() {
-            Some((
-                self.enc_buf.unwrap(),
-                self.erb_dec_buf.unwrap(),
-                self.df_dec_buf.unwrap(),
-            ))
-        } else {
-            None
-        }
+    Ok((cfg, enc, erb_dec, df_dec))
+}
+
+impl DfParams {
+    pub fn new(tar_file: PathBuf) -> Result<Self> {
+        let file = File::open(tar_file).context("Could not open model tar file.")?;
+        let (config, enc, erb_dec, df_dec) = extract_targz(file)?;
+        Ok(Self {
+            config,
+            enc,
+            erb_dec,
+            df_dec,
+        })
+    }
+    pub fn from_bytes(tar_buf: &'static [u8]) -> Result<Self> {
+        let (config, enc, erb_dec, df_dec) = extract_targz(tar_buf)?;
+        Ok(Self {
+            config,
+            enc,
+            erb_dec,
+            df_dec,
+        })
     }
 }
 
@@ -84,9 +87,7 @@ impl TryFrom<i32> for ReduceMask {
         }
     }
 }
-pub struct DfParams {
-    config: Option<PathBuf>,
-    config_bytes: Option<&'static [u8]>,
+pub struct RuntimeParams {
     pub n_ch: usize,
     post_filter: bool,
     min_db_thresh: f32,
@@ -94,9 +95,8 @@ pub struct DfParams {
     max_db_df_thresh: f32,
     reduce_mask: ReduceMask,
 }
-impl DfParams {
+impl RuntimeParams {
     pub fn new(
-        config: PathBuf,
         n_ch: usize,
         post_filter: bool,
         min_db_thresh: f32,
@@ -105,28 +105,6 @@ impl DfParams {
         reduce_mask: ReduceMask,
     ) -> Self {
         Self {
-            config: Some(config),
-            config_bytes: None,
-            n_ch,
-            post_filter,
-            min_db_thresh,
-            max_db_erb_thresh,
-            max_db_df_thresh,
-            reduce_mask,
-        }
-    }
-    pub fn with_bytes_config(
-        config: &'static [u8],
-        n_ch: usize,
-        post_filter: bool,
-        min_db_thresh: f32,
-        max_db_erb_thresh: f32,
-        max_db_df_thresh: f32,
-        reduce_mask: ReduceMask,
-    ) -> Self {
-        Self {
-            config: None,
-            config_bytes: Some(config),
             n_ch,
             post_filter,
             min_db_thresh,
@@ -169,48 +147,24 @@ pub struct DfTract {
 }
 
 impl DfTract {
-    pub fn new(models: &DfModelParams, params: &DfParams) -> Result<Self> {
-        let config = if let Some(config) = params.config.as_ref() {
-            if !config.is_file() {
-                return Err(anyhow!("Config file not found"));
-            }
-            Ini::load_from_file(config.as_path())?
-        } else {
-            Ini::read_from(&mut Cursor::new(params.config_bytes.unwrap()))?
-        };
+    pub fn new(dfp: DfParams, rp: &RuntimeParams) -> Result<Self> {
+        #[cfg(feature = "timings")]
+        let t0 = Instant::now();
+        let config = dfp.config;
         let model_cfg = config.section(Some("deepfilternet")).unwrap();
         let df_cfg = config.section(Some("df")).unwrap();
-        let ch = params.n_ch;
+        let ch = rp.n_ch;
 
-        let (enc, erb_dec, df_dec, _df_init_delay) =
-            if let Some((enc, erb_dec, df_dec)) = models.paths() {
-                if !enc.is_file() {
-                    return Err(anyhow!("Encoder file not found"));
-                }
-                if !erb_dec.is_file() {
-                    return Err(anyhow!("ERB decoder file not found"));
-                }
-                if !df_dec.is_file() {
-                    return Err(anyhow!("DF decoder file not found"));
-                }
-                let enc = init_encoder(enc.as_path(), df_cfg, ch)?;
-                let erb_dec = init_erb_decoder(erb_dec.as_path(), model_cfg, df_cfg, ch)?;
-                let (df_dec, _df_init_delay) =
-                    init_df_decoder(df_dec.as_path(), model_cfg, df_cfg, ch)?;
-                (enc, erb_dec, df_dec, _df_init_delay)
-            } else if let Some((enc, erb_dec, df_dec)) = models.bytes() {
-                let enc = init_encoder_from_read(&mut Cursor::new(enc), df_cfg, ch)?;
-                let erb_dec =
-                    init_erb_decoder_from_read(&mut Cursor::new(erb_dec), model_cfg, df_cfg, ch)?;
-                let (df_dec, _df_init_delay) =
-                    init_df_decoder_from_read(&mut Cursor::new(df_dec), model_cfg, df_cfg, ch)?;
-                (enc, erb_dec, df_dec, _df_init_delay)
-            } else {
-                panic!("No model params found.");
-            };
+        let (enc, enc_delay) = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
+        let (erb_dec, erb_dec_delay) =
+            init_erb_decoder_from_read(&mut Cursor::new(dfp.erb_dec), model_cfg, df_cfg, ch)?;
+        let (df_dec, df_dec_delay) =
+            init_df_decoder_from_read(&mut Cursor::new(dfp.df_dec), model_cfg, df_cfg, ch)?;
         let enc = SimpleState::new(enc.into_runnable()?)?;
         let erb_dec = SimpleState::new(erb_dec.into_runnable()?)?;
         let df_dec = SimpleState::new(df_dec.into_runnable()?)?;
+        #[cfg(feature = "timings")]
+        let t1 = Instant::now();
 
         let sr = df_cfg.get("sr").unwrap().parse::<usize>()?;
         let hop_size = df_cfg.get("hop_size").unwrap().parse::<usize>()?;
@@ -243,7 +197,19 @@ impl DfTract {
         // let mut cplx_buf_t = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &[1, 2, 1, nb_df])? };
         let m_zeros = vec![0.; nb_erb];
 
-        let rolling_spec_buf = VecDeque::with_capacity(df_order + df_lookahead + conv_lookahead);
+        let model_type = config.section(Some("train")).unwrap().get("model").unwrap();
+        let lookahead = match model_type {
+            "deepfilternet2" => df_lookahead + conv_lookahead,
+            "deepfilternet3" => df_lookahead.max(conv_lookahead),
+            _ => return Err(anyhow!("Unsupported model type")),
+        };
+        log::info!(
+            "Running with model type {} lookahead {}",
+            model_type,
+            lookahead,
+        );
+
+        let rolling_spec_buf = VecDeque::with_capacity(df_order + lookahead);
 
         let mut state = DFState::new(sr as usize, fft_size, hop_size, nb_erb, min_nb_erb_freqs);
         state.init_norm_states(nb_df);
@@ -265,19 +231,25 @@ impl DfTract {
             n_freqs,
             df_order,
             alpha,
-            min_db_thresh: params.min_db_thresh,
-            max_db_erb_thresh: params.max_db_erb_thresh,
-            max_db_df_thresh: params.max_db_df_thresh,
-            reduce_mask: params.reduce_mask.clone(),
+            min_db_thresh: rp.min_db_thresh,
+            max_db_erb_thresh: rp.max_db_erb_thresh,
+            max_db_df_thresh: rp.max_db_df_thresh,
+            reduce_mask: rp.reduce_mask.clone(),
             spec_buf,
             erb_buf,
             cplx_buf,
             m_zeros,
             rolling_spec_buf,
             df_states,
-            post_filter: params.post_filter,
+            post_filter: rp.post_filter,
         };
         m.init()?;
+        #[cfg(feature = "timings")]
+        log::info!(
+            "Init DfTract in {:.2}ms (models in {:.2}ms)",
+            t0.elapsed().as_secs_f32() * 1000.,
+            (t1 - t0).as_secs_f32() * 1000.
+        );
 
         Ok(m)
     }
@@ -303,15 +275,34 @@ impl DfTract {
                 self.df_states.push(state)
             }
         }
-        self.spec_buf = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &spec_shape)? };
-        self.erb_buf =
-            unsafe { Tensor::uninitialized_dt(f32::datum_type(), &[ch, 1, 1, self.nb_erb])? };
-        self.cplx_buf =
-            unsafe { Tensor::uninitialized_dt(f32::datum_type(), &[ch, 1, self.nb_df, 2])? };
+        self.spec_buf = Tensor::zero::<f32>(&spec_shape)?;
+        self.erb_buf = Tensor::zero::<f32>(&[ch, 1, 1, self.nb_erb])?;
+        self.cplx_buf = Tensor::zero::<f32>(&[ch, 1, self.nb_df, 2])?;
+
+        // for _ in 0..(enc_delay.max(erb_dec_delay.max(df_dec_delay))) {
+        //     let mut enc_emb = self.enc.run(tvec!(
+        //         self.erb_buf.clone(),
+        //         self.cplx_buf.clone().permute_axes(&[0, 3, 1, 2])?
+        //     ))?;
+        //     dbg!(enc_emb.pop());
+        //     let c0 = enc_emb.pop().unwrap().into_tensor();
+        //     let cemb = enc_emb.pop().unwrap().into_tensor();
+        //     let e3 = enc_emb.pop().unwrap().into_tensor();
+        //     let e2 = enc_emb.pop().unwrap().into_tensor();
+        //     let e1 = enc_emb.pop().unwrap().into_tensor();
+        //     let e0 = enc_emb.pop().unwrap().into_tensor();
+
+        //     self.erb_dec.run(tvec!(cemb.clone(), e3, e2, e1, e0))?;
+
+        //     self.df_dec.run(tvec!(cemb.clone(), c0))?;
+        // }
+
         Ok(())
     }
 
     pub fn process(&mut self, noisy: ArrayView2<f32>, mut enh: ArrayViewMut2<f32>) -> Result<()> {
+        #[cfg(feature = "timings")]
+        let t0 = Instant::now();
         let ch = noisy.len_of(Axis(0));
         debug_assert_eq!(noisy.len_of(Axis(0)), enh.len_of(Axis(0)));
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
@@ -341,11 +332,15 @@ impl DfTract {
             );
         }
 
+        #[cfg(feature = "timings")]
+        let t1 = Instant::now();
         // Run encoder
         let mut enc_emb = self.enc.run(tvec!(
             self.erb_buf.clone(),
             self.cplx_buf.clone().permute_axes(&[0, 3, 1, 2])?
         ))?;
+        #[cfg(feature = "timings")]
+        let t2 = Instant::now();
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap().into_tensor();
         let emb = enc_emb.pop().unwrap().into_tensor();
@@ -404,6 +399,8 @@ impl DfTract {
                 state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
             }
         }
+        #[cfg(feature = "timings")]
+        let t3 = Instant::now();
 
         let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
         if run_df {
@@ -425,7 +422,9 @@ impl DfTract {
                     &mut self.spec_buf,
                 )?;
             }
-        }
+        };
+        #[cfg(feature = "timings")]
+        let t4 = Instant::now();
         for (state, spec_ch, mut enh_ch) in zip3(
             self.df_states.iter_mut(),
             self.spec_buf.to_array_view_mut()?.axis_iter(Axis(0)),
@@ -436,6 +435,16 @@ impl DfTract {
                 enh_ch.as_slice_mut().unwrap(),
             );
         }
+        #[cfg(feature = "timings")]
+        log::info!(
+            "Processed frame in {:.2}ms (analysis: {:.2}ms, encoder: {:.2}ms, erb_decoder: {:.2}ms, df_decoder: {:.2}ms, synthesis: {:.2}ms)",
+            t0.elapsed().as_secs_f32() * 1000.,
+            (t1 - t0).as_secs_f32() * 1000.,
+            (t2 - t1).as_secs_f32() * 1000.,
+            (t3 - t2).as_secs_f32() * 1000.,
+            (t4 - t3).as_secs_f32() * 1000.,
+            t4.elapsed().as_secs_f32() * 1000.,
+        );
         Ok(())
     }
 }
@@ -518,9 +527,9 @@ fn init_encoder_impl(
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init encoder with delay: {}", delay);
     let m = pulsed.into_typed()?.into_optimized()?;
-    Ok(m)
+    Ok((m, delay))
 }
-fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<TypedModel> {
+fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<(TypedModel, usize)> {
     let m = tract_onnx::onnx().model_for_path(m)?;
     init_encoder_impl(m, df_cfg, n_ch)
 }
@@ -529,7 +538,7 @@ fn init_encoder_from_read(
     m: &mut dyn Read,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedModel> {
+) -> Result<(TypedModel, usize)> {
     let m = tract_onnx::onnx().model_for_read(m)?;
     init_encoder_impl(m, df_cfg, n_ch)
 }
@@ -539,7 +548,7 @@ fn init_erb_decoder_impl(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedModel> {
+) -> Result<(TypedModel, usize)> {
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
@@ -574,14 +583,14 @@ fn init_erb_decoder_impl(
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init ERB decoder with delay: {}", delay);
     let m = pulsed.into_typed()?.into_optimized()?;
-    Ok(m)
+    Ok((m, delay))
 }
 fn init_erb_decoder(
     m: &Path,
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedModel> {
+) -> Result<(TypedModel, usize)> {
     let m = tract_onnx::onnx().model_for_path(m)?;
     init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
@@ -590,7 +599,7 @@ fn init_erb_decoder_from_read(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedModel> {
+) -> Result<(TypedModel, usize)> {
     let m = tract_onnx::onnx().model_for_read(m)?;
     init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
