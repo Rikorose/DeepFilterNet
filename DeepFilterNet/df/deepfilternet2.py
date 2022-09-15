@@ -352,11 +352,6 @@ class DfDecoder(nn.Module):
             raise NotImplementedError
         self.df_out = nn.Sequential(df_out, nn.Tanh())
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
-        self.out_transform = (
-            DfOutputReshapeOld(self.df_order, self.df_bins)
-            if p.dfop_method == "real_unfold"
-            else DfOutputReshapeMF(self.df_order, self.df_bins)
-        )
 
     def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
@@ -367,7 +362,6 @@ class DfDecoder(nn.Module):
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
         c = c.view(b, t, self.df_bins, self.df_out_ch) + c0  # [B, T, F, O*2]
-        c = self.out_transform(c)
         return c, alpha
 
 
@@ -476,6 +470,11 @@ class DfNet(nn.Module):
             logger.warning("Runing without DF")
         self.train_mask = train_mask
         self.df_iter = p.df_n_iter
+        self.df_out_transform = (
+            DfOutputReshapeOld(self.df_order, self.df_bins)
+            if p.dfop_method == "real_unfold"
+            else DfOutputReshapeMF(self.df_order, self.df_bins)
+        )
 
     def forward(
         self,
@@ -492,6 +491,7 @@ class DfNet(nn.Module):
 
         spec = self.mask(spec, m)
         df_coefs, df_alpha = self.df_dec(emb, c0)
+        df_coefs = self.df_out_transform(df_coefs)
 
         if self.run_df:
             for _ in range(self.df_iter):

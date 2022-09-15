@@ -404,13 +404,8 @@ impl DfTract {
 
         let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
         if run_df {
-            let coefs = self
-                .df_dec
-                .run(tvec!(emb, c0))?
-                .pop()
-                .unwrap()
-                .into_tensor()
-                .into_shape(&[ch, self.df_order, self.nb_df, 2])?;
+            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
+            coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
             self.spec_buf.clone_from(spec);
             if apply_df {
                 df(
@@ -470,8 +465,8 @@ fn df(
     debug_assert_eq!(n_freqs, spec.back().unwrap().shape()[3]);
     debug_assert_eq!(n_freqs, spec_out.shape()[3]);
     debug_assert_eq!(ch, coefs.shape()[0]);
-    debug_assert_eq!(df_order, coefs.shape()[1]);
-    debug_assert_eq!(nb_df, coefs.shape()[2]);
+    debug_assert_eq!(nb_df, coefs.shape()[1]);
+    debug_assert_eq!(df_order, coefs.shape()[2]);
     debug_assert_eq!(ch, spec_out.shape()[0]);
     let mut o_f: ArrayViewMut2<Complex32> =
         as_array_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
@@ -479,7 +474,7 @@ fn df(
     // Zero relevant frequency bins of output
     o_f.slice_mut(s![.., ..nb_df]).fill(Complex32::default());
     let coefs_arr: ArrayView3<Complex32> =
-        as_arrayview_complex(coefs.to_array_view::<f32>()?, &[ch, df_order, nb_df])
+        as_arrayview_complex(coefs.to_array_view::<f32>()?, &[ch, nb_df, df_order])
             .into_dimensionality()?;
     // Transform spec to an complex array and iterate over time frames of spec and coefs
     let spec_iter = spec.iter().map(|s| {
@@ -488,7 +483,7 @@ fn df(
             .unwrap()
     });
     // Iterate over DF frames
-    for (s_f, c_f) in spec_iter.zip(coefs_arr.axis_iter(Axis(1))) {
+    for (s_f, c_f) in spec_iter.zip(coefs_arr.axis_iter(Axis(2))) {
         // Iterate over channels
         for (s_ch, c_ch, mut o_ch) in zip3(s_f.outer_iter(), c_f.outer_iter(), o_f.outer_iter_mut())
         {
@@ -505,7 +500,7 @@ fn init_encoder_impl(
     mut m: InferenceModel,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<TypedModel> {
+) -> Result<(TypedModel, usize)> {
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
