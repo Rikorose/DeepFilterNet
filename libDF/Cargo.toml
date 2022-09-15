@@ -67,6 +67,8 @@ tract = [
   "ndarray",
   "anyhow",
   "log",
+  "flate2",
+  "tar"
 ]
 
 [dependencies]
@@ -104,6 +106,8 @@ tract-core = { version = "^0.17.7", optional = true }
 tract-onnx = { version = "^0.17.7", optional = true }
 tract-pulse = { version = "^0.17.7", optional = true }
 tract-hir = { version = "^0.17.7", optional = true }
+flate2 = { version = "1.0.24", optional = true }
+tar = { version = "0.4.38", optional = true }
 
 [target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_env = "musl"), not(target_arch = "riscv64")))'.dependencies]
 jemallocator = { version = "0.5.0", optional = true }
