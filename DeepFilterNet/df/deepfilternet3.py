@@ -11,7 +11,7 @@ from df.modules import (
     ConvTranspose2dNormAct,
     GroupedLinearEinsum,
     Mask,
-    SqueezedGRU,
+    SqueezedGRU_S,
     erb_fb,
     get_device,
 )
@@ -46,6 +46,7 @@ class ModelParams(DfParams):
         self.emb_num_layers: int = config(
             "EMB_NUM_LAYERS", cast=int, default=2, section=self.section
         )
+        self.emb_gru_skip: str = config("EMB_GRU_SKIP", default="none", section=self.section)
         self.df_hidden_dim: int = config(
             "DF_HIDDEN_DIM", cast=int, default=256, section=self.section
         )
@@ -110,7 +111,8 @@ class Encoder(nn.Module):
         self.df_conv1 = conv_layer(fstride=2)
         self.erb_bins = p.nb_erb
         self.emb_in_dim = p.conv_ch * p.nb_erb // 4
-        self.emb_out_dim = p.emb_hidden_dim
+        self.emb_dim = p.emb_hidden_dim
+        self.emb_out_dim = p.conv_ch * p.nb_erb // 4
         df_fc_emb = GroupedLinearEinsum(
             p.conv_ch * p.nb_df // 2, self.emb_in_dim, groups=p.enc_lin_groups
         )
@@ -121,11 +123,13 @@ class Encoder(nn.Module):
         else:
             self.combine = Add()
         self.emb_n_layers = p.emb_num_layers
-        self.emb_gru = SqueezedGRU(
+        self.emb_gru = SqueezedGRU_S(
             self.emb_in_dim,
-            self.emb_out_dim,
+            self.emb_dim,
+            output_size=self.emb_out_dim,
             num_layers=1,
             batch_first=True,
+            gru_skip_op=None,
             linear_groups=p.lin_groups,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
@@ -161,19 +165,34 @@ class ErbDecoder(nn.Module):
         p = ModelParams()
         assert p.nb_erb % 8 == 0, "erb_bins should be divisible by 8"
 
-        self.emb_out_dim = p.emb_hidden_dim
+        self.emb_in_dim = p.conv_ch * p.nb_erb // 4
+        self.emb_dim = p.emb_hidden_dim
+        self.emb_out_dim = p.conv_ch * p.nb_erb // 4
 
-        self.emb_gru = SqueezedGRU(
-            self.emb_out_dim,
-            self.emb_out_dim,
-            output_size=p.conv_ch * p.nb_erb // 4,
+        if p.emb_gru_skip == "none":
+            skip_op = None
+        elif p.emb_gru_skip == "identity":
+            assert self.emb_in_dim == self.emb_out_dim, "Dimensions do not match"
+            skip_op = partial(nn.Identity)
+        elif p.emb_gru_skip == "groupedlinear":
+            skip_op = partial(
+                GroupedLinearEinsum,
+                input_size=self.emb_in_dim,
+                hidden_size=self.emb_out_dim,
+                groups=p.lin_groups,
+            )
+        else:
+            raise NotImplementedError()
+        self.emb_gru = SqueezedGRU_S(
+            self.emb_in_dim,
+            self.emb_dim,
+            output_size=self.emb_out_dim,
             num_layers=p.emb_num_layers - 1,
             batch_first=True,
-            gru_skip_op=nn.Identity,
+            gru_skip_op=skip_op,
             linear_groups=p.lin_groups,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
-        self.fc_emb = nn.Identity()
         tconv_layer = partial(
             ConvTranspose2dNormAct,
             kernel_size=p.conv_kernel,
@@ -201,7 +220,6 @@ class ErbDecoder(nn.Module):
         # Estimates erb mask
         b, _, t, f8 = e3.shape
         emb, _ = self.emb_gru(emb)
-        emb = self.fc_emb(emb)
         emb = emb.view(b, t, f8, -1).permute(0, 3, 1, 2)  # [B, C*8, T, F/8]
         e3 = self.convt3(self.conv3p(e3) + emb)  # [B, C*4, T, F/4]
         e2 = self.convt2(self.conv2p(e2) + e3)  # [B, C*2, T, F/2]
@@ -236,7 +254,9 @@ class DfDecoder(nn.Module):
         super().__init__()
         p = ModelParams()
         layer_width = p.conv_ch
-        self.emb_dim = p.emb_hidden_dim
+
+        self.emb_in_dim = p.conv_ch * p.nb_erb // 4
+        self.emb_dim = p.df_hidden_dim
 
         self.df_n_hidden = p.df_hidden_dim
         self.df_n_layers = p.df_num_layers
@@ -247,12 +267,13 @@ class DfDecoder(nn.Module):
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
         self.df_convp = conv_layer(layer_width, self.df_out_ch, fstride=1, kernel_size=(kt, 1))
-        self.df_gru = SqueezedGRU(
-            p.emb_hidden_dim,
-            p.df_hidden_dim,
+
+        self.df_gru = SqueezedGRU_S(
+            self.emb_in_dim,
+            self.emb_dim,
             num_layers=self.df_n_layers,
             batch_first=True,
-            gru_skip_op=nn.Identity,
+            gru_skip_op=None,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
         p.df_gru_skip = p.df_gru_skip.lower()
@@ -264,9 +285,7 @@ class DfDecoder(nn.Module):
             assert p.emb_hidden_dim == p.df_hidden_dim, "Dimensions do not match"
             self.df_skip = nn.Identity()
         elif p.df_gru_skip == "groupedlinear":
-            self.df_skip = GroupedLinearEinsum(
-                p.emb_hidden_dim, p.df_hidden_dim, groups=p.lin_groups
-            )
+            self.df_skip = GroupedLinearEinsum(self.emb_in_dim, self.emb_dim, groups=p.lin_groups)
         else:
             raise NotImplementedError()
         self.df_out: nn.Module
