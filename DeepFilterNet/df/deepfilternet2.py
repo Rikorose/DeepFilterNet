@@ -287,6 +287,12 @@ class DfOutputReshapeMF(nn.Module):
     def forward(self, coefs: Tensor) -> Tensor:
         # [B, T, F, O*2] -> [B, O, T, F, 2]
         coefs = coefs.unflatten(-1, (-1, 2)).permute(0, 3, 1, 2, 4)
+        # Onnx compatible version:
+        # new_shape = list(coefs.shape)
+        # new_shape[-1] = -1
+        # new_shape.append(2)
+        # coefs = coefs.view(new_shape)
+        # coefs = coefs.permute(0, 3, 1, 2, 4)
         return coefs
 
 
