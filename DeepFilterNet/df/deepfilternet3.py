@@ -120,7 +120,6 @@ class Encoder(nn.Module):
             self.combine = Concat()
         else:
             self.combine = Add()
-        self.emb_out_dim = p.emb_hidden_dim
         self.emb_n_layers = p.emb_num_layers
         self.emb_gru = SqueezedGRU(
             self.emb_in_dim,
