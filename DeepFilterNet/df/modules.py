@@ -697,6 +697,45 @@ class SqueezedGRU(nn.Module):
         return x, h
 
 
+class SqueezedGRU_S(nn.Module):
+    input_size: Final[int]
+    hidden_size: Final[int]
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        output_size: Optional[int] = None,
+        num_layers: int = 1,
+        linear_groups: int = 8,
+        batch_first: bool = True,
+        gru_skip_op: Optional[Callable[..., torch.nn.Module]] = None,
+        linear_act_layer: Callable[..., torch.nn.Module] = nn.Identity,
+    ):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.linear_in = nn.Sequential(
+            GroupedLinearEinsum(input_size, hidden_size, linear_groups), linear_act_layer()
+        )
+        self.gru = nn.GRU(hidden_size, hidden_size, num_layers=num_layers, batch_first=batch_first)
+        self.gru_skip = gru_skip_op() if gru_skip_op is not None else None
+        if output_size is not None:
+            self.linear_out = nn.Sequential(
+                GroupedLinearEinsum(hidden_size, output_size, linear_groups), linear_act_layer()
+            )
+        else:
+            self.linear_out = nn.Identity()
+
+    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+        x = self.linear_in(input)
+        x, h = self.gru(x, h)
+        x = self.linear_out(x)
+        if self.gru_skip is not None:
+            x = x + self.gru_skip(input)
+        return x, h
+
+
 class GroupedLinearEinsum(nn.Module):
     input_size: Final[int]
     hidden_size: Final[int]
@@ -733,6 +772,10 @@ class GroupedLinearEinsum(nn.Module):
         x = x.unsqueeze(-1).mul(self.weight.unsqueeze(0).unsqueeze(0)).sum(-2)
         x = x.flatten(2, 3)  # [B, T, H]
         return x
+
+    def __repr__(self):
+        cls = self.__class__.__name__
+        return f"{cls}(input_size: {self.input_size}, hidden_size: {self.hidden_size}, groups: {self.groups})"
 
 
 class GroupedLinear(nn.Module):
