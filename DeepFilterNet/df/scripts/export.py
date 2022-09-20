@@ -1,5 +1,6 @@
 import os
 import shutil
+import tarfile
 from copy import deepcopy
 from typing import Dict, Iterable, List, Tuple, Union
 
@@ -266,11 +267,18 @@ def main(args):
         check=args.check,
         simplify=args.simplify,
     )
-    if get_model_basedir(args.model_base_dir) != args.export_dir:
+    model_base_dir = get_model_basedir(args.model_base_dir)
+    if model_base_dir != args.export_dir:
         shutil.copyfile(
-            os.path.join(get_model_basedir(args.model_base_dir), "config.ini"),
+            os.path.join(model_base_dir, "config.ini"),
             os.path.join(args.export_dir, "config.ini"),
         )
+    tar_name = os.path.join(args.export_dir, os.path.basename(model_base_dir) + "_onnx.tar.gz")
+    with tarfile.open(tar_name, mode="w:gz") as f:
+        f.add(os.path.join(args.export_dir, "enc.onnx"))
+        f.add(os.path.join(args.export_dir, "erb_dec.onnx"))
+        f.add(os.path.join(args.export_dir, "df_dec.onnx"))
+        f.add(os.path.join(args.export_dir, "config.ini"))
 
 
 if __name__ == "__main__":
