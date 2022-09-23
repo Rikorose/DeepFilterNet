@@ -201,23 +201,22 @@ Iy you use this framework, please cite: *DeepFilterNet: A Low Complexity Speech 
 
 ```bibtex
 @inproceedings{schroeter2022deepfilternet,
-      title={DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering}, 
-      author={Hendrik Schröter and Alberto N. Escalante-B. and Tobias Rosenkranz and Andreas Maier},
-      booktitle={ICASSP 2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
-      year={2022},
-      organization={IEEE}
+  title={{DeepFilterNet}: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering}, 
+  author = {Schröter, Hendrik and Escalante-B., Alberto N. and Rosenkranz, Tobias and Maier, Andreas},
+  booktitle={ICASSP 2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  year={2022},
+  organization={IEEE}
 }
 ```
 
 If you use the DeepFilterNet2 model, please cite: *DeepFilterNet2: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio*
 
 ```bibtex
-@misc{schroeter2022deepfilternet2,
+@inproceedings{schroeter2022deepfilternet2,
   title = {{DeepFilterNet2}: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio},
   author = {Schröter, Hendrik and Escalante-B., Alberto N. and Rosenkranz, Tobias and Maier, Andreas},
-  publisher = {arXiv},
+  booktitle={17th International Workshop on Acoustic Signal Enhancement (IWAENC 2022)},
   year = {2022},
-  url = {https://arxiv.org/abs/2205.05474},
 }
 
 ```
