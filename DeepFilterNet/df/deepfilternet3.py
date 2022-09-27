@@ -298,7 +298,7 @@ class DfDecoder(nn.Module):
         b, t, _ = emb.shape
         c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
         if self.df_skip is not None:
-            c += self.df_skip(emb)
+            c = c + self.df_skip(emb)
         c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
         alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
