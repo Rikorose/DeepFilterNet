@@ -139,12 +139,12 @@ def export(
     path = os.path.join(export_dir, "deepfilternet2.onnx")
     input_names = ["spec", "feat_erb", "feat_spec"]
     dynamic_axes = {
-        "spec": {2: "time", 0: "batch_size"},
-        "feat_erb": {2: "time", 0: "batch_size"},
-        "feat_spec": {2: "time", 0: "batch_size"},
-        "enh": {2: "time", 0: "batch_size"},
-        "m": {2: "time", 0: "batch_size"},
-        "lsnr": {1: "time", 0: "batch_size"},
+        "spec": {2: "time"},
+        "feat_erb": {2: "time"},
+        "feat_spec": {2: "time"},
+        "enh": {2: "time"},
+        "m": {2: "time"},
+        "lsnr": {1: "time"},
     }
     inputs = (spec, feat_erb, feat_spec)
     output_names = ["enh", "m", "lsnr", "coefs"]
@@ -170,15 +170,15 @@ def export(
     inputs = (feat_erb, feat_spec)
     input_names = ["feat_erb", "feat_spec"]
     dynamic_axes = {
-        "feat_erb": {2: "time", 0: "batch_size"},
-        "feat_spec": {2: "time", 0: "batch_size"},
-        "e0": {2: "time", 0: "batch_size"},
-        "e1": {2: "time", 0: "batch_size"},
-        "e2": {2: "time", 0: "batch_size"},
-        "e3": {2: "time", 0: "batch_size"},
-        "emb": {1: "time", 0: "batch_size"},
-        "c0": {2: "time", 0: "batch_size"},
-        "lsnr": {1: "time", 0: "batch_size"},
+        "feat_erb": {2: "time"},
+        "feat_spec": {2: "time"},
+        "e0": {2: "time"},
+        "e1": {2: "time"},
+        "e2": {2: "time"},
+        "e3": {2: "time"},
+        "emb": {1: "time"},
+        "c0": {2: "time"},
+        "lsnr": {1: "time"},
     }
     output_names = ["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"]
     e0, e1, e2, e3, emb, c0, lsnr = export_impl(
@@ -199,12 +199,12 @@ def export(
     input_names = ["emb", "e3", "e2", "e1", "e0"]
     output_names = ["m"]
     dynamic_axes = {
-        "emb": {1: "time", 0: "batch_size"},
-        "e3": {2: "time", 0: "batch_size"},
-        "e2": {2: "time", 0: "batch_size"},
-        "e1": {2: "time", 0: "batch_size"},
-        "e0": {2: "time", 0: "batch_size"},
-        "m": {2: "time", 0: "batch_size"},
+        "emb": {1: "time"},
+        "e3": {2: "time"},
+        "e2": {2: "time"},
+        "e1": {2: "time"},
+        "e0": {2: "time"},
+        "m": {2: "time"},
     }
     path = os.path.join(export_dir, "erb_dec.onnx")
     m = export_impl(  # noqa
@@ -225,9 +225,9 @@ def export(
     input_names = ["emb", "c0"]
     output_names = ["coefs"]
     dynamic_axes = {
-        "emb": {1: "time", 0: "batch_size"},
-        "c0": {2: "time", 0: "batch_size"},
-        "coefs": {1: "time", 0: "batch_size"},
+        "emb": {1: "time"},
+        "c0": {2: "time"},
+        "coefs": {1: "time"},
     }
     path = os.path.join(export_dir, "df_dec.onnx")
     coefs = export_impl(  # noqa
