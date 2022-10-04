@@ -74,6 +74,8 @@ fn main() -> Result<()> {
     };
     let mut model: DfTract = DfTract::new(df_params.clone(), &r_params)?;
     let mut sr = model.sr;
+    // Compensate delay of model (first part) and delay of stft (last part)
+    let delay = model.lookahead * model.hop_size + (model.fft_size - model.hop_size);
     if !args.out_dir.is_dir() {
         log::info!("Creating output directory: {}", args.out_dir.display());
         std::fs::create_dir_all(args.out_dir.clone())?
@@ -110,6 +112,7 @@ fn main() -> Result<()> {
         );
         let mut enh_file = args.out_dir.clone();
         enh_file.push(file.file_name().unwrap());
+        enh.slice_axis_inplace(Axis(1), ndarray::Slice::from(delay..));
         write_wav_arr2(enh_file.to_str().unwrap(), enh.view(), sr as u32)?;
     }
 
