@@ -14,6 +14,7 @@ use tract_core::prelude::*;
 use tract_onnx::{prelude::*, tract_hir::shapefactoid};
 use tract_pulse::{internal::ToDim, model::*};
 
+use crate::transforms::find_max_abs;
 use crate::*;
 
 #[derive(Clone)]
@@ -121,6 +122,7 @@ pub struct DfTract {
     enc: TractModel,
     erb_dec: TractModel,
     df_dec: TractModel,
+    pub lookahead: usize,
     pub df_lookahead: usize,
     pub conv_lookahead: usize,
     pub sr: usize,
@@ -156,9 +158,9 @@ impl DfTract {
         let ch = rp.n_ch;
 
         let (enc, enc_delay) = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
-        let (erb_dec, erb_dec_delay) =
+        let (erb_dec, _erb_dec_delay) =
             init_erb_decoder_from_read(&mut Cursor::new(dfp.erb_dec), model_cfg, df_cfg, ch)?;
-        let (df_dec, df_dec_delay) =
+        let (df_dec, _df_dec_delay) =
             init_df_decoder_from_read(&mut Cursor::new(dfp.df_dec), model_cfg, df_cfg, ch)?;
         let enc = SimpleState::new(enc.into_runnable()?)?;
         let erb_dec = SimpleState::new(erb_dec.into_runnable()?)?;
@@ -176,13 +178,14 @@ impl DfTract {
             .get("df_order")
             .unwrap_or_else(|| model_cfg.get("df_order").unwrap())
             .parse::<usize>()?;
+        // TODO: Why do I need a minimum of `enc_delay` frames of delay here?
+        let conv_lookahead =
+            model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?.max(enc_delay);
+        // TODO: Why do I need a minimum of `df_dec_delay` frames of delay here?
         let df_lookahead = df_cfg
             .get("df_lookahead")
             .unwrap_or_else(|| model_cfg.get("df_lookahead").unwrap())
-            .parse::<usize>()?
-            .max(0);
-        // TODO: Why do I need 2 frames of delay here?
-        let conv_lookahead = model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?.max(2);
+            .parse::<usize>()?;
         let n_freqs = fft_size / 2 + 1;
         let alpha = if let Some(a) = df_cfg.get("norm_alpha") {
             a.parse::<f32>()?
@@ -219,6 +222,7 @@ impl DfTract {
             enc,
             erb_dec,
             df_dec,
+            lookahead,
             conv_lookahead,
             df_lookahead,
             sr,
@@ -258,7 +262,7 @@ impl DfTract {
         let ch = self.ch;
         let spec_shape = [ch, 1, 1, self.n_freqs, 2];
         self.rolling_spec_buf.clear();
-        for _ in 0..(self.df_order + self.df_lookahead + self.conv_lookahead) {
+        for _ in 0..(self.df_order + self.lookahead) {
             self.rolling_spec_buf
                 .push_front(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
@@ -279,24 +283,6 @@ impl DfTract {
         self.erb_buf = Tensor::zero::<f32>(&[ch, 1, 1, self.nb_erb])?;
         self.cplx_buf = Tensor::zero::<f32>(&[ch, 1, self.nb_df, 2])?;
 
-        // for _ in 0..(enc_delay.max(erb_dec_delay.max(df_dec_delay))) {
-        //     let mut enc_emb = self.enc.run(tvec!(
-        //         self.erb_buf.clone(),
-        //         self.cplx_buf.clone().permute_axes(&[0, 3, 1, 2])?
-        //     ))?;
-        //     dbg!(enc_emb.pop());
-        //     let c0 = enc_emb.pop().unwrap().into_tensor();
-        //     let cemb = enc_emb.pop().unwrap().into_tensor();
-        //     let e3 = enc_emb.pop().unwrap().into_tensor();
-        //     let e2 = enc_emb.pop().unwrap().into_tensor();
-        //     let e1 = enc_emb.pop().unwrap().into_tensor();
-        //     let e0 = enc_emb.pop().unwrap().into_tensor();
-
-        //     self.erb_dec.run(tvec!(cemb.clone(), e3, e2, e1, e0))?;
-
-        //     self.df_dec.run(tvec!(cemb.clone(), c0))?;
-        // }
-
         Ok(())
     }
 
@@ -307,6 +293,10 @@ impl DfTract {
         debug_assert_eq!(noisy.len_of(Axis(0)), enh.len_of(Axis(0)));
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
         debug_assert_eq!(noisy.len_of(Axis(1)), self.hop_size);
+        let max_a = find_max_abs(noisy.iter()).expect("NaN");
+        if max_a > 0.99 {
+            log::warn!("Possible clipping detected ({:.3}).", max_a)
+        }
 
         self.rolling_spec_buf.rotate_left(1);
         for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in zip5(
@@ -360,6 +350,11 @@ impl DfTract {
 
         let mut spec =
             self.rolling_spec_buf.get_mut(self.df_order - 1).unwrap().to_array_view_mut()?;
+        // let mut spec = self
+        //     .rolling_spec_buf
+        //     .get_mut(self.rolling_spec_buf.len() - 1 - self.lookahead)
+        //     .unwrap()
+        //     .to_array_view_mut()?;
         let mut m = if run_erb {
             let dec_input = tvec!(
                 emb.clone(),
@@ -525,7 +520,7 @@ fn init_encoder_impl(
     Ok((m, delay))
 }
 fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<(TypedModel, usize)> {
-    let m = tract_onnx::onnx().model_for_path(m)?;
+    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
     init_encoder_impl(m, df_cfg, n_ch)
 }
 
@@ -534,7 +529,7 @@ fn init_encoder_from_read(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
-    let m = tract_onnx::onnx().model_for_read(m)?;
+    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
     init_encoder_impl(m, df_cfg, n_ch)
 }
 
@@ -586,7 +581,7 @@ fn init_erb_decoder(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
-    let m = tract_onnx::onnx().model_for_path(m)?;
+    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
     init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
 fn init_erb_decoder_from_read(
@@ -595,7 +590,7 @@ fn init_erb_decoder_from_read(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
-    let m = tract_onnx::onnx().model_for_read(m)?;
+    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
     init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
 
@@ -639,7 +634,7 @@ fn init_df_decoder(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
-    let m = tract_onnx::onnx().model_for_path(m)?;
+    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
     init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
 fn init_df_decoder_from_read(
@@ -648,7 +643,7 @@ fn init_df_decoder_from_read(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
-    let m = tract_onnx::onnx().model_for_read(m)?;
+    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
     init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
 
