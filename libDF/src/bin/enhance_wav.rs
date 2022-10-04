@@ -67,15 +67,26 @@ fn main() -> Result<()> {
         args.max_db_df_thresh,
         args.reduce_mask.try_into().unwrap(),
     );
-    let df_params = if let Some(tar) = args.model {
-        DfParams::new(tar)?
+    let df_params = if let Some(tar) = args.model.as_ref() {
+        DfParams::new(tar.clone())?
     } else {
         DfParams::from_bytes(include_bytes!("../../../models/DeepFilterNet2_onnx.tar.gz"))?
     };
     let mut model: DfTract = DfTract::new(df_params.clone(), &r_params)?;
     let mut sr = model.sr;
+    // TODO: DeepFilterNet2 needs + 2, maybe due to df_dec pulse delay of 4?
     // Compensate delay of model (first part) and delay of stft (last part)
-    let delay = model.lookahead * model.hop_size + (model.fft_size - model.hop_size);
+    let extra_delay = if let Some(m) = args.model.as_ref() {
+        if m.to_str().unwrap().contains("DeepFilterNet2") {
+            2
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let delay = (model.lookahead + extra_delay) * model.hop_size + (model.fft_size - model.hop_size);
+    dbg!(model.lookahead, delay);
     if !args.out_dir.is_dir() {
         log::info!("Creating output directory: {}", args.out_dir.display());
         std::fs::create_dir_all(args.out_dir.clone())?
