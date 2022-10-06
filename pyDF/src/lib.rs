@@ -191,7 +191,7 @@ fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
     fn erb_inv<'py>(
         py: Python<'py>,
         input: PyReadonlyArrayDyn<f32>,
-        erb_fb: Vec<usize>,
+        erb_fb: PyReadonlyArray1<usize>,
     ) -> PyResult<&'py PyArrayDyn<f32>> {
         // Input shape [B, C, T, E]
         let indim = input.ndim();
@@ -224,10 +224,10 @@ fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
             .to_py_err()?
             .into_dimensionality()
             .to_py_err()?;
-        let freq_size = erb_fb.iter().sum();
+        let freq_size = erb_fb.as_array().sum();
         let mut output = Array4::zeros((bs, ch, t, freq_size));
         for (in_b, mut out_b) in input.outer_iter().zip(output.outer_iter_mut()) {
-            erb_inv_transform(&in_b, &mut out_b, &erb_fb).to_py_err()?;
+            erb_inv_transform(&in_b, &mut out_b, erb_fb.as_slice()?).to_py_err()?;
         }
         let output: ArrayD<f32> = match indim {
             2 => output
