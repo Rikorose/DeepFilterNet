@@ -28,7 +28,7 @@ def write_to_h5(
     dtype: str = "float32",
     codec: str = "pcm",
     mono: bool = False,
-    compression: str = None,
+    compression: Optional[int] = None,
     num_workers: int = 4,
 ):
     """Creates a HDF5 dataset based on the provided dict.
