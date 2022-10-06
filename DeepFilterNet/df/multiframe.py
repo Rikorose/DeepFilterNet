@@ -240,7 +240,7 @@ class MfWf(MultiFrameModule):
         iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        w = torch.einsum("...nm,...m->...n", iRxx, ifc)  # [B, C, F, N]
+        w = torch.einsum("...nm,...m->...n", iRxx, ifc).unsqueeze(1)  # [B, 1, F, N]
         spec_f = self.apply_coefs(spec_f, w)
         if self.training:
             spec = spec.clone()
@@ -273,7 +273,7 @@ class MfMvdr(MultiFrameModule):
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         numerator = torch.einsum("...nm,...m->...n", iRnn, ifc)  # [B, C, F, N]
         denumerator = torch.einsum("...n,...n->...", ifc.conj(), numerator)
-        w = numerator / (denumerator.real.unsqueeze(-1) + self.eps)
+        w = (numerator / (denumerator.real.unsqueeze(-1) + self.eps)).unsqueeze(1)
         spec_f = self.apply_coefs(spec_f, w)
         if self.training:
             spec = spec.clone()
