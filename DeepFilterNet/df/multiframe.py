@@ -1,5 +1,4 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Final, List
+from typing import Final, List
 
 import torch
 import torch.nn.functional as F
@@ -21,7 +20,9 @@ def as_windowed(x: Tensor, window_length: int, step: int = 1, dim: int = 1) -> T
     """
     shape: List[int] = list(x.shape)
     stride: List[int] = list(x.stride())
-    shape[dim] = torch.div(shape[dim] - window_length + step, step, rounding_mode="trunc")
+    # stride: List[int] = [x.stride(i) for i in range(len(shape))]
+    # shape[dim] = torch.div(shape[dim] - window_length + step, step, rounding_mode="trunc")
+    shape[dim] = int(shape[dim] - window_length + step / step)
     if dim > 0:
         shape.insert(dim + 1, window_length)
         stride.insert(dim + 1, stride[dim])
@@ -36,7 +37,7 @@ def as_windowed(x: Tensor, window_length: int, step: int = 1, dim: int = 1) -> T
     return x.as_strided(shape, stride)
 
 
-class MultiFrameModule(nn.Module, ABC):
+class MultiFrameModule(nn.Module):
     """Multi-frame speech enhancement modules.
 
     Signal model and notation:
@@ -76,7 +77,9 @@ class MultiFrameModule(nn.Module, ABC):
 
     def spec_unfold_real(self, spec: Tensor):
         if self.need_unfold:
-            return as_windowed(self.pad_real(spec), self.frame_size, 1, dim=-3)
+            spec = self.pad(spec).unfold(-3, self.frame_size, 1)
+            return spec.permute(0, 1, 5, 2, 3, 4)
+            # return as_windowed(self.pad(spec), self.frame_size, 1, dim=-3)
         return spec.unsqueeze(-1)
 
     def spec_unfold(self, spec: Tensor):
@@ -91,28 +94,6 @@ class MultiFrameModule(nn.Module, ABC):
             return self.pad(spec).unfold(2, self.frame_size, 1)
         return spec.unsqueeze(-1)
 
-    def forward(self, spec: Tensor, coefs: Tensor):
-        """Pads and unfolds the spectrogram and forwards to impl.
-
-        Args:
-            spec (Tensor): Spectrogram of shape [B, C, T, F, 2]
-            coefs (Tensor): Spectrogram of shape [B, C, T, F, 2]
-        """
-        if self.real:
-            spec_u = self.spec_unfold_real(spec)
-        else:
-            spec_u = self.spec_unfold(torch.view_as_complex(spec))
-            coefs = torch.view_as_complex(coefs)
-        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        spec_f = self.forward_impl(spec_f, coefs)
-        if self.training:
-            spec = spec.clone()
-        if self.real:
-            spec[..., : self.num_freqs, :] = spec_f
-        else:
-            spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
-        return spec
-
     @staticmethod
     def solve(Rxx, rss, diag_eps: float = 1e-8, eps: float = 1e-7) -> Tensor:
         return torch.einsum(
@@ -124,28 +105,6 @@ class MultiFrameModule(nn.Module, ABC):
         # spec: [B, C, T, F, N]
         # coefs: [B, C, T, F, N]
         return torch.einsum("...n,...n->...", spec, coefs)
-
-    @abstractmethod
-    def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        """Forward impl taking complex spectrogram and coefficients.
-
-        Args:
-            spec (complex Tensor): Spectrogram of shape [B, C1, T, F, N]
-            coefs (complex Tensor): Coefficients [B, C2, T, F]
-
-        Returns:
-            spec (complex Tensor): Enhanced spectrogram of shape [B, C1, T, F]
-        """
-        ...
-
-    @abstractmethod
-    def num_channels(self) -> int:
-        """Return the number of required channels.
-
-        If multiple inputs are required, then all these should be combined in one Tensor containing
-        the summed channels.
-        """
-        ...
 
 
 def psd(x: Tensor, n: int) -> Tensor:
@@ -198,6 +157,29 @@ def df_real(spec: Tensor, coefs: Tensor) -> Tensor:
     return out
 
 
+class DF(MultiFrameModule):
+    """Deep Filtering."""
+
+    conj: Final[bool]
+
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
+        super().__init__(num_freqs, frame_size, lookahead)
+        self.conj = conj
+
+    def forward(self, spec: Tensor, coefs: Tensor):
+        spec_u = self.spec_unfold(torch.view_as_complex(spec))
+        coefs = torch.view_as_complex(coefs)
+        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
+        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
+        if self.conj:
+            coefs = coefs.conj()
+        spec_f = df(spec_f, coefs)
+        if self.training:
+            spec = spec.clone()
+        spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
+        return spec
+
+
 class DFreal(MultiFrameModule):
     """Deep Filtering."""
 
@@ -207,14 +189,22 @@ class DFreal(MultiFrameModule):
         super().__init__(num_freqs, frame_size, lookahead, real=True)
         self.conj = conj
 
-    def forward_impl(self, spec: Tensor, coefs: Tensor):
-        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
+    def forward(self, spec: Tensor, coefs: Tensor):
+        """Pads and unfolds the spectrogram and applies deep filtering using only real valued types.
+
+        Args:
+            spec (Tensor): Spectrogram of shape [B, C, T, F, 2]
+            coefs (Tensor): Spectrogram of shape [B, C, T, F, 2]
+        """
+        spec_u = self.spec_unfold_real(spec)
+        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
+        new_shape = [coefs.shape[0], -1, self.frame_size] + list(coefs.shape[2:])
+        coefs = coefs.view(new_shape)
         if self.conj:
             coefs = coefs.conj()
-        return df_real(spec, coefs)
-
-    def num_channels(self):
-        return self.frame_size * 2
+        spec_f = df_real(spec_f, coefs)
+        spec[..., : self.num_freqs, :] = spec_f
+        return spec
 
 
 class CRM(MultiFrameModule):
@@ -227,196 +217,68 @@ class CRM(MultiFrameModule):
     def forward_impl(self, spec: Tensor, coefs: Tensor):
         return spec.squeeze(-1).mul(coefs)
 
-    def num_channels(self):
-        return 2
-
-
-class DF(MultiFrameModule):
-    """Deep Filtering."""
-
-    conj: Final[bool]
-
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
-        super().__init__(num_freqs, frame_size, lookahead)
-        self.conj = conj
-
-    def forward_impl(self, spec: Tensor, coefs: Tensor):
-        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
-        if self.conj:
-            coefs = coefs.conj()
-        return df(spec, coefs)
-
-    def num_channels(self):
-        return self.frame_size * 2
-
 
 class MfWf(MultiFrameModule):
     """Multi-frame Wiener filter base module."""
 
     def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
-        """Multi-frame Wiener Filter.
+        """Multi-frame Wiener Filter via an estimate of the inverse"""
+        super().__init__(num_freqs, frame_size, lookahead=lookahead)
 
-        Several implementation methods are available resulting in different number of required input
-        coefficient channels.
-
-        Methods:
-            psd_ifc: Predict PSD `Rxx` and IFC `rss`.
-            df: Use deep filtering to predict speech and noisy spectrograms. These will be used for
-                PSD calculation for Wiener filtering. Alias: `df_sx`
-            c: Directly predict Wiener filter coefficients. Computation same as deep filtering.
-
-        """
-        super().__init__(num_freqs, frame_size, lookahead=0)
-        self.idx = -lookahead
-
-    def num_channels(self):
-        return self.num_channels
-
-    @abstractmethod
-    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        """Multi-frame Wiener filter impl taking complex spectrogram and coefficients.
-
-        Coefficients may be split into multiple parts w.g. for multiple DF coefs or PSDs.
+    def forward(self, spec: Tensor, ifc: Tensor, iRxx: Tensor) -> Tensor:
+        """Multi-frame Wiener filter based on Rxx**-1 and speech IFC vector.
 
         Args:
-            spec (complex Tensor): Spectrogram of shape [B, C1, T, F, N]
-            coefs (complex Tensor): Coefficients [B, C2, T, F]
+            spec (complex Tensor): Spectrogram of shape [B, 1, T, F]
+            ifc (complex Tensor): Inter-frame speech correlation vector [B, T, F, N*2]
+            iRxx (complex Tensor): Inverse noisy covariance matrix Rxx**-1 [B, T, F, (N**2)*2]
 
         Returns:
-            c (complex Tensor): MfWf coefs of shape [B, C1, T, F, N]
+            spec (complex Tensor): Filtered spectrogram of shape [B, C, T, F]
         """
-        ...
-
-    def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        coefs = self.mfwf(spec, coefs)
-        return self.apply_coefs(spec, coefs)
-
-
-class MfWfDf(MfWf):
-    eps_diag: Final[float]
-
-    def __init__(
-        self,
-        num_freqs: int,
-        frame_size: int,
-        lookahead: int = 0,
-        eps_diag: float = 1e-7,
-        eps: float = 1e-7,
-    ):
-        super().__init__(num_freqs, frame_size, lookahead)
-        self.eps_diag = eps_diag
-        self.eps = eps
-
-    def num_channels(self):
-        # frame_size/df_order * 2 (x/s) * 2 (re/im)
-        return self.frame_size * 4
-
-    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        coefs.chunk
-        df_s, df_x = torch.chunk(coefs, 2, 1)  # [B, C, T, F, N]
-        df_s = df_s.unflatten(1, (-1, self.frame_size))
-        df_x = df_x.unflatten(1, (-1, self.frame_size))
-        spec_s = df(spec, df_s)  # [B, C, T, F]
-        spec_x = df(spec, df_x)
-        Rss = psd(spec_s, self.frame_size)  # [B, C, T, F, N. N]
-        Rxx = psd(spec_x, self.frame_size)
-        rss = Rss[..., -1]  # TODO: use -1 or self.idx?
-        c = self.solve(Rxx, rss, self.eps_diag, self.eps)  # [B, C, T, F, N]
-        return c
-
-
-class MfWfPsd(MfWf):
-    """Multi-frame Wiener filter by predicting noisy PSD `Rxx` and speech IFC `rss`."""
-
-    def num_channels(self):
-        # (Rxx + rss) * 2 (re/im)
-        return (self.frame_size**2 + self.frame_size) * 2
-
-    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:  # type: ignore
-        Rxx, rss = torch.split(coefs.movedim(1, -1), [self.frame_size**2, self.frame_size], -1)
-        c = self.solve(Rxx.unflatten(-1, (self.frame_size, self.frame_size)), rss)
-        return c
-
-
-class MfWfC(MfWf):
-    """Multi-frame Wiener filter by directly predicting the MfWf coefficients."""
-
-    def num_channels(self):
-        # mfwf coefs * 2 (re/im)
-        return self.frame_size * 2
-
-    def mfwf(self, spec: Tensor, coefs: Tensor) -> Tensor:  # type: ignore
-        coefs = coefs.unflatten(1, (-1, self.frame_size)).permute(
-            0, 1, 3, 4, 2
-        )  # [B, C*N, T, F] -> [B, C, T, F, N]
-        return coefs
+        spec_u = self.spec_unfold(torch.view_as_complex(spec))
+        iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
+        ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
+        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
+        w = torch.einsum("...nm,...m->...n", iRxx, ifc)  # [B, C, F, N]
+        spec_f = self.apply_coefs(spec_f, w)
+        if self.training:
+            spec = spec.clone()
+        spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
+        return spec
 
 
 class MfMvdr(MultiFrameModule):
-    """Multi-frame minimum variance distortionless beamformer."""
+    """Multi-frame minimum variance distortionless beamformer based on Rnn**-1 and speech IFC vector."""
 
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
-        """Multi-frame minimum variance distortionless beamformer.
+    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, eps: float = 1e-8):
+        """Multi-frame minimum variance distortionless beamformer."""
+        super().__init__(num_freqs, frame_size, lookahead=lookahead)
+        self.eps = eps
 
-        Several implementation methods are available resulting in different number of required input
-        coefficient channels. Mostly based on torchaudio's MVDR implementations.
-
-        Methods:
-            mvdr_evd: Estimate the steering vector (RTF) based on eigen value decomposition (evd) of Rss.
-            mvdr_rtf_power: Estimate the RTF based using the power method using Rss and Rnn.
-            mvdr_souden: Estimate coefs based on Rss and Rnn using the Souden method.
-        """
-        super().__init__(num_freqs, frame_size, lookahead=0)
-        self.idx = -lookahead
-
-    def num_channels(self):
-        return self.num_channels
-
-    @abstractmethod
-    def mvdr(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        """Minimum variance distortionless beamformer impl taking complex spectrogram and coefficients.
-
-        Coefficients may be split into multiple parts w.g. for multiple DF coefs or PSDs.
+    def forward(self, spec: Tensor, ifc: Tensor, iRnn: Tensor) -> Tensor:
+        """Multi-frame MVDR filter based on Rnn**-1 and speech IFC vector.
 
         Args:
-            spec (complex Tensor): Spectrogram of shape [B, C1, T, F, N]
-            coefs (complex Tensor): Coefficients [B, C2, T, F]
+            spec (complex Tensor): Spectrogram of shape [B, C, T, F]
+            ifc (complex Tensor): Inter-frame speech correlation vector [B, C*N*2, T, F]
+            iRnn (complex Tensor): Inverse noise covariance matrix Rnn**-1 [B, C*(N**2)*2, T, F]
 
         Returns:
-            c (complex Tensor): MfWf coefs of shape [B, C1, T, F, N]
+            spec (complex Tensor): Filtered spectrogram of shape [B, C, T, F]
         """
-        ...
-
-    def forward_impl(self, spec: Tensor, coefs: Tensor) -> Tensor:
-        coefs = self.mvdr(spec, coefs)
-        return self.apply_coefs(spec, coefs)
-
-
-class MvdrSouden(MultiFrameModule):
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
-        super().__init__(num_freqs, frame_size, lookahead)
-
-
-class MvdrEvd(MultiFrameModule):
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
-        super().__init__(num_freqs, frame_size, lookahead)
-
-
-class MvdrRtfPower(MultiFrameModule):
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0):
-        super().__init__(num_freqs, frame_size, lookahead)
-
-
-MF_METHODS: Dict[str, MultiFrameModule] = {  # type: ignore
-    "crm": CRM,
-    "df": DF,
-    "df_real": DFreal,
-    "mfwf_df": MfWfDf,
-    "mfwf_df_sx": MfWfDf,
-    "mfwf_psd": MfWfPsd,
-    "mfwf_psd_ifc": MfWfPsd,
-    "mfwf_c": MfWfC,
-}
+        spec_u = self.spec_unfold(torch.view_as_complex(spec))
+        iRnn = torch.view_as_complex(iRnn.unflatten(3, (self.frame_size, self.frame_size, 2)))
+        ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
+        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
+        numerator = torch.einsum("...nm,...m->...n", iRnn, ifc)  # [B, C, F, N]
+        denumerator = torch.einsum("...n,...n->...", ifc.conj(), numerator)
+        w = numerator / (denumerator.real.unsqueeze(-1) + self.eps)
+        spec_f = self.apply_coefs(spec_f, w)
+        if self.training:
+            spec = spec.clone()
+        spec[..., : self.num_freqs, :] = torch.view_as_real(spec_f)
+        return spec
 
 
 # From torchaudio

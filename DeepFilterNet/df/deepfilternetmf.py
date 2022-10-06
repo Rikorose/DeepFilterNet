@@ -61,6 +61,9 @@ class ModelParams(DfParams):
         self.enc_lin_groups: int = config(
             "ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section
         )
+        self.mfop_method: str = config(
+            "MFOP_METHOD", cast=str, default="WF", section=self.section
+        ).upper()
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
 
@@ -227,28 +230,10 @@ class ErbDecoder(nn.Module):
         return m
 
 
-class DfOutputReshapeMF(nn.Module):
-    """Coefficients output reshape for multiframe/MultiFrameModule
-
-    Requires input of shape B, C, T, F, 2.
-    """
-
-    def __init__(self, df_order: int, df_bins: int):
-        super().__init__()
-        self.df_order = df_order
-        self.df_bins = df_bins
-
-    def forward(self, coefs: Tensor) -> Tensor:
-        # [B, T, F, O*2] -> [B, O, T, F, 2]
-        new_shape = list(coefs.shape)
-        new_shape[-1] = -1
-        new_shape.append(2)
-        coefs = coefs.view(new_shape)
-        coefs = coefs.permute(0, 3, 1, 2, 4)
-        return coefs
-
-
 class DfDecoder(nn.Module):
+    """This model predicts the inverse noise/noisy covariance matrix and the speech intra-frame
+    correlation (IFC) vector for usage in an MfWf or MfMvdr filter."""
+
     def __init__(self):
         super().__init__()
         p = ModelParams()
@@ -261,11 +246,13 @@ class DfDecoder(nn.Module):
         self.df_n_layers = p.df_num_layers
         self.df_order = p.df_order
         self.df_bins = p.nb_df
-        self.df_out_ch = p.df_order * 2
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
-        self.df_convp = conv_layer(layer_width, self.df_out_ch, fstride=1, kernel_size=(kt, 1))
+        self.cov_convp = conv_layer(
+            layer_width, p.df_order**2 * 2, fstride=1, kernel_size=(kt, 1)
+        )
+        self.ifc_convp = conv_layer(layer_width, p.df_order * 2, fstride=1, kernel_size=(kt, 1))
 
         self.df_gru = SqueezedGRU_S(
             self.emb_in_dim,
@@ -287,26 +274,27 @@ class DfDecoder(nn.Module):
             self.df_skip = GroupedLinearEinsum(self.emb_in_dim, self.emb_dim, groups=p.lin_groups)
         else:
             raise NotImplementedError()
-        self.df_out: nn.Module
-        out_dim = self.df_bins * self.df_out_ch
-        df_out = GroupedLinearEinsum(self.df_n_hidden, out_dim, groups=p.lin_groups)
-        self.df_out = nn.Sequential(df_out, nn.Tanh())
-        self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
+        cov_out_dim = self.df_bins * p.df_order**2 * 2
+        ifc_out_dim = self.df_bins * p.df_order * 2
+        self.cov_out = GroupedLinearEinsum(self.df_n_hidden, cov_out_dim, groups=p.lin_groups)
+        self.ifc_out = GroupedLinearEinsum(self.df_n_hidden, ifc_out_dim, groups=p.lin_groups)
 
     def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
         c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
         if self.df_skip is not None:
             c = c + self.df_skip(emb)
-        c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
-        alpha = self.df_fc_a(c)  # [B, T, 1]
-        c = self.df_out(c)  # [B, T, F*O*2], O: df_order
-        c = c.view(b, t, self.df_bins, self.df_out_ch) + c0  # [B, T, F, O*2]
-        return c, alpha
+        c0_ifc = self.ifc_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
+        c0_cov = self.cov_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O**2*2], channels_last
+        c_ifc = self.ifc_out(c)  # [B, T, F*O*2], O: df_order
+        c_cov = self.cov_out(c)  # [B, T, F*O**2*2], O: df_order
+        ifc = c_ifc.view(b, t, self.df_bins, self.df_order * 2) + c0_ifc  # [B, T, F, O*2]
+        cov = c_cov.view(b, t, self.df_bins, self.df_order**2 * 2) + c0_cov  # [B, T, F, O**2*2]
+        return ifc, cov
 
 
 class DfNet(nn.Module):
-    run_df: Final[bool]
+    run_mff: Final[bool]
 
     def __init__(
         self,
@@ -339,13 +327,20 @@ class DfNet(nn.Module):
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
         self.df_order = p.df_order
-        self.df_op = MF.DF(num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead)
+        assert p.mfop_method in ("WF", "MVDR")
+        if p.mfop_method == "WF":
+            self.mf_op = MF.MfWf(
+                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead
+            )
+        else:  # MVDR
+            self.mf_op = MF.MfMvdr(
+                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead
+            )
         self.df_dec = DfDecoder()
-        self.df_out_transform = DfOutputReshapeMF(self.df_order, p.nb_df)
 
-        self.run_df = run_df
+        self.run_mff = run_df
         if not run_df:
-            logger.warning("Runing without DF")
+            logger.warning("Runing without multi-frame filtering")
         self.train_mask = train_mask
         assert p.df_n_iter == 1
 
@@ -376,13 +371,15 @@ class DfNet(nn.Module):
 
         spec_m = self.mask(spec, m)
 
-        if self.run_df:
-            df_coefs, _ = self.df_dec(emb, c0)
-            df_coefs = self.df_out_transform(df_coefs)
-            spec = self.df_op(spec, df_coefs)
+        if self.run_mff:
+            # ifc: speech intra-frame correlation vector
+            # cov: correlation matrix of either noise (MVDR), or noisy (WF) signal
+            ifc, cov = self.df_dec(emb, c0)
+            spec = self.mf_op(spec, ifc, cov)
             spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
+            coefs = torch.cat((ifc, cov), dim=-1)
         else:
-            df_coefs = torch.zeros((), device=spec.device)
+            coefs = torch.zeros((), device=spec.device)
             spec = spec_m
 
-        return spec, m, lsnr, df_coefs
+        return spec, m, lsnr, coefs
