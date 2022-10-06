@@ -85,7 +85,8 @@ fn main() -> Result<()> {
     } else {
         0
     };
-    let delay = (model.lookahead + extra_delay) * model.hop_size + (model.fft_size - model.hop_size);
+    let delay =
+        (model.lookahead + extra_delay) * model.hop_size + (model.fft_size - model.hop_size);
     dbg!(model.lookahead, delay);
     if !args.out_dir.is_dir() {
         log::info!("Creating output directory: {}", args.out_dir.display());
