@@ -5,6 +5,7 @@ import torch
 from loguru import logger
 from torch import Tensor, nn
 
+import df.multiframe as MF
 from df.config import Csv, DfParams, config
 from df.logger import log_deprecated
 from df.modules import (
@@ -19,7 +20,6 @@ from df.modules import (
     erb_fb,
     get_device,
 )
-from df.multiframe import MF_METHODS, MultiFrameModule
 from libdf import DF
 
 
@@ -297,7 +297,7 @@ class DfOutputReshapeMF(nn.Module):
 
 
 class DfDecoder(nn.Module):
-    def __init__(self, out_channels: int = -1):
+    def __init__(self):
         super().__init__()
         p = ModelParams()
         layer_width = p.conv_ch
@@ -309,7 +309,7 @@ class DfDecoder(nn.Module):
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
         self.gru_groups = p.gru_groups
-        self.df_out_ch = out_channels if out_channels > 0 else p.df_order * 2
+        self.df_out_ch = p.df_order * 2
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
@@ -448,7 +448,7 @@ class DfNet(nn.Module):
         self.df_order = p.df_order
         self.df_bins = p.nb_df
         self.df_lookahead = p.df_lookahead
-        self.df_op: Union[DfOp, MultiFrameModule]
+        self.df_op: Union[DfOp, MF.MultiFrameModule]
         if p.dfop_method == "real_unfold":
             self.df_op = DfOp(
                 p.nb_df,
@@ -457,19 +457,15 @@ class DfNet(nn.Module):
                 freq_bins=self.freq_bins,
                 method=p.dfop_method,
             )
-            n_ch_out = p.df_order * 2
             self.use_alpha = True
         else:
             assert p.df_output_layer != "linear", "Must be used with `groupedlinear`"
-            self.df_op = MF_METHODS[p.dfop_method](
-                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=p.df_lookahead
-            )
-            n_ch_out = self.df_op.num_channels()
+            self.df_op = MF.DF(num_freqs=p.nb_df, frame_size=p.df_order, lookahead=p.df_lookahead)
             self.use_alpha = False
         if p.df_output_layer == "linear":
             self.df_dec = DfDecoderLinear()
         else:
-            self.df_dec = DfDecoder(out_channels=n_ch_out)
+            self.df_dec = DfDecoder()
 
         self.run_df = run_df
         if not run_df:
