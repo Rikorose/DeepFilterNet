@@ -237,8 +237,8 @@ class MfWf(MultiFrameModule):
             spec (complex Tensor): Filtered spectrogram of shape [B, C, T, F]
         """
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
-        iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
+        iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         w = torch.einsum("...nm,...m->...n", iRxx, ifc).unsqueeze(1)  # [B, 1, F, N]
         spec_f = self.apply_coefs(spec_f, w)
@@ -251,10 +251,21 @@ class MfWf(MultiFrameModule):
 class MfMvdr(MultiFrameModule):
     """Multi-frame minimum variance distortionless beamformer based on Rnn**-1 and speech IFC vector."""
 
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, eps: float = 1e-8):
+    eps: Final[float]
+    normlize_ifc: Final[bool]
+
+    def __init__(
+        self,
+        num_freqs: int,
+        frame_size: int,
+        lookahead: int = 0,
+        eps: float = 1e-8,
+        normalize_ifc: bool = True,
+    ):
         """Multi-frame minimum variance distortionless beamformer."""
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
         self.eps = eps
+        self.normalize_ifc = normalize_ifc
 
     def forward(self, spec: Tensor, ifc: Tensor, iRnn: Tensor) -> Tensor:
         """Multi-frame MVDR filter based on Rnn**-1 and speech IFC vector.
@@ -270,6 +281,10 @@ class MfMvdr(MultiFrameModule):
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         iRnn = torch.view_as_complex(iRnn.unflatten(3, (self.frame_size, self.frame_size, 2)))
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
+        if self.normalize_ifc:
+            ifc0 = ifc[..., -1]
+            ifc0[:, 0] = 1
+            ifc = ifc / (ifc0.unsqueeze(-1) + self.eps)
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         numerator = torch.einsum("...nm,...m->...n", iRnn, ifc)  # [B, C, F, N]
         denumerator = torch.einsum("...n,...n->...", ifc.conj(), numerator)
@@ -318,3 +333,121 @@ def _tik_reg(mat: torch.Tensor, reg: float = 1e-7, eps: float = 1e-8) -> torch.T
     epsilon = epsilon + eps
     mat = mat + epsilon * eye[..., :, :]
     return mat
+
+
+def compute_cov(X: Tensor, N: int):
+    Xw = F.pad(X, (0, 0, N - 1, 0)).unfold(1, N, 1)
+    Rxx = torch.einsum("...n,...m->...mn", Xw, Xw.conj())
+    return Rxx
+
+
+def compute_ideal_wf():
+    from icecream import install
+
+    import libdf
+    from df.config import config
+    from df.io import load_audio, save_audio
+    from df.model import ModelParams
+
+    ORDER = 5
+    DLOAD = 1e-9
+    EPS = 1e-8
+
+    install()
+
+    config.use_defaults()
+    p = ModelParams()
+    df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
+    s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
+        0, keepdim=True
+    )
+    n = load_audio("assets/noise_freesound_2530.wav", p.sr, num_frames=5 * p.sr)[0].mean(
+        0, keepdim=True
+    )
+    x = s + n
+    save_audio("out/noisy.wav", x, p.sr)
+
+    wf = MfWf(p.fft_size // 2 + 1, ORDER)
+
+    X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
+    Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
+    Rss, Rnn = [compute_cov(X, ORDER) for X in (S, N)]
+    ifc = Rss[..., -1]
+    Rnn = _tik_reg(Rnn, DLOAD, EPS)
+    Rxx = Rss + Rnn  # Adding these is a lot better compared to estimating Rxx from X
+    R_inv = torch.inverse(Rxx)
+    # Manual way
+    w = torch.einsum("...nm,...m->...n", R_inv, ifc)
+    Y = torch.einsum("...fn,...fn->...f", Xw, w)
+    # Using torch module (which expects real valued flattened input)
+    Y = torch.view_as_complex(
+        wf(
+            torch.view_as_real(X).unsqueeze(1),
+            torch.view_as_real(ifc).flatten(3),
+            torch.view_as_real(R_inv).flatten(3),
+        ).squeeze(1)
+    )
+    y = df.synthesis(Y.numpy())
+    save_audio("out/ideal_mfwf.wav", y, p.sr)
+
+
+def compute_ideal_mvdr():
+    from icecream import install
+
+    import libdf
+    from df.config import config
+    from df.io import load_audio, save_audio
+    from df.model import ModelParams
+
+    ORDER = 5
+    DLOAD = 1e-9
+    EPS = 1e-8
+
+    install()
+
+    config.use_defaults()
+    p = ModelParams()
+    df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
+    s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
+        0, keepdim=True
+    )
+    n = load_audio("assets/noise_freesound_2530.wav", p.sr, num_frames=5 * p.sr)[0].mean(
+        0, keepdim=True
+    )
+    x = s + n
+    save_audio("out/noisy.wav", x, p.sr)
+
+    mvdr = MfMvdr(p.fft_size // 2 + 1, ORDER)
+
+    X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
+    Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
+    Rss, Rnn = [compute_cov(x, ORDER) for x in (S, N)]
+
+    # A: Normalized IFC
+    ifc = Rss[..., -1]
+    ifc0 = ifc[..., -1]
+    ifc0[:, 0] = 1
+    ifc = ifc / (ifc0.unsqueeze(-1) + EPS)
+
+    # B: IFC via EVD
+    _, v = torch.linalg.eigh(Rss)
+    ifc = v[..., -1]  # Choose highest eigenvector
+
+    Rnn = _tik_reg(Rnn, DLOAD, EPS)
+    R_inv = torch.inverse(Rnn)
+    # Manual way
+    num = torch.linalg.solve(Rnn, ifc)
+    # num = torch.einsum("...nm,...m->...n", R_inv, ifc)
+    denum = torch.einsum("...n,...n->...", ifc.conj(), num)
+    w = num / (denum.unsqueeze(-1) + EPS)
+    Y = torch.einsum("...fn,...fn->...f", Xw, w)
+    # Using torch module (which expects real valued flattened input)
+    Y = torch.view_as_complex(
+        mvdr(
+            torch.view_as_real(X).unsqueeze(1),
+            torch.view_as_real(ifc).flatten(3),
+            torch.view_as_real(R_inv).flatten(3),
+        ).squeeze(1)
+    )
+    y = df.synthesis(Y.numpy())
+    save_audio("out/ideal_mfmvdr.wav", y, p.sr)
