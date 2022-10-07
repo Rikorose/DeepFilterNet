@@ -25,44 +25,37 @@ pub struct DfParams {
     df_dec: Vec<u8>,
 }
 
-fn extract_targz<R: Read>(f: R) -> Result<(Ini, Vec<u8>, Vec<u8>, Vec<u8>)> {
-    let tar = GzDecoder::new(f);
-    let mut archive = Archive::new(tar);
-    let mut enc = Vec::new();
-    let mut erb_dec = Vec::new();
-    let mut df_dec = Vec::new();
-    let mut cfg = Ini::new();
-    for e in archive.entries().context("Could not extract models from tar file.")? {
-        let mut file = e.context("Could not open model tar entry.")?;
-        let path = file.path().unwrap();
-        if path.ends_with("enc.onnx") {
-            file.read_to_end(&mut enc)?;
-        } else if path.ends_with("erb_dec.onnx") {
-            file.read_to_end(&mut erb_dec)?;
-        } else if path.ends_with("df_dec.onnx") {
-            file.read_to_end(&mut df_dec)?;
-        } else if path.ends_with("config.ini") {
-            cfg = Ini::read_from(&mut file).context("Could not load config from tar file.")?;
-        } else {
-            log::warn!("Found non-matching item in model tar file: {:?}", path)
-        }
-    }
-    Ok((cfg, enc, erb_dec, df_dec))
-}
-
 impl DfParams {
     pub fn new(tar_file: PathBuf) -> Result<Self> {
         let file = File::open(tar_file).context("Could not open model tar file.")?;
-        let (config, enc, erb_dec, df_dec) = extract_targz(file)?;
-        Ok(Self {
-            config,
-            enc,
-            erb_dec,
-            df_dec,
-        })
+        Self::from_targz(file)
     }
     pub fn from_bytes(tar_buf: &'static [u8]) -> Result<Self> {
-        let (config, enc, erb_dec, df_dec) = extract_targz(tar_buf)?;
+        Self::from_targz(tar_buf)
+    }
+    fn from_targz<R: Read>(f: R) -> Result<Self> {
+        let tar = GzDecoder::new(f);
+        let mut archive = Archive::new(tar);
+        let mut enc = Vec::new();
+        let mut erb_dec = Vec::new();
+        let mut df_dec = Vec::new();
+        let mut config = Ini::new();
+        for e in archive.entries().context("Could not extract models from tar file.")? {
+            let mut file = e.context("Could not open model tar entry.")?;
+            let path = file.path().unwrap();
+            if path.ends_with("enc.onnx") {
+                file.read_to_end(&mut enc)?;
+            } else if path.ends_with("erb_dec.onnx") {
+                file.read_to_end(&mut erb_dec)?;
+            } else if path.ends_with("df_dec.onnx") {
+                file.read_to_end(&mut df_dec)?;
+            } else if path.ends_with("config.ini") {
+                config =
+                    Ini::read_from(&mut file).context("Could not load config from tar file.")?;
+            } else {
+                log::warn!("Found non-matching item in model tar file: {:?}", path)
+            }
+        }
         Ok(Self {
             config,
             enc,
