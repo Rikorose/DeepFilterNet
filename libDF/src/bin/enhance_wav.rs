@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, process::exit, time::Instant};
 
 use anyhow::Result;
 use clap::Parser;
@@ -68,7 +68,13 @@ fn main() -> Result<()> {
         args.reduce_mask.try_into().unwrap(),
     );
     let df_params = if let Some(tar) = args.model.as_ref() {
-        DfParams::new(tar.clone())?
+        match DfParams::new(tar.clone()) {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("Error opening model {}: {}", tar.display(), e);
+                exit(1)
+            }
+        }
     } else {
         DfParams::from_bytes(include_bytes!("../../../models/DeepFilterNet2_onnx.tar.gz"))?
     };
