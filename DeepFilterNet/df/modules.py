@@ -747,7 +747,8 @@ class GroupedLinearEinsum(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.groups = groups
-        assert input_size % groups == 0
+        assert input_size % groups == 0, f"Input size {input_size} not divisible by {groups}"
+        assert hidden_size % groups == 0, f"Hidden size {hidden_size} not divisible by {groups}"
         self.ws = input_size // groups
         self.register_parameter(
             "weight",
