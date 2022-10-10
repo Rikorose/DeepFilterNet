@@ -56,7 +56,7 @@ logging = ["log"]
 vorbis = ["lewton", "ogg"]
 flac = ["claxon"]
 cache = ["sled", "bincode"]
-bin = ["clap", "anyhow", "ctrlc", "log", "env_logger", "rand", "ndarray-rand"]
+bin = ["clap", "anyhow", "ctrlc", "log", "env_logger", "rand", "ndarray-rand", "rust-ini"]
 use-jemalloc = ["jemallocator"]
 tract = [
   "transforms",

@@ -1071,6 +1071,11 @@ impl TdDataset {
             }
             max_freq = max_freq.min(self.max_freq(&sp_name)?);
             if self.bw_limiter.is_some() {
+                if sample.len_of(Axis(1)) < 2048 {
+                    log::debug!("Found sample with length {}. Skipping.", sample.len_of(Axis(1)));
+                    (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+                    continue;
+                }
                 // Extend clean speech to make sure it covers the full spectrum
                 let mut spec = stft(sample.view(), state.as_mut().unwrap(), false);
                 let max_bin = estimate_bandwidth(spec.view(), self.sr, -120., 10);
