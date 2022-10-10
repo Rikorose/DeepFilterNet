@@ -420,27 +420,34 @@ pub(crate) fn resample(
 ///
 /// Args:
 ///   - `x`: Spectrogram of shape (C, T, F)
-///   - `freq`: Cut of frequency. Frequencies above will get extended based on lower Frequencies.
+///   - `cbin`: Bin of cut-of-frequency. Frequencies above will get extended based on lower Frequencies.
 ///   - `sr`: Original time-domain sampling rate.
 ///   - `n_bins_overlap`: Instead of starting at bin correspinging to `freq` start `n_bins_overlap` lower.
 pub(crate) fn ext_bandwidth_spectral(
     x: &mut Array3<Complex32>,
-    freq: f32,
+    mut cbin: usize,
     sr: usize,
     n_bins_overlap: Option<usize>,
 ) {
-    let full_n_bins = x.len_of(Axis(2)); // Number of bins of non-downampled signal
-    let n_ov = n_bins_overlap.unwrap_or(0); // Overlap at the edge of the downsampled spectrum
-    let down_n_bins = (full_n_bins as f32 * freq * 2. / sr as f32) as usize - n_ov; // Number of bins containing energy in downsampled signal
-    let min_bin = full_n_bins * 4000 * 2 / sr + 1; // Only start from 4kHz
-    let max_copy_bins = down_n_bins - min_bin; // Number of bins to copy per iteration
-    let missing_bins = full_n_bins - down_n_bins;
+    let n_bins_all = x.len_of(Axis(2)); // Number of bins of non-downampled signal
+    let n_fft = (n_bins_all - 1) * 2;
+    if n_bins_all - cbin <= 1 {
+        // If only one bin is missing don't do nothin
+        return;
+    }
+    cbin -= n_bins_overlap.unwrap_or(0); // Overlap at the edge of the downsampled spectrum
+    let mut min_bin = 4000 / (sr / n_fft); // Only start from 4 kHz
+    if cbin <= min_bin {
+        min_bin = 3000 / (sr / n_fft); // Use 3kHz then
+    }
+    let max_copy_bins = cbin - min_bin; // Number of bins to copy per iteration
+    let missing_bins = n_bins_all - cbin;
     let n_copies = (missing_bins as f32 / max_copy_bins as f32).ceil() as usize;
-    let mut start_bin_tgt = down_n_bins;
-    let start_bin_src = min_bin.max(down_n_bins.saturating_sub(missing_bins));
+    let mut start_bin_tgt = cbin;
+    let start_bin_src = min_bin.max(cbin.saturating_sub(missing_bins));
     debug_assert!(start_bin_tgt > start_bin_src);
     for _ in 0..n_copies {
-        let cur_n_copy = max_copy_bins.min(full_n_bins - start_bin_tgt);
+        let cur_n_copy = max_copy_bins.min(n_bins_all - start_bin_tgt);
         let (src, target) = x.multi_slice_mut((
             s![.., .., start_bin_src..(start_bin_src + cur_n_copy)],
             s![.., .., start_bin_tgt..(start_bin_tgt + cur_n_copy)],
@@ -827,16 +834,18 @@ mod tests {
         let cf = rfftfreqs(fft_size / 2 + 1, sr);
         let idx = estimate_bandwidth(x.view(), sr, -120., 5);
         let f_cut_off = cf[idx];
+        let max_bin = (f_cut_off as f32 / (sr as f32 / fft_size as f32)) as usize;
         dbg!(idx, f_cut_off);
         let mut x2 = x.clone();
-        ext_bandwidth_spectral(&mut x2, f_cut_off, sr, Some(4));
+        ext_bandwidth_spectral(&mut x2, max_bin, sr, Some(4));
         let sample_ext = istft(x2.view_mut(), &mut state, true);
         write_wav_arr2("../out/sample_ext.wav", sample_ext.view(), sr as u32).unwrap();
 
         let f_cut_off = 12000;
+        let max_bin = (f_cut_off as f32 / (sr as f32 / fft_size as f32)) as usize;
         let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
         let mut x3 = stft(sample_f2.view(), &mut state, true);
-        ext_bandwidth_spectral(&mut x3, f_cut_off as f32, sr, Some(4));
+        ext_bandwidth_spectral(&mut x3, max_bin, sr, Some(4));
         let sample_f2_ext = istft(x3.view_mut(), &mut state, true);
         write_wav_arr2("../out/sample_f2_ext.wav", sample_f2_ext.view(), sr as u32).unwrap();
 

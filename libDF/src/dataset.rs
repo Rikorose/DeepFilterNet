@@ -811,11 +811,13 @@ impl Dataset<Complex32> for FftDataset {
         // To frequency domain
         let nb_erb = self.nb_erb.unwrap_or(1);
         let sr = self.sr();
-        let mut state = DFState::new(sr, self.fft_size, self.hop_size, nb_erb, 1);
+        let fft_size = self.fft_size;
+        let mut state = DFState::new(sr, fft_size, fft_size / 2, nb_erb, 1);
         let speech = stft(sample.get_speech_view()?, &mut state, false);
         let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
         if let Some(f) = sample.downsample_freq {
-            ext_bandwidth_spectral(&mut noisy, f as f32, sr, Some(4));
+            let max_bin = (f as f32 / (sr as f32 / fft_size as f32)) as usize;
+            ext_bandwidth_spectral(&mut noisy, max_bin, sr, Some(4));
         }
 
         // Feature calculation (normalization)
@@ -1074,8 +1076,7 @@ impl TdDataset {
                 let max_bin = estimate_bandwidth(spec.view(), self.sr, -120., 10);
                 let n_bins = fft_size / 2 + 1;
                 if max_bin < n_bins {
-                    let f = max_bin * self.sr / 2 / n_bins;
-                    ext_bandwidth_spectral(&mut spec, f as f32, self.sr, Some(16));
+                    ext_bandwidth_spectral(&mut spec, max_bin, self.sr, Some(16));
                     sample = istft(spec.view_mut(), state.as_mut().unwrap(), false);
                 }
             }
