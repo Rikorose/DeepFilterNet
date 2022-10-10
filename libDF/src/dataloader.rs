@@ -303,6 +303,7 @@ impl DataLoader {
         if self.overfit {
             epoch_seed = 0;
         }
+        log::trace!("Start {} epoch with seed {}", split, epoch_seed);
         // Check whether we need to regenerate. Typically only required for a custom sampling factor.
         for split in Split::iter() {
             if self.get_ds_arc(split).need_generate_keys() {
