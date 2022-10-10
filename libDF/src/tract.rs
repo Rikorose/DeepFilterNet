@@ -172,13 +172,13 @@ impl DfTract {
             .unwrap_or_else(|| model_cfg.get("df_order").unwrap())
             .parse::<usize>()?;
         // TODO: Why do I need a minimum of `enc_delay` frames of delay here?
-        let conv_lookahead =
-            model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?.max(enc_delay);
+        let conv_lookahead = model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?; //.max(enc_delay);
+
         // TODO: Why do I need a minimum of `df_dec_delay` frames of delay here?
         let df_lookahead = df_cfg
             .get("df_lookahead")
             .unwrap_or_else(|| model_cfg.get("df_lookahead").unwrap())
-            .parse::<usize>()?;
+            .parse::<usize>()?; //.max(_df_dec_delay);
         let n_freqs = fft_size / 2 + 1;
         let alpha = if let Some(a) = df_cfg.get("norm_alpha") {
             a.parse::<f32>()?
@@ -294,11 +294,7 @@ impl DfTract {
         self.rolling_spec_buf.rotate_left(1);
         for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in zip5(
             noisy.axis_iter(Axis(0)),
-            self.rolling_spec_buf
-                .back_mut()
-                .unwrap()
-                .to_array_view_mut()?
-                .axis_iter_mut(Axis(0)),
+            self.spec_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.erb_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.cplx_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.df_states.iter_mut(),
@@ -327,85 +323,38 @@ impl DfTract {
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap().into_tensor();
         let emb = enc_emb.pop().unwrap().into_tensor();
-        //         let (apply_erb, apply_df) = match lsnr {
-        // (self.min_db_thresh..self.max_db_erb_thresh).contains(&lsnr) =>
-        //         }
-        let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
-            (false, true, false)
-        } else if lsnr > self.max_db_erb_thresh {
-            (false, false, false)
-        } else if lsnr > self.max_db_df_thresh {
-            (true, false, false)
-        } else {
-            (true, false, true)
-        };
-        let (run_erb, run_df) = (true, true); // for now
 
-        let mut spec =
-            self.rolling_spec_buf.get_mut(self.df_order - 1).unwrap().to_array_view_mut()?;
-        // let mut spec = self
-        //     .rolling_spec_buf
-        //     .get_mut(self.rolling_spec_buf.len() - 1 - self.lookahead)
-        //     .unwrap()
-        //     .to_array_view_mut()?;
-        let mut m = if run_erb {
-            let dec_input = tvec!(
-                emb.clone(),
-                enc_emb.pop().unwrap().into_tensor(), // e3
-                enc_emb.pop().unwrap().into_tensor(), // e2
-                enc_emb.pop().unwrap().into_tensor(), // e1
-                enc_emb.pop().unwrap().into_tensor(), // e0
+        let mut spec = self.spec_buf.to_array_view_mut()?;
+        let dec_input = tvec!(
+            emb.clone(),
+            enc_emb.pop().unwrap().into_tensor(), // e3
+            enc_emb.pop().unwrap().into_tensor(), // e2
+            enc_emb.pop().unwrap().into_tensor(), // e1
+            enc_emb.pop().unwrap().into_tensor(), // e0
+        );
+        let mut m = self.erb_dec.run(dec_input)?;
+        let mut m = m
+            .pop()
+            .unwrap()
+            .into_tensor()
+            .into_shape(&[self.ch, self.nb_erb])?
+            .into_array()?;
+        if self.ch > 1 {
+            m = match self.reduce_mask {
+                ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
+                ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
+            };
+        }
+        for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
+            state.apply_mask(
+                as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
+                m.as_slice_mut().unwrap(),
+                false,
             );
-            if apply_erb {
-                let mut m = self.erb_dec.run(dec_input)?;
-                let mut m = m
-                    .pop()
-                    .unwrap()
-                    .into_tensor()
-                    .into_shape(&[self.ch, self.nb_erb])?
-                    .into_array()?;
-                if self.ch > 1 {
-                    m = match self.reduce_mask {
-                        ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
-                        ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
-                    };
-                }
-                Some(m)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if apply_erb || apply_erb_zeros {
-            let pf = if apply_erb { self.post_filter } else { false };
-            let m = m
-                .as_mut()
-                .map(|x| x.as_slice_mut().unwrap())
-                .unwrap_or(self.m_zeros.as_mut_slice());
-            for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
-                state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
-            }
         }
         #[cfg(feature = "timings")]
         let t3 = Instant::now();
 
-        let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
-        if run_df {
-            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
-            coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
-            self.spec_buf.clone_from(spec);
-            if apply_df {
-                df(
-                    &self.rolling_spec_buf,
-                    coefs,
-                    self.nb_df,
-                    self.df_order,
-                    self.n_freqs,
-                    &mut self.spec_buf,
-                )?;
-            }
-        };
         #[cfg(feature = "timings")]
         let t4 = Instant::now();
         for (state, spec_ch, mut enh_ch) in zip3(
