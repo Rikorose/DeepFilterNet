@@ -1032,7 +1032,7 @@ impl BandwidthLimiterAugmentation {
         BandwidthLimiterAugmentation {
             prob: p,
             sr,
-            cut_off_freqs: vec![8000, 10000, 12000, 16000, 20000, 22050],
+            cut_off_freqs: vec![4000, 6000, 8000, 10000, 12000, 16000, 20000, 22050],
         }
     }
     pub fn transform(&self, audio: &mut Array2<f32>, max_freq: usize) -> Result<usize> {
