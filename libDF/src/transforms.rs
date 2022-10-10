@@ -508,9 +508,13 @@ pub(crate) fn estimate_bandwidth(
     input: ArrayView3<Complex32>,
     sr: usize,
     mut db_cut_off: f32,
-    window_size: usize,
+    mut window_size: usize,
 ) -> usize {
     assert_eq!(sr, 48000, "bw_filterbank() assumes 48 kHz sampling rate.");
+    if input.len_of(Axis(1)) < window_size {
+        // Make sure to have at least one window
+        window_size = input.len_of(Axis(1))
+    }
     if db_cut_off > 0. {
         db_cut_off *= -1.;
     }
