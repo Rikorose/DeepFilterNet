@@ -213,6 +213,14 @@ def export(
         lsnr=lsnr.numpy(),
     )
 
+    np.savez_compressed(
+        os.path.join(export_dir, "erb_dec_input.npz"),
+        emb=emb.numpy(),
+        e0=e0.numpy(),
+        e1=e1.numpy(),
+        e2=e2.numpy(),
+        e3=e3.numpy(),
+    )
     # Export erb decoder
     inputs = (emb.clone(), e3, e2, e1, e0)
     input_names = ["emb", "e3", "e2", "e1", "e0"]
@@ -238,6 +246,7 @@ def export(
         simplify=simplify,
         opset_version=opset,
     )
+    np.savez_compressed(os.path.join(export_dir, "erb_dec_output.npz"), m=m.numpy())
 
     # Export df decoder
     inputs = (emb.clone(), c0)
