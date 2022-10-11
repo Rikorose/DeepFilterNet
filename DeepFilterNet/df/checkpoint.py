@@ -167,12 +167,11 @@ def check_patience(
         new_patience = prev_patience + 1
         write_patience(dirname, new_patience, prev_metric)
         if new_patience >= max_patience:
+            msg = f"No improvements on validation metric ({new_metric}) for {max_patience} epochs. Stopping."
             if raise_:
-                raise ValueError(
-                    f"No improvements on validation metric ({new_metric}) for {max_patience} epochs. "
-                    "Stopping."
-                )
+                raise ValueError(msg)
             else:
+                logger.warning(msg)
                 return False
     return True
 
