@@ -22,3 +22,8 @@ tract -v -O --partial --pulse 1 \
   -i 1,64,S,32,f32 \
   --onnx-ignore-output-shapes \
   "$1" dump --allow-random-input --profile --cost
+
+tract -v -O \
+  --input-facts-from-bundle /tmp/export/erb_dec_input.npz \
+  --onnx-ignore-output-shapes \
+  "$1" dump --allow-random-input --profile --cost
