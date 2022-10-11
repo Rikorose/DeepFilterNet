@@ -127,7 +127,13 @@ def export_impl(
 
 @torch.no_grad()
 def export(
-    model, export_dir: str, df_state: DF, check: bool = True, simplify: bool = True, opset=14
+    model,
+    export_dir: str,
+    df_state: DF,
+    check: bool = True,
+    simplify: bool = True,
+    opset=14,
+    export_full: bool = False,
 ):
     model = deepcopy(model).to("cpu")
     model.eval()
@@ -136,20 +142,20 @@ def export(
     spec, feat_erb, feat_spec = df_features(audio, df_state, p.nb_df, device="cpu")
 
     # Export full model
-    path = os.path.join(export_dir, "deepfilternet2.onnx")
-    input_names = ["spec", "feat_erb", "feat_spec"]
-    dynamic_axes = {
-        "spec": {2: "time"},
-        "feat_erb": {2: "time"},
-        "feat_spec": {2: "time"},
-        "enh": {2: "time"},
-        "m": {2: "time"},
-        "lsnr": {1: "time"},
-    }
-    inputs = (spec, feat_erb, feat_spec)
-    output_names = ["enh", "m", "lsnr", "coefs"]
-    try:
-        enh, m, lsnr, coefs = export_impl(
+    if export_full:
+        path = os.path.join(export_dir, "deepfilternet2.onnx")
+        input_names = ["spec", "feat_erb", "feat_spec"]
+        dynamic_axes = {
+            "spec": {2: "time"},
+            "feat_erb": {2: "time"},
+            "feat_spec": {2: "time"},
+            "enh": {2: "time"},
+            "m": {2: "time"},
+            "lsnr": {1: "time"},
+        }
+        inputs = (spec, feat_erb, feat_spec)
+        output_names = ["enh", "m", "lsnr", "coefs"]
+        export_impl(
             path,
             model,
             inputs=inputs,
@@ -161,8 +167,6 @@ def export(
             simplify=simplify,
             opset_version=opset,
         )
-    except Exception as e:
-        logger.warning(f"Failed to export model: {e}")
 
     # Export encoder
     feat_spec = feat_spec.transpose(1, 4).squeeze(4)  # re/im into channel axis
