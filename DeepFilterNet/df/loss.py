@@ -160,10 +160,11 @@ class SpectralLoss(nn.Module):
         if self.gamma != 1:
             input_abs = input_abs.clamp_min(1e-12).pow(self.gamma)
             target_abs = target_abs.clamp_min(1e-12).pow(self.gamma)
-        loss = F.mse_loss(input_abs, target_abs) * self.f_m
-        if self.f_under != 1:
+        tmp = (input_abs - target_abs).pow(2)
+        if self.f_u != 1:
             # Weighting if predicted abs is too low
-            loss = loss * torch.where(input_abs < target_abs, self.f_u, 1.0)
+            tmp *= torch.where(input_abs < target_abs, self.f_u, 1.0)
+        loss = torch.mean(tmp) * self.f_m
         if self.f_c > 0:
             if self.gamma != 1:
                 input = input_abs * torch.exp(1j * angle.apply(input))
