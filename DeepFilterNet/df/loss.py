@@ -137,12 +137,20 @@ class SpectralLoss(nn.Module):
     gamma: Final[float]
     f_m: Final[float]
     f_c: Final[float]
+    f_u: Final[float]
 
-    def __init__(self, gamma: float = 1, factor_magnitude: float = 1, factor_complex: float = 1):
+    def __init__(
+        self,
+        gamma: float = 1,
+        factor_magnitude: float = 1,
+        factor_complex: float = 1,
+        factor_under: float = 1,
+    ):
         super().__init__()
         self.gamma = gamma
         self.f_m = factor_magnitude
         self.f_c = factor_complex
+        self.f_u = factor_under
 
     def forward(self, input, target):
         input = as_complex(input)
@@ -153,6 +161,9 @@ class SpectralLoss(nn.Module):
             input_abs = input_abs.clamp_min(1e-12).pow(self.gamma)
             target_abs = target_abs.clamp_min(1e-12).pow(self.gamma)
         loss = F.mse_loss(input_abs, target_abs) * self.f_m
+        if self.f_under != 1:
+            # Weighting if predicted abs is too low
+            loss = loss * torch.where(input_abs < target_abs, self.f_u, 1.0)
         if self.f_c > 0:
             if self.gamma != 1:
                 input = input_abs * torch.exp(1j * angle.apply(input))
@@ -401,11 +412,15 @@ class Loss(nn.Module):
         # SpectralLoss
         self.sl_fm = config("factor_magnitude", 0, float, section="SpectralLoss")  # e.g. 1e4
         self.sl_fc = config("factor_complex", 0, float, section="SpectralLoss")
+        self.sl_fu = config("factor_under", 1, float, section="SpectralLoss")
         self.sl_gamma = config("gamma", 1, float, section="SpectralLoss")
         self.sl_f = self.sl_fm + self.sl_fc
         if self.sl_f > 0:
             self.sl = SpectralLoss(
-                factor_magnitude=self.sl_fm, factor_complex=self.sl_fc, gamma=self.sl_gamma
+                factor_magnitude=self.sl_fm,
+                factor_complex=self.sl_fc,
+                factor_under=self.sl_fu,
+                gamma=self.sl_gamma,
             )
         else:
             self.sl = None
