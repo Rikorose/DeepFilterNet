@@ -146,12 +146,12 @@ def export(
         path = os.path.join(export_dir, "deepfilternet2.onnx")
         input_names = ["spec", "feat_erb", "feat_spec"]
         dynamic_axes = {
-            "spec": {2: "time"},
-            "feat_erb": {2: "time"},
-            "feat_spec": {2: "time"},
-            "enh": {2: "time"},
-            "m": {2: "time"},
-            "lsnr": {1: "time"},
+            "spec": {2: "S"},
+            "feat_erb": {2: "S"},
+            "feat_spec": {2: "S"},
+            "enh": {2: "S"},
+            "m": {2: "S"},
+            "lsnr": {1: "S"},
         }
         inputs = (spec, feat_erb, feat_spec)
         output_names = ["enh", "m", "lsnr", "coefs"]
@@ -174,15 +174,15 @@ def export(
     inputs = (feat_erb, feat_spec)
     input_names = ["feat_erb", "feat_spec"]
     dynamic_axes = {
-        "feat_erb": {2: "time"},
-        "feat_spec": {2: "time"},
-        "e0": {2: "time"},
-        "e1": {2: "time"},
-        "e2": {2: "time"},
-        "e3": {2: "time"},
-        "emb": {1: "time"},
-        "c0": {2: "time"},
-        "lsnr": {1: "time"},
+        "feat_erb": {2: "S"},
+        "feat_spec": {2: "S"},
+        "e0": {2: "S"},
+        "e1": {2: "S"},
+        "e2": {2: "S"},
+        "e3": {2: "S"},
+        "emb": {1: "S"},
+        "c0": {2: "S"},
+        "lsnr": {1: "S"},
     }
     output_names = ["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"]
     e0, e1, e2, e3, emb, c0, lsnr = export_impl(
@@ -226,12 +226,12 @@ def export(
     input_names = ["emb", "e3", "e2", "e1", "e0"]
     output_names = ["m"]
     dynamic_axes = {
-        "emb": {1: "time"},
-        "e3": {2: "time"},
-        "e2": {2: "time"},
-        "e1": {2: "time"},
-        "e0": {2: "time"},
-        "m": {2: "time"},
+        "emb": {1: "S"},
+        "e3": {2: "S"},
+        "e2": {2: "S"},
+        "e1": {2: "S"},
+        "e0": {2: "S"},
+        "m": {2: "S"},
     }
     path = os.path.join(export_dir, "erb_dec.onnx")
     m = export_impl(  # noqa
@@ -253,9 +253,9 @@ def export(
     input_names = ["emb", "c0"]
     output_names = ["coefs"]
     dynamic_axes = {
-        "emb": {1: "time"},
-        "c0": {2: "time"},
-        "coefs": {1: "time"},
+        "emb": {1: "S"},
+        "c0": {2: "S"},
+        "coefs": {1: "S"},
     }
     path = os.path.join(export_dir, "df_dec.onnx")
     coefs = export_impl(  # noqa
