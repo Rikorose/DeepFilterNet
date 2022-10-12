@@ -2,7 +2,6 @@
 import os
 import sys
 
-from icecream import ic
 import numpy as np
 
 ATOL = 1e-5
@@ -22,12 +21,10 @@ def main():
     # b is ref
     assert name in npz_b, f"{name} not found in {b} (avail: {npz_b.files})"
     ref = npz_b[name]
-    ic(name, ref.shape)
     if name not in npz_a:
         names = [f for f in npz_a.files if name in f]
         actual = [npz_a[n] for n in names]
         actual = np.concatenate(actual, axis=int(sys.argv[4]))
-        ic(actual.shape)
     else:
         actual = npz_a[name]
     np.testing.assert_allclose(actual, ref, atol=ATOL, rtol=RTOL)
