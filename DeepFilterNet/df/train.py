@@ -283,9 +283,14 @@ def main():
             model, "model", checkpoint_dir, epoch + 1, metric=val_criteria, cmp=val_criteria_rule
         )
         log_metrics(f"[{epoch}] [valid]", metrics)
-        check_patience(
-            checkpoint_dir, max_patience=patience, new_metric=val_criteria, cmp=val_criteria_rule
-        )
+        if not check_patience(
+            checkpoint_dir,
+            max_patience=patience,
+            new_metric=val_criteria,
+            cmp=val_criteria_rule,
+            raise_=False,
+        ):
+            break
         if should_stop:
             logger.info("Stopping training due to timeout")
             exit(0)
