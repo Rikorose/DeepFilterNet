@@ -232,7 +232,6 @@ impl _FdDataLoader {
         }
         match self.loader.get_batch::<Complex32>().to_py_err()? {
             Some(batch) => {
-                debug_assert_eq!(&batch.ids, &sort(batch.ids.clone()));
                 let new_id = *batch.ids.iter().max().unwrap() as isize;
                 debug_assert_eq!(new_id, self.cur_id + batch.batch_size() as isize);
                 self.cur_id = new_id;
@@ -275,6 +274,10 @@ impl _FdDataLoader {
         self.loader.set_batch_size(batch_size, split)
     }
 
+    fn batch_size(&self, split:&str)->usize{
+        self.loader.batch_size(split)
+    }
+
     fn get_log_messages(&mut self) -> Vec<(String, String, Option<String>, Option<u32>)> {
         let mut messages = Vec::new();
         loop {
@@ -299,17 +302,6 @@ impl _FdDataLoader {
 fn push_ret<T>(mut a: Vec<T>, b: T) -> Vec<T> {
     a.push(b);
     a
-}
-
-fn sort<A, T>(mut array: A) -> A
-where
-    A: AsMut<[T]>,
-    T: Ord,
-{
-    let slice = array.as_mut();
-    slice.sort();
-
-    array
 }
 
 trait ResultExt<T> {

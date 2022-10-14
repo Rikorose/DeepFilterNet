@@ -331,12 +331,9 @@ def run_epoch(
 ) -> float:
     global debug
 
-    logger.info("Start {} epoch {}".format(split, epoch))
     log_freq = config("LOG_FREQ", cast=int, default=100, section="train")
-    if split != "train" and loader.batch_size_eval is not None:
-        bs = loader.batch_size_eval
-    else:
-        bs = loader.batch_size
+    bs = loader.get_batch_size(split)
+    logger.info("Start {} epoch {} with batch size {}".format(split, epoch, bs))
 
     detect_anomaly: bool = config("DETECT_ANOMALY", False, bool, section="train")
     if detect_anomaly:
