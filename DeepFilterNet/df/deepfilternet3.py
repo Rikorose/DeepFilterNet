@@ -343,9 +343,12 @@ class DfNet(nn.Module):
         self.df_dec = DfDecoder()
         self.df_out_transform = DfOutputReshapeMF(self.df_order, p.nb_df)
 
+        self.run_erb = p.nb_df + 1 >= self.freq_bins
+        if not self.run_erb:
+            logger.warning("Runing without ERB stage")
         self.run_df = run_df
         if not run_df:
-            logger.warning("Runing without DF")
+            logger.warning("Runing without DF stage")
         self.train_mask = train_mask
         assert p.df_n_iter == 1
 
@@ -372,9 +375,12 @@ class DfNet(nn.Module):
         feat_erb = self.pad_feat(feat_erb)
         feat_spec = self.pad_feat(feat_spec)
         e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
-        m = self.erb_dec(emb, e3, e2, e1, e0)
-
-        spec_m = self.mask(spec, m)
+        if self.run_erb:
+            m = self.erb_dec(emb, e3, e2, e1, e0)
+            spec_m = self.mask(spec, m)
+        else:
+            m = torch.zeros((), device=spec.device)
+            spec_m = torch.zeros_like(spec)
 
         if self.run_df:
             df_coefs, _ = self.df_dec(emb, c0)
