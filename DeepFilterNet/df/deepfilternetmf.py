@@ -327,15 +327,24 @@ class DfNet(nn.Module):
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
         self.df_order = p.df_order
-        assert p.mfop_method in ("WF", "MVDR")
-        if p.mfop_method == "WF":
+        assert p.mfop_method in ("WF", "WF_C", "MVDR", "MVDR_C")
+        cholesky_decomp = p.mfop_method.endswith("_C")
+        if p.mfop_method.startswith("WF"):
             self.mf_op = MF.MfWf(
-                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead
+                num_freqs=p.nb_df,
+                frame_size=p.df_order,
+                lookahead=self.df_lookahead,
+                cholesky_decomp=cholesky_decomp,
             )
-        else:  # MVDR
+        elif p.mfop_method.startswith("MVDR"):
             self.mf_op = MF.MfMvdr(
-                num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead
+                num_freqs=p.nb_df,
+                frame_size=p.df_order,
+                lookahead=self.df_lookahead,
+                cholesky_decomp=cholesky_decomp,
             )
+        else:
+            raise NotImplementedError(p.mfop_method)
         self.df_dec = DfDecoder()
 
         self.run_mff = run_df
