@@ -144,7 +144,7 @@ class PytorchDataLoader:
         self.loader.set_batch_size(batch_size, split)
 
     def get_batch_size(self, split: str):
-        self.loader.batch_size(split)
+        return self.loader.batch_size(split)
 
     def cleanup_pin_memory_thread(self):
         if self.pin_memory:
