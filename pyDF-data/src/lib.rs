@@ -274,7 +274,7 @@ impl _FdDataLoader {
         self.loader.set_batch_size(batch_size, split)
     }
 
-    fn batch_size(&self, split:&str)->usize{
+    fn batch_size(&self, split: &str) -> usize {
         self.loader.batch_size(split)
     }
 
