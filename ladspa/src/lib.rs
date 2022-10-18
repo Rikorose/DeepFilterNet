@@ -1,5 +1,6 @@
-use std::collections::VecDeque;
+use std::io::Write;
 use std::sync::Once;
+use std::{collections::VecDeque, io};
 
 use df::tract::*;
 use ladspa::{Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
@@ -23,12 +24,34 @@ struct DfStereo {
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
 
+fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
+    let ts = buf.timestamp_millis();
+    let module = if let Some(m) = record.module_path() {
+        format!(" {} |", m.replace("::reexport_dataset_modules:", ""))
+    } else {
+        "".to_string()
+    };
+    let level_style = buf.default_level_style(log::Level::Info);
+
+    writeln!(
+        buf,
+        "{} | {} | {} {}",
+        ts,
+        level_style.value(record.level()),
+        module,
+        record.args()
+    )
+}
+
 pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
     INIT_LOGGER.call_once(|| {
-        env_logger::builder().filter_level(log::LevelFilter::Info).init();
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            .format(log_format)
+            .init();
     });
 
-    let df_params = DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz"))
+    let df_params = DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
         .expect("Could not load model tar.");
     let r_params = RuntimeParams::new(1, false, -15., 30., 30., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
@@ -48,10 +71,13 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
 
 pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
     INIT_LOGGER.call_once(|| {
-        env_logger::builder().filter_level(log::LevelFilter::Info).init();
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            .format(log_format)
+            .init();
     });
 
-    let df_params = DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz"))
+    let df_params = DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
         .expect("Could not load model tar.");
     let r_params = RuntimeParams::new(2, false, -15., 30., 30., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
@@ -83,115 +109,67 @@ impl Plugin for DfMono {
     fn run<'a>(&mut self, _sample_count: usize, ports: &[&'a PortConnection<'a>]) {
         let n = self.df.hop_size;
         let mut i_idx = 0;
-        let mut o_idx = 0;
 
         let input = ports[0].unwrap_audio();
         let mut output = ports[1].unwrap_audio_mut();
-        log::info!(
-            "DfMono::run() with input {} and output {}",
-            input.len(),
-            output.len()
-        );
-
-        // Pass alrady processed samples to the output buffer
-        if output.len() <= self.outbuf.len() {
-            o_idx = output.len().max(self.outbuf.len());
-            for o in output.iter_mut().take(o_idx) {
-                *o = self.outbuf.pop_front().unwrap();
-            }
-        }
 
         // Check self.inbuf has some samples from previous run calls and fill up
-        let missing = n.saturating_sub(self.inframe.len());
+        let mut missing = n.saturating_sub(self.inframe.len());
+        if missing > input.len() {
+            missing = input.len()
+        }
         if !self.inframe.is_empty() && missing > 0 {
             self.inframe.extend_from_slice(&input[..missing]);
-            debug_assert_eq!(self.inframe.len(), n);
             i_idx = missing;
         }
-
-        // Check if self.inbuf has enough samples and process
         debug_assert!(
             self.inframe.len() <= n,
-            "inbuf len should not exceed frame size."
+            "inbuf len ({}) should not exceed frame size ({}).",
+            self.inframe.len(),
+            n
         );
+
+        // Check if self.inbuf has enough samples and process
         if self.inframe.len() == n {
-            let mut used_outframe = false;
             let i_f = slice_as_arrayview(self.inframe.as_slice(), &[1, n])
                 .into_dimensionality::<Ix2>()
                 .unwrap();
-            let o_f = mut_slice_as_arrayviewmut(
-                if output.len().saturating_sub(o_idx) >= n {
-                    o_idx += n;
-                    &mut output[o_idx - n..o_idx] // Directly write into output buffer
-                } else {
-                    used_outframe = true;
-                    self.outframe.as_mut_slice()
-                },
-                &[1, n],
-            )
-            .into_dimensionality::<Ix2>()
-            .unwrap();
+            let o_f = mut_slice_as_arrayviewmut(self.outframe.as_mut_slice(), &[1, n])
+                .into_dimensionality::<Ix2>()
+                .unwrap();
             self.df.process(i_f, o_f).unwrap();
-            if used_outframe {
-                // Copy samples from self.outframe to output
-                let n_copy = (output.len().saturating_sub(o_idx)).min(n);
-                if n_copy > 0 {
-                    output[o_idx..o_idx + n_copy].copy_from_slice(&self.outframe[..n_copy]);
-                }
-                if n_copy < n {
-                    // Store remaining that did not fit into output in self.outbuf
-                    for &x in self.outframe.iter().skip(n_copy) {
-                        self.outbuf.push_back(x)
-                    }
-                }
-                o_idx += n_copy;
+            // Store processed samples from in outbuf
+            for &x in self.outframe.iter() {
+                self.outbuf.push_back(x)
             }
             self.inframe.clear();
         }
 
         // Check if new input has enough samples and run
-        if input.len() - i_idx >= n {
-            let n_frames = (input.len() - i_idx) / (n);
-            for _ in 0..n_frames {
-                let mut used_outframe = false;
-
-                let i_f = slice_as_arrayview(&input[i_idx..i_idx + n], &[1, n])
-                    .into_dimensionality::<Ix2>()
-                    .unwrap();
-                i_idx += n;
-                let o_f = mut_slice_as_arrayviewmut(
-                    if output.len().saturating_sub(o_idx) >= n {
-                        o_idx += n;
-                        &mut output[o_idx - n..o_idx] // Directly write into output buffer
-                    } else {
-                        used_outframe = true;
-                        self.outframe.as_mut_slice()
-                    },
-                    &[1, n],
-                )
+        while input.len() - i_idx >= n {
+            let i_f = slice_as_arrayview(&input[i_idx..i_idx + n], &[1, n])
                 .into_dimensionality::<Ix2>()
                 .unwrap();
-                self.df.process(i_f, o_f).unwrap();
-                if used_outframe {
-                    // Copy samples from self.outframe to output
-                    let n_copy = (output.len().saturating_sub(o_idx)).min(n);
-                    if n_copy > 0 {
-                        output[o_idx..o_idx + n_copy].copy_from_slice(&self.outframe[..n_copy]);
-                    }
-                    if n_copy < n {
-                        // Store remaining that did not fit into output in self.outbuf
-                        for &x in self.outframe.iter().skip(n_copy) {
-                            self.outbuf.push_back(x)
-                        }
-                    }
-                    o_idx += n_copy;
-                }
+            i_idx += n;
+            let o_f = mut_slice_as_arrayviewmut(self.outframe.as_mut_slice(), &[1, n])
+                .into_dimensionality::<Ix2>()
+                .unwrap();
+            self.df.process(i_f, o_f).unwrap();
+            for &x in self.outframe.iter() {
+                self.outbuf.push_back(x)
             }
         }
 
         // Check if input has remaining samples that have not been processed and save them for later
         if i_idx < input.len() {
             self.inframe.extend_from_slice(&input[i_idx..]);
+        }
+
+        // Pass alrady processed samples to the output buffer
+        if self.outbuf.len() >= output.len() {
+            for o in output.iter_mut() {
+                *o = self.outbuf.pop_front().unwrap();
+            }
         }
     }
 }
@@ -205,7 +183,6 @@ impl Plugin for DfStereo {
     fn run<'a>(&mut self, _sample_count: usize, ports: &[&'a PortConnection<'a>]) {
         let n = self.df.hop_size;
         let mut i_idx = 0;
-        let mut o_idx = 0;
 
         let input_l = ports[0].unwrap_audio();
         let input_r = ports[1].unwrap_audio();
@@ -216,16 +193,6 @@ impl Plugin for DfStereo {
             input_l.len(),
             output_l.len()
         );
-
-        // Pass alrady processed samples to the output buffer
-        for (o_ch, b_ch) in [&mut output_l, &mut output_r].iter_mut().zip(self.outbuf.iter_mut()) {
-            if o_ch.len() <= b_ch.len() {
-                o_idx = o_ch.len().max(b_ch.len());
-                for o in o_ch.iter_mut().take(o_idx) {
-                    *o = b_ch.pop_front().unwrap();
-                }
-            }
-        }
 
         // Check self.inbuf has some samples from previous run calls and fill up
         loop {
@@ -250,30 +217,29 @@ impl Plugin for DfStereo {
             let i_f = self.inframe.as_arrayview();
             let o_f = self.outframe.as_arrayviewmut();
             self.df.process(i_f, o_f).unwrap();
-            // Copy samples from self.outframe to output
-            let n_copy = (output_l.len().saturating_sub(o_idx)).min(n);
-            for (o_ch, of_ch, ob_ch) in df::zip3(
-                [&mut output_l, &mut output_r].iter_mut(),
-                self.outframe.channels().into_iter(),
-                self.outbuf.iter_mut(),
-            ) {
-                if n_copy > 0 {
-                    o_ch[o_idx..o_idx + n_copy].copy_from_slice(&of_ch[..n_copy]);
-                }
-                if n_copy < n {
-                    // Store remaining that did not fit into output in self.outbuf
-                    for &x in of_ch.iter().skip(n_copy) {
-                        ob_ch.push_back(x)
-                    }
+            for (of_ch, ob_ch) in self.outframe.channels().iter().zip(self.outbuf.iter_mut()) {
+                // Store processed samples in self.outbuf
+                for &x in of_ch.iter() {
+                    ob_ch.push_back(x)
                 }
             }
-            o_idx += n_copy;
             self.inframe.clear();
         }
 
         // Check if input has remaining samples that have not been processed and save them for later
         if i_idx < input_l.len() {
             self.inframe.extend(&input_l[i_idx..], &input_r[i_idx..]);
+        }
+
+        // Pass processed samples to the output buffer
+        if self.outbuf.len() > output_l.len() {
+            for (o_ch, b_ch) in
+                [&mut output_l, &mut output_r].iter_mut().zip(self.outbuf.iter_mut())
+            {
+                for o in o_ch.iter_mut() {
+                    *o = b_ch.pop_front().unwrap();
+                }
+            }
         }
     }
 }
