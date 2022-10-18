@@ -1072,7 +1072,10 @@ impl TdDataset {
             max_freq = max_freq.min(self.max_freq(&sp_name)?);
             if self.bw_limiter.is_some() {
                 if sample.len_of(Axis(1)) < 2048 {
-                    log::debug!("Found sample with length {}. Skipping.", sample.len_of(Axis(1)));
+                    log::debug!(
+                        "Found sample with length {}. Skipping.",
+                        sample.len_of(Axis(1))
+                    );
                     (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
                     continue;
                 }
