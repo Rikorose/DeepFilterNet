@@ -9,6 +9,7 @@ use flate2::read::GzDecoder;
 use ini::Ini;
 use ndarray::{prelude::*, Axis};
 use tar::Archive;
+use tract_core::internal::tract_itertools::izip;
 use tract_core::internal::tract_smallvec::alloc::collections::VecDeque;
 use tract_core::prelude::*;
 use tract_onnx::{prelude::*, tract_hir::shapefactoid};
@@ -171,14 +172,11 @@ impl DfTract {
             .get("df_order")
             .unwrap_or_else(|| model_cfg.get("df_order").unwrap())
             .parse::<usize>()?;
-        // TODO: Why do I need a minimum of `enc_delay` frames of delay here?
-        let conv_lookahead = model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?; //.max(enc_delay);
-
-        // TODO: Why do I need a minimum of `df_dec_delay` frames of delay here?
+        let conv_lookahead = model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?;
         let df_lookahead = df_cfg
             .get("df_lookahead")
             .unwrap_or_else(|| model_cfg.get("df_lookahead").unwrap())
-            .parse::<usize>()?; //.max(_df_dec_delay);
+            .parse::<usize>()?;
         let n_freqs = fft_size / 2 + 1;
         let alpha = if let Some(a) = df_cfg.get("norm_alpha") {
             a.parse::<f32>()?
@@ -291,8 +289,9 @@ impl DfTract {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
 
-        self.rolling_spec_buf.rotate_left(1);
-        for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in zip5(
+        // self.rolling_spec_buf.rotate_left(1);
+        self.rolling_spec_buf.pop_front();
+        for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in izip!(
             noisy.axis_iter(Axis(0)),
             self.spec_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.erb_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
@@ -310,6 +309,7 @@ impl DfTract {
                 as_slice_mut_complex(cplx_ch.as_slice_mut().unwrap()),
             );
         }
+        self.rolling_spec_buf.push_back(self.spec_buf.clone());
 
         #[cfg(feature = "timings")]
         let t1 = Instant::now();
@@ -323,41 +323,87 @@ impl DfTract {
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap().into_tensor();
         let emb = enc_emb.pop().unwrap().into_tensor();
+        //         let (apply_erb, apply_df) = match lsnr {
+        // (self.min_db_thresh..self.max_db_erb_thresh).contains(&lsnr) =>
+        //         }
+        let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
+            (false, true, false)
+        } else if lsnr > self.max_db_erb_thresh {
+            (false, false, false)
+        } else if lsnr > self.max_db_df_thresh {
+            (true, false, false)
+        } else {
+            (true, false, true)
+        };
+        let (run_erb, run_df) = (true, true); // for now
 
-        let mut spec = self.spec_buf.to_array_view_mut()?;
-        let dec_input = tvec!(
-            emb.clone(),
-            enc_emb.pop().unwrap().into_tensor(), // e3
-            enc_emb.pop().unwrap().into_tensor(), // e2
-            enc_emb.pop().unwrap().into_tensor(), // e1
-            enc_emb.pop().unwrap().into_tensor(), // e0
-        );
-        let mut m = self.erb_dec.run(dec_input)?;
-        let mut m = m
-            .pop()
+        let mut spec = self
+            .rolling_spec_buf
+            .get_mut(self.df_order - 1 - self.conv_lookahead)
             .unwrap()
-            .into_tensor()
-            .into_shape(&[self.ch, self.nb_erb])?
-            .into_array()?;
-        if self.ch > 1 {
-            m = match self.reduce_mask {
-                ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
-                ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
-            };
-        }
-        for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
-            state.apply_mask(
-                as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
-                m.as_slice_mut().unwrap(),
-                false,
+            .to_array_view_mut()?;
+        let mut m = if run_erb {
+            let dec_input = tvec!(
+                emb.clone(),
+                enc_emb.pop().unwrap().into_tensor(), // e3
+                enc_emb.pop().unwrap().into_tensor(), // e2
+                enc_emb.pop().unwrap().into_tensor(), // e1
+                enc_emb.pop().unwrap().into_tensor(), // e0
             );
+            if apply_erb {
+                let mut m = self.erb_dec.run(dec_input)?;
+                let mut m = m
+                    .pop()
+                    .unwrap()
+                    .into_tensor()
+                    .into_shape(&[self.ch, self.nb_erb])?
+                    .into_array()?;
+                if self.ch > 1 {
+                    m = match self.reduce_mask {
+                        ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
+                        ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
+                    };
+                }
+                Some(m)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if apply_erb || apply_erb_zeros {
+            let pf = if apply_erb { self.post_filter } else { false };
+            let m = m
+                .as_mut()
+                .map(|x| x.as_slice_mut().unwrap())
+                .unwrap_or(self.m_zeros.as_mut_slice());
+            for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
+                state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
+            }
         }
         #[cfg(feature = "timings")]
         let t3 = Instant::now();
 
+        let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
+        if run_df {
+            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
+            coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
+            self.spec_buf.clone_from(spec);
+            if apply_df {
+                df(
+                    &self.rolling_spec_buf,
+                    coefs,
+                    self.nb_df,
+                    self.df_order,
+                    self.n_freqs,
+                    &mut self.spec_buf,
+                )?;
+            }
+        };
+
         #[cfg(feature = "timings")]
         let t4 = Instant::now();
-        for (state, spec_ch, mut enh_ch) in zip3(
+        for (state, spec_ch, mut enh_ch) in izip!(
             self.df_states.iter_mut(),
             self.spec_buf.to_array_view_mut()?.axis_iter(Axis(0)),
             enh.axis_iter_mut(Axis(0)),
@@ -422,10 +468,11 @@ fn df(
     // Iterate over DF frames
     for (s_f, c_f) in spec_iter.zip(coefs_arr.axis_iter(Axis(2))) {
         // Iterate over channels
-        for (s_ch, c_ch, mut o_ch) in zip3(s_f.outer_iter(), c_f.outer_iter(), o_f.outer_iter_mut())
+        for (s_ch, c_ch, mut o_ch) in
+            izip!(s_f.outer_iter(), c_f.outer_iter(), o_f.outer_iter_mut())
         {
             // Apply DF for each frequency bin up to `nb_df`
-            for (&s, &c, o) in zip3(s_ch, c_ch, o_ch.iter_mut()) {
+            for (&s, &c, o) in izip!(s_ch, c_ch, o_ch.iter_mut()) {
                 *o += s * c
             }
         }
@@ -438,6 +485,7 @@ fn init_encoder_impl(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
+    log::debug!("Start init encoder.");
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
@@ -481,6 +529,7 @@ fn init_erb_decoder_impl(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
+    log::debug!("Start init ERB decoder.");
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
@@ -542,6 +591,7 @@ fn init_df_decoder_impl(
     df_cfg: &ini::Properties,
     n_ch: usize,
 ) -> Result<(TypedModel, usize)> {
+    log::debug!("Start init DF decoder.");
     let s = tract_pulse::fact::stream_dim();
 
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
