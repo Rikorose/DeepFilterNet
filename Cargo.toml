@@ -4,7 +4,8 @@ resolver = "2"
 members = [
   "libDF",
   "pyDF",
-  "pyDF-data"
+  "pyDF-data",
+  "ladspa",
 ]
 
 [profile.dev]
@@ -13,10 +14,12 @@ incremental = false
 lto = false
 
 [profile.release]
+debug = true
 opt-level = 3
 lto = "thin"
 
 [profile.release-lto]
 inherits = "release"
+debug = false
 lto = "fat"
 strip = true
