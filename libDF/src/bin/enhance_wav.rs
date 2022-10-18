@@ -1,7 +1,7 @@
 use std::{path::PathBuf, process::exit, time::Instant};
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use df::{tract::*, wav_utils::*};
 use ndarray::{prelude::*, Axis};
 
@@ -22,11 +22,14 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Path to model tar.gz
-    #[clap(short, long)]
+    #[clap(short, long, value_hint = ValueHint::FilePath)]
     model: Option<PathBuf>,
     /// Enable postfilter
-    #[clap(short, long)]
+    #[clap(long = "pf")]
     post_filter: bool,
+    /// Compensate delay of STFT and model lookahead
+    #[clap(short = 'D', long)]
+    compensate_delay: bool,
     /// Min dB local SNR threshold for running the decoder DNN side
     #[clap(long, value_parser, default_value_t=-15.)]
     min_db_thresh: f32,
@@ -43,7 +46,7 @@ struct Args {
     #[clap(short, long)]
     verbose: bool,
     // Output directory with enhanced audio files. Defaults to 'out'
-    #[clap(short, long, default_value = "out")]
+    #[clap(short, long, default_value = "out", value_hint = ValueHint::DirPath)]
     out_dir: PathBuf,
     // Audio files
     files: Vec<PathBuf>,
@@ -80,20 +83,8 @@ fn main() -> Result<()> {
     };
     let mut model: DfTract = DfTract::new(df_params.clone(), &r_params)?;
     let mut sr = model.sr;
-    // TODO: DeepFilterNet2 needs + 2, maybe due to df_dec pulse delay of 4?
-    // Compensate delay of model (first part) and delay of stft (last part)
-    let extra_delay = if let Some(m) = args.model.as_ref() {
-        if m.to_str().unwrap().contains("DeepFilterNet2") {
-            2
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    let delay =
-        (model.lookahead + extra_delay) * model.hop_size + (model.fft_size - model.hop_size);
-    dbg!(model.lookahead, delay);
+    let mut delay = model.fft_size - model.hop_size; // STFT delay
+    delay += model.lookahead * model.hop_size; // Add model latency due to lookahead
     if !args.out_dir.is_dir() {
         log::info!("Creating output directory: {}", args.out_dir.display());
         std::fs::create_dir_all(args.out_dir.clone())?
@@ -130,7 +121,9 @@ fn main() -> Result<()> {
         );
         let mut enh_file = args.out_dir.clone();
         enh_file.push(file.file_name().unwrap());
-        enh.slice_axis_inplace(Axis(1), ndarray::Slice::from(delay..));
+        if args.compensate_delay {
+            enh.slice_axis_inplace(Axis(1), ndarray::Slice::from(delay..));
+        }
         write_wav_arr2(enh_file.to_str().unwrap(), enh.view(), sr as u32)?;
     }
 
