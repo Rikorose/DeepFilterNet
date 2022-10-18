@@ -151,7 +151,7 @@ impl DfTract {
         let df_cfg = config.section(Some("df")).unwrap();
         let ch = rp.n_ch;
 
-        let (enc, enc_delay) = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
+        let (enc, _enc_delay) = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
         let (erb_dec, _erb_dec_delay) =
             init_erb_decoder_from_read(&mut Cursor::new(dfp.erb_dec), model_cfg, df_cfg, ch)?;
         let (df_dec, _df_dec_delay) =
@@ -193,8 +193,9 @@ impl DfTract {
 
         let model_type = config.section(Some("train")).unwrap().get("model").unwrap();
         let lookahead = match model_type {
-            "deepfilternet2" => df_lookahead + conv_lookahead,
-            "deepfilternet3" => df_lookahead.max(conv_lookahead),
+            // TODO: deepfilternet2 with lookahead has an unexpected offset of the DF coefs when applying DF to spectrum
+            "deepfilternet2" => conv_lookahead + df_lookahead.saturating_sub(1),
+            "deepfilternet3" => conv_lookahead.max(df_lookahead),
             _ => return Err(anyhow!("Unsupported model type")),
         };
         log::info!(
@@ -253,9 +254,9 @@ impl DfTract {
         let ch = self.ch;
         let spec_shape = [ch, 1, 1, self.n_freqs, 2];
         self.rolling_spec_buf.clear();
-        for _ in 0..(self.df_order + self.lookahead) {
+        for _ in 0..(self.df_order + self.conv_lookahead) {
             self.rolling_spec_buf
-                .push_front(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
+                .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
         if ch > self.df_states.len() {
             for _ in self.df_states.len()..ch {
@@ -289,7 +290,6 @@ impl DfTract {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
 
-        // self.rolling_spec_buf.rotate_left(1);
         self.rolling_spec_buf.pop_front();
         for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in izip!(
             noisy.axis_iter(Axis(0)),
@@ -337,11 +337,8 @@ impl DfTract {
         };
         let (run_erb, run_df) = (true, true); // for now
 
-        let mut spec = self
-            .rolling_spec_buf
-            .get_mut(self.df_order - 1 - self.conv_lookahead)
-            .unwrap()
-            .to_array_view_mut()?;
+        let mut spec =
+            self.rolling_spec_buf.get_mut(self.df_order - 1).unwrap().to_array_view_mut()?;
         let mut m = if run_erb {
             let dec_input = tvec!(
                 emb.clone(),
@@ -372,7 +369,7 @@ impl DfTract {
             None
         };
         if apply_erb || apply_erb_zeros {
-            let pf = if apply_erb { self.post_filter } else { false };
+            let pf = apply_erb && self.post_filter;
             let m = m
                 .as_mut()
                 .map(|x| x.as_slice_mut().unwrap())
@@ -384,11 +381,12 @@ impl DfTract {
         #[cfg(feature = "timings")]
         let t3 = Instant::now();
 
+        // This spectrum will only be used for the upper frequecies
         let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
+        self.spec_buf.clone_from(spec);
         if run_df {
             let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
             coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
-            self.spec_buf.clone_from(spec);
             if apply_df {
                 df(
                     &self.rolling_spec_buf,
@@ -430,7 +428,7 @@ impl DfTract {
 /// Deep Filtering.
 ///
 /// Args:
-///     - spec: Spectrogram buffer for the corresponding time steps. Needs to contain `df_order + df_lookahead + conv_lookahead` frames and applies DF to the oldest frames.
+///     - spec: Spectrogram buffer for the corresponding time steps. Needs to contain `df_order + conv_lookahead` frames and applies DF to the oldest frames.
 ///     - coefs: Complex DF coefficients of shape `[C, N, F', 2]`, `N`: `df_order`, `F'`: `nb_df`
 ///     - nb_df: Number of DF frequency bins
 ///     - df_order: Deep Filtering order
