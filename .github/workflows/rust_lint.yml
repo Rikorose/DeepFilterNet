@@ -46,3 +46,83 @@ jobs:
         with:
           name: test-artifacts
           path: out/
+
+
+  build-deepfilter-rs:
+    runs-on: ${{ matrix.os }}
+    env:
+      # For some builds, we use cross to test on 32-bit and big-endian
+      # systems.
+      CARGO: cargo
+      # When CARGO is set to CROSS, this is set to `--target matrix.target`.
+      TARGET_FLAGS: ""
+      # When CARGO is set to CROSS, TARGET_DIR includes matrix.target.
+      TARGET_DIR: ./target
+      # Emit backtraces on panics.
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        include:
+        - build: linux-x86
+          os: ubuntu-22.04
+          target: x86_64-unknown-linux-musl
+        - build: linux-arm-v7
+          os: ubuntu-22.04
+          target: armv7-unknown-linux-gnueabihf
+        - build: linux-arm-aarch64
+          os: ubuntu-22.04
+          target: aarch64-unknown-linux-gnu
+        - build: macos-x86
+          os: macos-12
+          target: x86_64-apple-darwin
+        - build: macos-aarch64
+          os: macos-12
+          target: aarch64-apple-darwin
+        - build: win-msvc
+          os: windows-2022
+          target: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Use Cross
+        shell: bash
+        run: |
+          cargo install cross
+          echo "CARGO=cross" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.TARGET_FLAGS }}"
+          echo "target dir is: ${{ env.TARGET_DIR }}"
+
+
+      - name: Build release binary
+        run: ${{ env.CARGO }} build --verbose --release ${{ env.TARGET_FLAGS }}
+
+      - name: Get the release version from the tag
+        shell: bash
+        if: env.DF_VERSION == ''
+        run: |
+          echo "DF_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Rename to target
+        run: |
+          mv "target/${{ matrix.target }}/release/deep-filter" "${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}"
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: deep-filter-${{github.ref_name}}
+          path: ${{ env.TARGET_DIR }}/*
