@@ -116,15 +116,15 @@ jobs:
         shell: bash
         if: env.DF_VERSION == ''
         run: |
-          echo "DF_VERSION=$(target/${{ matrix.target }}/release-lto/deep-filter --version | sed -e 's/deep_filter //g')" >> $GITHUB_ENV
+          DF_VERSION=$(cargo pkgid --manifest-path libDF/Cargo.toml | sed -e 's/^.*deep_filter@//g')
+          if [[ $DF_VERSION =~ ^.*-pre$ ]]; then DF_VERSION="$DF_VERSION"-"$(git rev-parse --short HEAD)"; fi
+          echo "DF_VERSION=$DF_VERSION" >> $GITHUB_ENV
 
       - name: Rename to target
         run: |
-          ls target
-          ls target/*/
           mv "target/${{ matrix.target }}/release-lto/deep-filter" "${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}"
 
       - uses: actions/upload-artifact@v3
         with:
           name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
-          path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
+          path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}*
