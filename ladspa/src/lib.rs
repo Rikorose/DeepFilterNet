@@ -51,8 +51,9 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
             .init();
     });
 
-    let df_params = DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
-        .expect("Could not load model tar.");
+    let df_params =
+        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
+            .expect("Could not load model tar.");
     let r_params = RuntimeParams::new(1, false, -15., 30., 30., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
@@ -77,8 +78,9 @@ pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin +
             .init();
     });
 
-    let df_params = DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
-        .expect("Could not load model tar.");
+    let df_params =
+        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
+            .expect("Could not load model tar.");
     let r_params = RuntimeParams::new(2, false, -15., 30., 30., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
