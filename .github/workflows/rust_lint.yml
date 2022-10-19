@@ -110,7 +110,7 @@ jobs:
 
 
       - name: Build release binary
-        run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc --profile=release-lto --bin deep-filter ${{ env.TARGET_FLAGS }}
+        run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc --profile=release-lto -p deep_filter --bin deep-filter ${{ env.TARGET_FLAGS }}
 
       - name: Get the release version from the tag
         shell: bash
