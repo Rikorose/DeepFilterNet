@@ -29,7 +29,7 @@ pub use reexport_dataset_modules::*;
 mod cache;
 #[cfg(feature = "tract")]
 pub mod tract;
-#[cfg(feature = "wav-utils")]
+#[cfg(all(feature = "wav-utils", not(feature = "dataset")))]
 pub mod wav_utils;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
