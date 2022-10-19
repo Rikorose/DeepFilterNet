@@ -116,13 +116,15 @@ jobs:
         shell: bash
         if: env.DF_VERSION == ''
         run: |
-          echo "DF_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "DF_VERSION=$(target/${{ matrix.target }}/release-lto/deep-filter --version | sed -e 's/deep_filter //g')" >> $GITHUB_ENV
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release/deep-filter" "${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}"
+          ls target
+          ls target/*/
+          mv "target/${{ matrix.target }}/release-lto/deep-filter" "${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}"
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
-          name: deep-filter-${{github.ref_name}}
-          path: ${{ env.TARGET_DIR }}/*
+          name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
+          path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
