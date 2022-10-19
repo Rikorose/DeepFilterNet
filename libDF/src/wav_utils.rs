@@ -5,7 +5,7 @@ use std::{
 };
 
 use hound::{WavReader, WavWriter};
-#[cfg(feature = "dataset")]
+#[cfg(any(feature = "dataset", feature = "wav-utils"))]
 use ndarray::prelude::*;
 use thiserror::Error;
 
@@ -73,7 +73,7 @@ impl ReadWav {
         }
         Ok(out)
     }
-    #[cfg(feature = "dataset")]
+    #[cfg(any(feature = "dataset", feature = "wav-utils"))]
     pub fn samples_arr2(mut self) -> Result<Array2<f32>, WavUtilsError> {
         Ok(
             Array2::from_shape_vec((self.len, self.channels), self.iter().collect())?
@@ -142,7 +142,7 @@ pub fn write_wav(path: &str, x: &[Vec<f32>], sr: u32) -> Result<(), WavUtilsErro
     Ok(writer.finalize()?)
 }
 
-#[cfg(feature = "dataset")]
+#[cfg(any(feature = "dataset", feature = "wav-utils"))]
 pub fn write_wav_arr2(path: &str, x: ArrayView2<f32>, sr: u32) -> Result<(), WavUtilsError> {
     let spec = hound::WavSpec {
         channels: x.len_of(Axis(0)) as u16,
