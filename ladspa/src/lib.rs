@@ -113,6 +113,12 @@ impl Plugin for DfMono {
         let input = ports[0].unwrap_audio();
         let mut output = ports[1].unwrap_audio_mut();
 
+        log::info!(
+            "DfMono::run() with input {} and output {}",
+            input.len(),
+            output.len()
+        );
+
         // Check self.inbuf has some samples from previous run calls and fill up
         let mut missing = n.saturating_sub(self.inframe.len());
         if missing > input.len() {
@@ -188,6 +194,7 @@ impl Plugin for DfStereo {
         let input_r = ports[1].unwrap_audio();
         let mut output_l = ports[2].unwrap_audio_mut();
         let mut output_r = ports[3].unwrap_audio_mut();
+
         log::info!(
             "DfStereo::run() with input {} and output {}",
             input_l.len(),
@@ -232,7 +239,7 @@ impl Plugin for DfStereo {
         }
 
         // Pass processed samples to the output buffer
-        if self.outbuf.len() > output_l.len() {
+        if self.outbuf[0].len() > output_l.len() {
             for (o_ch, b_ch) in
                 [&mut output_l, &mut output_r].iter_mut().zip(self.outbuf.iter_mut())
             {
@@ -288,14 +295,6 @@ impl StereoBuffer {
         self.b[self.c + self.idx..self.c + self.idx + n].clone_from_slice(right);
         self.idx += n;
     }
-    // #[inline]
-    // pub fn frames_left(&self) -> &[f32] {
-    //     &self.b[..self.idx]
-    // }
-    // #[inline]
-    // pub fn frames_right(&self) -> &[f32] {
-    //     &self.b[self.c..self.c + self.idx]
-    // }
     pub fn channels(&self) -> [&[f32]; 2] {
         let (left, right) = self.b.split_at(self.c);
         [&left[..self.idx], &right[..self.idx]]
