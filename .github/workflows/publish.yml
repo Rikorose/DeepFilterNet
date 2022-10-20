@@ -181,18 +181,22 @@ jobs:
 
   publish-pypi-wheels:
     runs-on: ubuntu-22.04
-    needs: [build-libdf-wheels, build-deepfilternet-wheels]
+    needs: [build-libdf-wheels, build-deepfilternet-wheels, create-release]
     steps:
       - uses: actions/setup-python@v2
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+          echo "DF version is: ${{ env.DF_VERSION }}"
       - name: Get libdf wheels
         uses: actions/download-artifact@v2
         with:
-          name: libdf-wheels-${{github.ref_name}}
+          name: libdf-wheels-${{ env.DF_VERSION }}
           path: libdf-wheels
       - name: Get deepfilternet wheels
         uses: actions/download-artifact@v2
         with:
-          name: deepfilternet-wheels-${{github.ref_name}}
+          name: deepfilternet-wheels-${{ env.DF_VERSION }}
           path: deepfilternet-wheels
       - name: Install Maturin
         run: python -m pip install maturin
@@ -202,8 +206,8 @@ jobs:
           USER: ${{ secrets.PYPI_USER }}
           PW: ${{ secrets.PYPI_PW }}
         run: |
-          maturin upload -u "$USER" -p "$PW" libdf-wheels/*"$DF_VERSION"*
-          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*"$DF_VERSION"*
+          maturin upload -u "$USER" -p "$PW" libdf-wheels/*${{ env.DF_VERSION }}*
+          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*${{ env.DF_VERSION }}*
 
   build-arm-wheels:
     name: Cross Compile ARM Python Wheels
@@ -274,6 +278,7 @@ jobs:
       # Emit backtraces on panics.
       RUST_BACKTRACE: 1
     strategy:
+      fail-fast: true
       matrix:
         build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
@@ -333,7 +338,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
-          path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}*
+          path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
 
       - name: Upload release archive
         uses: actions/upload-release-asset@v1.0.2
@@ -342,7 +347,7 @@ jobs:
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
-          asset_path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}*
+          asset_path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
           asset_content_type: application/octet-stream
 
   build-deepfilter-ladspa:
