@@ -30,7 +30,7 @@ required-features = ["dataset", "bin"]
 [[bin]]
 name = "deep-filter"
 path = "src/bin/enhance_wav.rs"
-required-features = ["bin", "tract"]
+required-features = ["bin", "tract", "wav-utils"]
 
 [features]
 default = []
