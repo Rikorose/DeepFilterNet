@@ -1,9 +1,8 @@
 [package]
-name = "deep-filter-ladspa"
+name = "deep-filter-lv2"
 version = "0.3.0"
 authors = ["Hendrik Schröter"]
 edition = "2021"
-license = "MIT/Apache-2.0"
 
 [lib]
 crate-type = ["cdylib"]
@@ -11,7 +10,10 @@ crate-type = ["cdylib"]
 [dependencies]
 wmidi = "3.1.0"
 deep_filter = { path = "../libDF", features = ["tract", "use-jemalloc"] }
-ladspa = "0.3.4"
-ndarray = "^0.15"
-env_logger = "0.9"
-log = { version = "0.4", features = ["std"] }
+lv2 = { version = "0.6.0", default-features = false, features = [
+  "lv2-core",
+  "urid",
+  "lv2-urid",
+  "lv2-atom",
+  "lv2-state",
+] }

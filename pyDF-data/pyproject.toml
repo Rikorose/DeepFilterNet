@@ -1,6 +1,6 @@
 [project]
 name = "DeepFilterDataLoader"
-version = "0.2.6-pre"
+version = "0.3.0"
 classifiers = [
     "Programming Language :: Rust"
 ]
