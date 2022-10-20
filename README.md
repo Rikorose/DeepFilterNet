@@ -4,8 +4,8 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using 
 ### News
 
 - New real-time version and a LADSPA plugin
-  - Pre-compiled binary, no python dependencies. Usage: `deep-filter audio-file.wav`
-  - LADSPA plugin with pipewire filter-chain integration for real-time noise reduction on your mic.
+  - [Pre-compiled binary](#deep-filter), no python dependencies. Usage: `deep-filter audio-file.wav`
+  - [LADSPA plugin](ladspa/) with pipewire filter-chain integration for real-time noise reduction on your mic.
 
 - New DeepFilterNet2 Paper: *DeepFilterNet2: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio*
   - Paper: https://arxiv.org/abs/2205.05474
@@ -19,8 +19,41 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using 
   - Video Lecture: https://youtu.be/it90gBqkY6k
 
 ## Usage
-This framework supports Linux, MacOS and Windows. Training is only tested under Linux. The framework
-is structured as follows:
+
+### deep-filter
+
+Download a pre-compiled deep-filter binary from the [release page](https://github.com/Rikorose/DeepFilterNet/releases/).
+You can use `deep-filter` to suppress noise in noisy .wav audio files. Currently, only wav files with a sampling rate of 48kHz are supported.
+
+```bash
+USAGE:
+    deep-filter [OPTIONS] [FILES]...
+
+ARGS:
+    <FILES>...
+
+OPTIONS:
+    -D, --compensate-delay
+            Compensate delay of STFT and model lookahead
+    -h, --help
+            Print help information
+    -m, --model <MODEL>
+            Path to model tar.gz. Defaults to DeepFilterNet2.
+    -o, --out-dir <OUT_DIR>
+            [default: out]
+    --pf
+            Enable postfilter
+    -v, --verbose
+            Logging verbosity
+    -V, --version
+            Print version information
+```
+
+If you want to use the pytorch backend e.g. for GPU processing, see further below for the Python usage.
+
+### DeepFilterNet Framework
+
+This framework supports Linux, MacOS and Windows. Training is only tested under Linux. The framework is structured as follows:
 
 * `libDF` contains Rust code used for data loading and augmentation.
 * `DeepFilterNet` contains DeepFilterNet code training, evaluation and visualization as well as pretrained model weights.
@@ -29,9 +62,9 @@ is structured as follows:
 * `ladspa` contains a LADSPA plugin for real-time noise suppression.
 * `models` contains pretrained for usage in DeepFilterNet (Python) or libDF/deep-filter (Rust)
 
-### PyPI
+### DeepFilterNet Python: PyPI
 
-Install the DeepFilterNet python package via pip:
+Install the DeepFilterNet Python wheel via pip:
 ```bash
 # Install cpu/cuda pytorch (>=1.8) dependency from pytorch.org, e.g.:
 pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
