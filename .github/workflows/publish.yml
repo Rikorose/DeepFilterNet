@@ -327,18 +327,20 @@ jobs:
           echo "target dir is: ${{ env.TARGET_DIR }}"
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
           echo "DF version is: ${{ env.DF_VERSION }}"
+          echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}" >> $GITHUB_ENV
 
       - name: Build release binary
         run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc,wav-utils --profile=release-lto -p deep_filter --bin deep-filter ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/deep-filter" "${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}"
+          mv "target/${{ matrix.target }}/release-lto/deep-filter" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
+          chmod +x "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
 
       - uses: actions/upload-artifact@v3
         with:
-          name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
-          path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
+          name: ${{ env.DF_BIN_NAME }}
+          path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
       - name: Upload release archive
         uses: actions/upload-release-asset@v1.0.2
@@ -346,8 +348,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
-          asset_path: ${{ env.TARGET_DIR }}/deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
+          asset_name: ${{ env.DF_BIN_NAME }}
+          asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
           asset_content_type: application/octet-stream
 
   build-deepfilter-ladspa:
@@ -425,18 +427,19 @@ jobs:
           echo "target dir is: ${{ env.TARGET_DIR }}"
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
           echo "DF version is: ${{ env.DF_VERSION }}"
+          echo "DF_LADSPA_NAME=${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}" >> $GITHUB_ENV
 
       - name: Build release binary
         run: ${{ env.CARGO }} build --profile=release-lto -p deep-filter-ladspa ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}"
+          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
 
       - uses: actions/upload-artifact@v3
         with:
-          name: libdeep_filter_ladspa-${{ env.DF_VERSION }}-${{ matrix.target }}
-          path: ${{ env.TARGET_DIR }}/${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}
+          name: ${{ env.DF_LADSPA_NAME }}
+          path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
 
       - name: Upload release archive
         uses: actions/upload-release-asset@v1.0.2
@@ -444,6 +447,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_name: libdeep_filter_ladspa-${{ env.DF_VERSION }}-${{ matrix.target }}
-          asset_path: ${{ env.TARGET_DIR }}/${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}
+          asset_name: ${{ env.DF_LADSPA_NAME }}
+          asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
           asset_content_type: application/octet-stream
