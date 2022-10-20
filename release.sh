@@ -50,14 +50,14 @@ fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
   sed -i "s/^deepfilterdataloader.*/deepfilterdataloader = { version = \"$VERSION\", optional = true }/" pyproject.toml
 )
 
-cargo build
+cargo build --all-features
 
 (
   cd libDF
   cargo publish --allow-dirty
 )
 
-fd "(pyproject)|(Cargo)" -t f -e toml -X git add {}
+fd "(pyproject)|(Cargo)" -I -t f -e toml -X git add {}
 
 git commit -m "v$VERSION"
 git push
