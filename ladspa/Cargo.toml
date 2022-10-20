@@ -3,6 +3,7 @@ name = "deep-filter-ladspa"
 version = "0.1.0"
 authors = ["Hendrik Schröter"]
 edition = "2021"
+license = "MIT/Apache-2.0"
 
 [lib]
 crate-type = ["cdylib"]
