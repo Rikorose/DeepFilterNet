@@ -431,7 +431,7 @@ jobs:
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/libdeep_filter_ladspa-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}"
+          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}"
 
       - uses: actions/upload-artifact@v3
         with:
