@@ -126,14 +126,15 @@ jobs:
           echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}" >> $GITHUB_ENV
 
       - name: Build release binary
-        run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc,wav-utils --profile=release-lto -p deep_filter --bin deep-filter ${{ env.TARGET_FLAGS }}
+        run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc,wav-utils --profile=release -p deep_filter --bin deep-filter ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/deep-filter" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
+          ls "target/${{ matrix.target }}/release/"
+          mv "target/${{ matrix.target }}/release/deep-filter" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
           chmod +x "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
 
       - uses: actions/upload-artifact@v3
         with:
-          name: deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}
+          name: ${{ env.DF_BIN_NAME }}
           path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
