@@ -19,7 +19,7 @@ use rand::prelude::IteratorRandom;
 
 /// Simple program to sample from a hd5 dataset directory
 #[derive(Parser)]
-#[clap(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None)]
 struct Args {
     df_cfg: PathBuf,
     /// Dataset directory containing the hdf5 datasets
@@ -30,24 +30,24 @@ struct Args {
     /// Save directory for sampled output wavs
     out_dir: PathBuf,
     /// Dataset split
-    #[clap(long, arg_enum)]
+    #[arg(long, value_enum)]
     split: Option<DsSplit>,
     /// Dataset indices
-    #[clap(short, long)]
+    #[arg(short, long)]
     idx: Vec<usize>,
     /// Number of samples to generate
-    #[clap(short, long)]
+    #[arg(short, long)]
     num: Option<usize>,
     /// Random seed
-    #[clap(short, long)]
+    #[arg(short, long)]
     seed: Option<u64>,
     /// Random seed
-    #[clap(short, long)]
+    #[arg(short, long)]
     epoch: Option<usize>,
     /// Randomize sampling
-    #[clap(short, long)]
+    #[arg(short, long)]
     randomize: bool,
-    #[clap(short, long)]
+    #[arg(short, long)]
     verbose: bool,
 }
 

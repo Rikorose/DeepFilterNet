@@ -19,34 +19,34 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 /// Simple program to sample from a hd5 dataset directory
 #[derive(Parser)]
-#[clap(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to model tar.gz
-    #[clap(short, long, value_hint = ValueHint::FilePath)]
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
     model: Option<PathBuf>,
     /// Enable postfilter
-    #[clap(long = "pf")]
+    #[arg(long = "pf")]
     post_filter: bool,
     /// Compensate delay of STFT and model lookahead
-    #[clap(short = 'D', long)]
+    #[arg(short = 'D', long)]
     compensate_delay: bool,
     /// Min dB local SNR threshold for running the decoder DNN side
-    #[clap(long, value_parser, default_value_t=-15.)]
+    #[arg(long, value_parser, default_value_t=-15.)]
     min_db_thresh: f32,
     /// Max dB local SNR threshold for running ERB decoder
-    #[clap(long, value_parser, default_value_t = 35.)]
+    #[arg(long, value_parser, default_value_t = 35.)]
     max_db_erb_thresh: f32,
     /// Max dB local SNR threshold for running DF decoder
-    #[clap(long, value_parser, default_value_t = 35.)]
+    #[arg(long, value_parser, default_value_t = 35.)]
     max_db_df_thresh: f32,
     /// If used with multiple channels, reduce the mask with max (1) or mean (2)
-    #[clap(long, value_parser, default_value_t = 1)]
+    #[arg(long, value_parser, default_value_t = 1)]
     reduce_mask: i32,
     /// Logging verbosity
-    #[clap(short, long)]
+    #[arg(short, long)]
     verbose: bool,
     // Output directory with enhanced audio files. Defaults to 'out'
-    #[clap(short, long, default_value = "out", value_hint = ValueHint::DirPath)]
+    #[arg(short, long, default_value = "out", value_hint = ValueHint::DirPath)]
     out_dir: PathBuf,
     // Audio files
     files: Vec<PathBuf>,
