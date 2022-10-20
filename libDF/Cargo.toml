@@ -23,11 +23,6 @@ path = "src/bin/sample-dataset.rs"
 required-features = ["dataset", "bin"]
 
 [[bin]]
-name = "fix-sample-attrs"
-path = "src/bin/fix-sample-attrs-hdf5.rs"
-required-features = ["dataset", "bin"]
-
-[[bin]]
 name = "deep-filter"
 path = "src/bin/enhance_wav.rs"
 required-features = ["bin", "tract", "wav-utils"]
