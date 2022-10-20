@@ -3,16 +3,20 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using 
 
 ### News
 
-- Original DeepFilterNet Paper: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
-  - Paper: https://arxiv.org/abs/2110.05588
-  - Samples: https://rikorose.github.io/DeepFilterNet-Samples/
-  - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet
-  - Video Lecture: https://youtu.be/it90gBqkY6k
+- New real-time version and a LADSPA plugin
+  - Pre-compiled binary, no python dependencies. Usage: `deep-filter audio-file.wav`
+  - LADSPA plugin with pipewire filter-chain integration for real-time noise reduction on your mic.
 
 - New DeepFilterNet2 Paper: *DeepFilterNet2: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio*
   - Paper: https://arxiv.org/abs/2205.05474
   - Samples: https://rikorose.github.io/DeepFilterNet2-Samples/
   - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet2
+
+- Original DeepFilterNet Paper: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
+  - Paper: https://arxiv.org/abs/2110.05588
+  - Samples: https://rikorose.github.io/DeepFilterNet-Samples/
+  - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet
+  - Video Lecture: https://youtu.be/it90gBqkY6k
 
 ## Usage
 This framework supports Linux, MacOS and Windows. Training is only tested under Linux. The framework
@@ -22,6 +26,8 @@ is structured as follows:
 * `DeepFilterNet` contains DeepFilterNet code training, evaluation and visualization as well as pretrained model weights.
 * `pyDF` contains a Python wrapper of libDF STFT/ISTFT processing loop.
 * `pyDF-data` contains a Python wrapper of libDF dataset functionality and provides a pytorch data loader.
+* `ladspa` contains a LADSPA plugin for real-time noise suppression.
+* `models` contains pretrained for usage in DeepFilterNet (Python) or libDF/deep-filter (Rust)
 
 ### PyPI
 
