@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "DeepFilterNet"
-version = "0.3.0"
+version = "0.3.1-pre"
 description = "Noise supression using deep filtering"
 authors = ["Hendrik Schröter"]
 repository = "https://github.com/Rikorose/DeepFilterNet"
@@ -23,8 +23,8 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-deepfilterlib = "0.3.0"
-deepfilterdataloader = { version = "0.3.0", optional = true }
+deepfilterlib = { path = "../pyDF/" }
+deepfilterdataloader = { path = "../pyDF-data/", optional = true }
 python = ">=3.8,<4.0"
 numpy = ">=1.22,<2.0"
 loguru = ">=0.5"

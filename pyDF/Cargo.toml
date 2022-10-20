@@ -1,6 +1,6 @@
 [package]
 name = "DeepFilterLib"
-version = "0.3.0"
+version = "0.3.1-pre"
 authors = ["Hendrik Schröter"]
 edition = "2021"
 
