@@ -270,6 +270,19 @@ impl DfTract {
         Ok(m)
     }
 
+    pub fn set_atten_lim(&mut self, db: f32) -> Result<()> {
+        let lim = db.abs();
+        self.atten_lim = if lim >= 100. {
+            None
+        } else if lim < 0.1 {
+            bail!("Attenuation limit to strong. No noise reduction will be performed");
+        } else {
+            log::debug!("Setting attenuation limit to {:.0} dB", lim);
+            Some(10f32.powf(-lim / 20.))
+        };
+        Ok(())
+    }
+
     pub fn init(&mut self) -> Result<()> {
         let ch = self.ch;
         let spec_shape = [ch, 1, 1, self.n_freqs, 2];

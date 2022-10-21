@@ -3,7 +3,7 @@ use std::sync::Once;
 use std::{collections::VecDeque, io};
 
 use df::tract::*;
-use ladspa::{Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
+use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
 use ndarray::prelude::*;
 
 static INIT_LOGGER: Once = Once::new();
@@ -54,7 +54,7 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
     let df_params =
         DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
             .expect("Could not load model tar.");
-    let r_params = RuntimeParams::new(1, false, -15., 30., 30., ReduceMask::MEAN);
+    let r_params = RuntimeParams::new(1, false, 100., -15., 30., 30., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
     let inframe = Vec::with_capacity(m.hop_size);
@@ -81,7 +81,7 @@ pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin +
     let df_params =
         DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
             .expect("Could not load model tar.");
-    let r_params = RuntimeParams::new(2, false, -15., 30., 30., ReduceMask::MEAN);
+    let r_params = RuntimeParams::new(2, false, 100., -15., 30., 30., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
     let inframe = StereoBuffer::with_frame_size(m.hop_size);
@@ -114,6 +114,8 @@ impl Plugin for DfMono {
 
         let input = ports[0].unwrap_audio();
         let mut output = ports[1].unwrap_audio_mut();
+        let atten_lim = ports[2].unwrap_control();
+        self.df.set_atten_lim(*atten_lim).unwrap();
 
         log::info!(
             "DfMono::run() with input {} and output {}",
@@ -196,6 +198,8 @@ impl Plugin for DfStereo {
         let input_r = ports[1].unwrap_audio();
         let mut output_l = ports[2].unwrap_audio_mut();
         let mut output_r = ports[3].unwrap_audio_mut();
+        let atten_lim = ports[4].unwrap_control();
+        self.df.set_atten_lim(*atten_lim).unwrap();
 
         log::info!(
             "DfStereo::run() with input {} and output {}",
@@ -341,6 +345,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     desc: PortDescriptor::AudioOutput,
                     ..Default::default()
                 },
+                Port {
+                    name: "Attenuation Limit (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::High),
+                    lower_bound: Some(0.),
+                    upper_bound: Some(100.),
+                },
             ],
             new: new_df_mono,
         }),
@@ -371,6 +383,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Audio Out R",
                     desc: PortDescriptor::AudioOutput,
                     ..Default::default()
+                },
+                Port {
+                    name: "Attenuation Limit (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::High),
+                    lower_bound: Some(0.),
+                    upper_bound: Some(100.),
                 },
             ],
             new: new_df_stereo,
