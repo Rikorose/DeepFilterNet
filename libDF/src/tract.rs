@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "timings")]
 use std::time::Instant;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use flate2::read::GzDecoder;
 use ini::Ini;
 use ndarray::{prelude::*, Axis};
@@ -85,6 +85,7 @@ impl TryFrom<i32> for ReduceMask {
 pub struct RuntimeParams {
     pub n_ch: usize,
     post_filter: bool,
+    atten_lim_db: f32,
     min_db_thresh: f32,
     max_db_erb_thresh: f32,
     max_db_df_thresh: f32,
@@ -94,6 +95,7 @@ impl RuntimeParams {
     pub fn new(
         n_ch: usize,
         post_filter: bool,
+        atten_lim_db: f32,
         min_db_thresh: f32,
         max_db_erb_thresh: f32,
         max_db_df_thresh: f32,
@@ -102,6 +104,7 @@ impl RuntimeParams {
         Self {
             n_ch,
             post_filter,
+            atten_lim_db,
             min_db_thresh,
             max_db_erb_thresh,
             max_db_df_thresh,
@@ -134,12 +137,14 @@ pub struct DfTract {
     pub max_db_erb_thresh: f32,
     pub max_db_df_thresh: f32,
     pub reduce_mask: ReduceMask,
+    pub atten_lim: Option<f32>,
     df_states: Vec<DFState>,
     spec_buf: Tensor,
     erb_buf: Tensor,
     cplx_buf: Tensor,
     m_zeros: Vec<f32>,
-    rolling_spec_buf: VecDeque<Tensor>,
+    rolling_spec_buf: VecDeque<Tensor>, // Enhanced stage 1 spec buf
+    rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
 }
 
 impl DfTract {
@@ -173,16 +178,28 @@ impl DfTract {
             .unwrap_or_else(|| model_cfg.get("df_order").unwrap())
             .parse::<usize>()?;
         let conv_lookahead = model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?;
-        let df_lookahead = df_cfg
+        let mut df_lookahead = df_cfg
             .get("df_lookahead")
             .unwrap_or_else(|| model_cfg.get("df_lookahead").unwrap())
             .parse::<usize>()?;
+        if df_lookahead > 0 {
+            df_lookahead += 1;
+        }
         let n_freqs = fft_size / 2 + 1;
         let alpha = if let Some(a) = df_cfg.get("norm_alpha") {
             a.parse::<f32>()?
         } else {
             let tau = df_cfg.get("norm_tau").unwrap().parse::<f32>()?;
             calc_norm_alpha(sr, hop_size, tau)
+        };
+        let atten_lim = rp.atten_lim_db.abs();
+        let atten_lim = if atten_lim >= 100. {
+            None
+        } else if atten_lim < 0.1 {
+            bail!("Attenuation limit to strong. No noise reduction will be performed");
+        } else {
+            log::info!("Running with an attenuation limit of {:.0} dB", atten_lim);
+            Some(10f32.powf(-atten_lim / 20.))
         };
         let spec_shape = [1, 1, 1, n_freqs, 2];
         let spec_buf = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &spec_shape)? };
@@ -199,12 +216,11 @@ impl DfTract {
             _ => return Err(anyhow!("Unsupported model type")),
         };
         log::info!(
-            "Running with model type {} lookahead {}",
-            model_type,
-            lookahead,
+            "Running with model type {} lookahead {}", model_type, lookahead
         );
 
         let rolling_spec_buf = VecDeque::with_capacity(df_order + lookahead);
+        let rolling_spec_buf_x = VecDeque::with_capacity(lookahead);
 
         let mut state = DFState::new(sr as usize, fft_size, hop_size, nb_erb, min_nb_erb_freqs);
         state.init_norm_states(nb_df);
@@ -231,11 +247,13 @@ impl DfTract {
             max_db_erb_thresh: rp.max_db_erb_thresh,
             max_db_df_thresh: rp.max_db_df_thresh,
             reduce_mask: rp.reduce_mask.clone(),
+            atten_lim,
             spec_buf,
             erb_buf,
             cplx_buf,
             m_zeros,
             rolling_spec_buf,
+            rolling_spec_buf_x,
             df_states,
             post_filter: rp.post_filter,
         };
@@ -256,6 +274,10 @@ impl DfTract {
         self.rolling_spec_buf.clear();
         for _ in 0..(self.df_order + self.conv_lookahead) {
             self.rolling_spec_buf
+                .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
+        }
+        for _ in 0..self.conv_lookahead + self.df_lookahead {
+            self.rolling_spec_buf_x
                 .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
         if ch > self.df_states.len() {
@@ -291,6 +313,7 @@ impl DfTract {
         }
 
         self.rolling_spec_buf.pop_front();
+        self.rolling_spec_buf_x.pop_front();
         for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in izip!(
             noisy.axis_iter(Axis(0)),
             self.spec_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
@@ -310,6 +333,7 @@ impl DfTract {
             );
         }
         self.rolling_spec_buf.push_back(self.spec_buf.clone());
+        self.rolling_spec_buf_x.push_back(self.spec_buf.clone());
 
         #[cfg(feature = "timings")]
         let t1 = Instant::now();
@@ -382,7 +406,10 @@ impl DfTract {
         let t3 = Instant::now();
 
         // This spectrum will only be used for the upper frequecies
-        let spec = self.rolling_spec_buf.get_mut(self.df_order - 1 - self.df_lookahead).unwrap();
+        let spec = self
+            .rolling_spec_buf
+            .get_mut(self.df_order - 1 - self.df_lookahead.saturating_sub(1))
+            .unwrap();
         self.spec_buf.clone_from(spec);
         if run_df {
             let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
@@ -399,16 +426,24 @@ impl DfTract {
             }
         };
 
+        // Limit noise attenuation by mixing back some of the noisy signal
+        let mut spec_enh = self.spec_buf.to_array_view_mut()?;
+        if let Some(lim) = self.atten_lim {
+            let spec_noisy = self.rolling_spec_buf_x.front().unwrap().to_array_view().unwrap();
+            spec_enh.map_inplace(|x| *x *= 1. - lim);
+            spec_enh.scaled_add(lim, &spec_noisy);
+        }
+
         #[cfg(feature = "timings")]
         let t4 = Instant::now();
-        for (state, spec_ch, mut enh_ch) in izip!(
+        for (state, spec_ch, mut enh_out_ch) in izip!(
             self.df_states.iter_mut(),
-            self.spec_buf.to_array_view_mut()?.axis_iter(Axis(0)),
+            spec_enh.axis_iter(Axis(0)),
             enh.axis_iter_mut(Axis(0)),
         ) {
             state.synthesis(
                 as_slice_mut_complex(spec_ch.to_owned().as_slice_mut().unwrap()),
-                enh_ch.as_slice_mut().unwrap(),
+                enh_out_ch.as_slice_mut().unwrap(),
             );
         }
         #[cfg(feature = "timings")]

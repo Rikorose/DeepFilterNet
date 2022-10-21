@@ -30,6 +30,11 @@ struct Args {
     /// Compensate delay of STFT and model lookahead
     #[arg(short = 'D', long)]
     compensate_delay: bool,
+    /// Attenuation limit in dB by mixing the enhanced signal with the noisy signal.
+    /// An attenuation limit of 0 dB means no noise reduction will be performed, 100 dB means full
+    /// noise reduction, i.e. no attenuation limit.
+    #[arg(short, long, default_value_t=100.)]
+    atten_lim_db: f32,
     /// Min dB local SNR threshold for running the decoder DNN side
     #[arg(long, value_parser, default_value_t=-15.)]
     min_db_thresh: f32,
@@ -47,7 +52,7 @@ struct Args {
     verbose: bool,
     // Output directory with enhanced audio files. Defaults to 'out'
     #[arg(short, long, default_value = "out", value_hint = ValueHint::DirPath)]
-    out_dir: PathBuf,
+    output_dir: PathBuf,
     // Audio files
     files: Vec<PathBuf>,
 }
@@ -65,6 +70,7 @@ fn main() -> Result<()> {
     let mut r_params = RuntimeParams::new(
         1,
         args.post_filter,
+        args.atten_lim_db,
         args.min_db_thresh,
         args.max_db_erb_thresh,
         args.max_db_df_thresh,
@@ -85,9 +91,9 @@ fn main() -> Result<()> {
     let mut sr = model.sr;
     let mut delay = model.fft_size - model.hop_size; // STFT delay
     delay += model.lookahead * model.hop_size; // Add model latency due to lookahead
-    if !args.out_dir.is_dir() {
-        log::info!("Creating output directory: {}", args.out_dir.display());
-        std::fs::create_dir_all(args.out_dir.clone())?
+    if !args.output_dir.is_dir() {
+        log::info!("Creating output directory: {}", args.output_dir.display());
+        std::fs::create_dir_all(args.output_dir.clone())?
     }
     for file in args.files {
         let reader = ReadWav::new(file.to_str().unwrap())?;
@@ -119,7 +125,7 @@ fn main() -> Result<()> {
             elapsed,
             elapsed / t_audio
         );
-        let mut enh_file = args.out_dir.clone();
+        let mut enh_file = args.output_dir.clone();
         enh_file.push(file.file_name().unwrap());
         if args.compensate_delay {
             enh.slice_axis_inplace(Axis(1), ndarray::Slice::from(delay..));
