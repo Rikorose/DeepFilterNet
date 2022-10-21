@@ -236,7 +236,7 @@ python df/train.py path/to/dataset.cfg path/to/data_dir/ path/to/base_dir/
 
 ## Citation Guide
 
-Iy you use this framework, please cite: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
+If you use this framework, please cite: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
 
 ```bibtex
 @inproceedings{schroeter2022deepfilternet,
