@@ -362,23 +362,29 @@ impl DfTract {
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap().into_tensor();
         let emb = enc_emb.pop().unwrap().into_tensor();
-        //         let (apply_erb, apply_df) = match lsnr {
-        // (self.min_db_thresh..self.max_db_erb_thresh).contains(&lsnr) =>
-        //         }
         let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
+            // Only noise detected, just apply a zero mask
             (false, true, false)
         } else if lsnr > self.max_db_erb_thresh {
+            // Clean speech signal detected, don't apply any processing
             (false, false, false)
         } else if lsnr > self.max_db_df_thresh {
+            // Only little noisy signal detected, just apply 1st stage, skip DF stage
             (true, false, false)
         } else {
+            // Regular noisy signal detected, apply 1st and 2nd stage
             (true, false, true)
         };
-        let (run_erb, run_df) = (true, true); // for now
+        log::trace!(
+            "Enhancing frame with lsnr {:.1}. Applying stage 1: {} and stage 2: {}.",
+            lsnr,
+            apply_erb,
+            apply_df
+        );
 
         let mut spec =
             self.rolling_spec_buf.get_mut(self.df_order - 1).unwrap().to_array_view_mut()?;
-        let mut m = if run_erb {
+        let mut m = if apply_erb {
             let dec_input = tvec!(
                 emb.clone(),
                 enc_emb.pop().unwrap().into_tensor(), // e3
@@ -386,24 +392,20 @@ impl DfTract {
                 enc_emb.pop().unwrap().into_tensor(), // e1
                 enc_emb.pop().unwrap().into_tensor(), // e0
             );
-            if apply_erb {
-                let mut m = self.erb_dec.run(dec_input)?;
-                let mut m = m
-                    .pop()
-                    .unwrap()
-                    .into_tensor()
-                    .into_shape(&[self.ch, self.nb_erb])?
-                    .into_array()?;
-                if self.ch > 1 {
-                    m = match self.reduce_mask {
-                        ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
-                        ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
-                    };
-                }
-                Some(m)
-            } else {
-                None
+            let mut m = self.erb_dec.run(dec_input)?;
+            let mut m = m
+                .pop()
+                .unwrap()
+                .into_tensor()
+                .into_shape(&[self.ch, self.nb_erb])?
+                .into_array()?;
+            if self.ch > 1 {
+                m = match self.reduce_mask {
+                    ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
+                    ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
+                };
             }
+            Some(m)
         } else {
             None
         };
@@ -426,19 +428,17 @@ impl DfTract {
             .get_mut(self.df_order - 1 - self.df_lookahead.saturating_sub(1))
             .unwrap();
         self.spec_buf.clone_from(spec);
-        if run_df {
+        if apply_df {
             let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
             coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
-            if apply_df {
-                df(
-                    &self.rolling_spec_buf,
-                    coefs,
-                    self.nb_df,
-                    self.df_order,
-                    self.n_freqs,
-                    &mut self.spec_buf,
-                )?;
-            }
+            df(
+                &self.rolling_spec_buf,
+                coefs,
+                self.nb_df,
+                self.df_order,
+                self.n_freqs,
+                &mut self.spec_buf,
+            )?;
         };
 
         // Limit noise attenuation by mixing back some of the noisy signal
