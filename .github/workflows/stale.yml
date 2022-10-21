@@ -13,7 +13,7 @@ jobs:
             This issue is stale because it has been open 90 days with no activity.
             Remove stale label or comment or this will be closed in 7 days.
           stale-issue-label: 'stale'
-          exempt-issue-labels: 'work-in-progress,pinned,security'
+          exempt-issue-labels: 'work-in-progress,pinned,security,bug,enhancement'
           days-before-pr-stale: -1
           days-before-issue-stale: 90
           days-before-issue-close: 7
