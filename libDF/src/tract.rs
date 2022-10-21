@@ -216,7 +216,9 @@ impl DfTract {
             _ => return Err(anyhow!("Unsupported model type")),
         };
         log::info!(
-            "Running with model type {} lookahead {}", model_type, lookahead
+            "Running with model type {} lookahead {}",
+            model_type,
+            lookahead
         );
 
         let rolling_spec_buf = VecDeque::with_capacity(df_order + lookahead);
