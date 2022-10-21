@@ -33,7 +33,7 @@ struct Args {
     /// Attenuation limit in dB by mixing the enhanced signal with the noisy signal.
     /// An attenuation limit of 0 dB means no noise reduction will be performed, 100 dB means full
     /// noise reduction, i.e. no attenuation limit.
-    #[arg(short, long, default_value_t=100.)]
+    #[arg(short, long, default_value_t = 100.)]
     atten_lim_db: f32,
     /// Min dB local SNR threshold for running the decoder DNN side
     #[arg(long, value_parser, default_value_t=-15.)]
