@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "DeepFilterDataLoader"
-version = "0.3.0"
+version = "0.3.1-pre"
 dependencies = [
  "crossbeam-channel",
  "deep_filter",
@@ -16,7 +16,7 @@ dependencies = [
 
 [[package]]
 name = "DeepFilterLib"
-version = "0.3.0"
+version = "0.3.1-pre"
 dependencies = [
  "deep_filter",
  "ndarray",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "deep-filter-ladspa"
-version = "0.3.0"
+version = "0.3.1-pre"
 dependencies = [
  "deep_filter",
  "env_logger",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "deep_filter"
-version = "0.3.0"
+version = "0.3.1-pre"
 dependencies = [
  "anyhow",
  "bincode",
