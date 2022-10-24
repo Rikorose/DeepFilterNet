@@ -81,7 +81,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout DeepFilterNet
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Echo git tag
         run: |
@@ -97,7 +97,7 @@ jobs:
 
       - name: Install Python
         if: matrix.os != 'ubuntu-latest'
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python.version }}
       - name: Setup Python manylinux
@@ -134,7 +134,7 @@ jobs:
           delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
           mv target/repaired/* target/wheels/
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: libdf-wheels-${{ needs.create-release.outputs.df_version }}
           path: target/wheels/
@@ -156,8 +156,8 @@ jobs:
         python-version: ["3.10"] # wheel will be independent of python version
     runs-on: ubuntu-18.04
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install poetry
@@ -165,7 +165,7 @@ jobs:
       - name: Build wheels
         run: poetry build -vvv
         working-directory: DeepFilterNet
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: deepfilternet-wheels-${{ needs.create-release.outputs.df_version }}
           path: DeepFilterNet/dist/
@@ -183,7 +183,7 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [build-libdf-wheels, build-deepfilternet-wheels, create-release]
     steps:
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
       - name: Show DF version
         run: |
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
@@ -243,10 +243,6 @@ jobs:
           toolchain: ${{matrix.rust}}
           override: true
           target: ${{matrix.platform.target}}
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{matrix.manylinux}}-${{matrix.platform.arch}}
       - name: Set Python Version
         run: |
           echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV

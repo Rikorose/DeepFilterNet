@@ -36,7 +36,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Echo git tag
         run: |
           echo "git tag: ${{github.event.head_commit.message}}"
@@ -55,7 +55,7 @@ jobs:
             exit 78
           fi
       - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.9.1
+        uses: styfle/cancel-workflow-action@0.11.0
         with:
           access_token: ${{ github.token }}
       # Soundfile backend for torchaudio
@@ -66,21 +66,20 @@ jobs:
 
       # Rust installation
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with: {profile: "minimal", toolchain: "stable"}
+        uses: dtolnay/rust-toolchain@stable
       - name: Rust cache
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
       # Python and poetry install
       - name: Install Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python }}
       - name: Load cached Poetry installation
         if: matrix.os != 'windows-latest'
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: ~/.local
           key: poetry-${{ runner.os }}-${{ matrix.python }}-1
@@ -99,7 +98,7 @@ jobs:
       - name: Configure poetry
         run: poetry config virtualenvs.in-project true
       - name: Set venv up cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         id: cache
         with:
           path: |
@@ -133,7 +132,7 @@ jobs:
           poetry run python df/scripts/dnsmos.py ../assets/noisy_snr0.wav -t 4.320409320319172 2.53722799232174 3.209282577524924
           poetry run python df/scripts/dnsmos.py ../out/noisy_snr0_DeepFilterNet2.wav -t 4.12677460716050 4.45606916030286 3.62059268038164
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: enhanced-${{ runner.os }}
           path: out/*wav
