@@ -25,7 +25,7 @@ jobs:
           - {command: build, rust: nightly, args: '--all-features', hdf5: true}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install Rust (${{matrix.rust}})
         uses: actions-rs/toolchain@v1
         with: {profile: minimal, toolchain: '${{matrix.rust}}', override: true, components: 'rustfmt, clippy'}
@@ -41,7 +41,7 @@ jobs:
         with:
           command: ${{matrix.command}}
           args: ${{matrix.args}}
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         if: matrix.command == 'test'
         with:
           name: test-artifacts
@@ -96,7 +96,7 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v3
         with:
           key: ${{matrix.target}}
 
