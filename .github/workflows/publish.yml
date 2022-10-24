@@ -189,12 +189,12 @@ jobs:
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
           echo "DF version is: ${{ env.DF_VERSION }}"
       - name: Get libdf wheels
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: libdf-wheels-${{ env.DF_VERSION }}
           path: libdf-wheels
       - name: Get deepfilternet wheels
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: deepfilternet-wheels-${{ env.DF_VERSION }}
           path: deepfilternet-wheels
