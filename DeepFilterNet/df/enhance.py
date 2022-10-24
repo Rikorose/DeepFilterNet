@@ -9,7 +9,7 @@ from loguru import logger
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from df import config
+from df import __version__, config
 from df.checkpoint import load_model as load_model_cp
 from df.io import load_audio, resample, save_audio
 from df.logger import init_logger
@@ -262,6 +262,7 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
         type=parse_epoch_type,
         help="Epoch for checkpoint loading. Can be one of ['best', 'latest', <int>].",
     )
+    parser.add_argument("--version", action="store_true")
     return parser
 
 
@@ -286,7 +287,11 @@ def run():
         nargs="+",
         help="List of noise files to mix with the clean speech file.",
     )
-    main(parser.parse_args())
+    args = parser.parse_args()
+    if args.version:
+        print("DeepFilterNet", __version__)
+        exit(0)
+    main(args)
 
 
 if __name__ == "__main__":
