@@ -243,10 +243,6 @@ jobs:
           toolchain: ${{matrix.rust}}
           override: true
           target: ${{matrix.platform.target}}
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v3
-        with:
-          key: ${{matrix.manylinux}}-${{matrix.platform.arch}}
       - name: Set Python Version
         run: |
           echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
