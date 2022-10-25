@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::sync::Once;
+use std::time::Instant;
 use std::{collections::VecDeque, io};
 
 use df::tract::*;
@@ -54,7 +55,7 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
     let df_params =
         DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
             .expect("Could not load model tar.");
-    let r_params = RuntimeParams::new(1, false, 100., -15., 30., 30., ReduceMask::MEAN);
+    let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
     let inframe = Vec::with_capacity(m.hop_size);
@@ -81,7 +82,7 @@ pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin +
     let df_params =
         DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
             .expect("Could not load model tar.");
-    let r_params = RuntimeParams::new(2, false, 100., -15., 30., 30., ReduceMask::MEAN);
+    let r_params = RuntimeParams::new(2, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
     let inframe = StereoBuffer::with_frame_size(m.hop_size);
@@ -109,6 +110,7 @@ impl Plugin for DfMono {
         log::info!("DfMono::deactivate()");
     }
     fn run<'a>(&mut self, _sample_count: usize, ports: &[&'a PortConnection<'a>]) {
+        let t0 = Instant::now();
         let n = self.df.hop_size;
         let mut i_idx = 0;
 
@@ -116,12 +118,6 @@ impl Plugin for DfMono {
         let mut output = ports[1].unwrap_audio_mut();
         let atten_lim = ports[2].unwrap_control();
         self.df.set_atten_lim(*atten_lim).unwrap();
-
-        log::info!(
-            "DfMono::run() with input {} and output {}",
-            input.len(),
-            output.len()
-        );
 
         // Check self.inbuf has some samples from previous run calls and fill up
         let mut missing = n.saturating_sub(self.inframe.len());
@@ -139,6 +135,7 @@ impl Plugin for DfMono {
             n
         );
 
+        let mut lsnr = Vec::new();
         // Check if self.inbuf has enough samples and process
         if self.inframe.len() == n {
             let i_f = slice_as_arrayview(self.inframe.as_slice(), &[1, n])
@@ -147,7 +144,7 @@ impl Plugin for DfMono {
             let o_f = mut_slice_as_arrayviewmut(self.outframe.as_mut_slice(), &[1, n])
                 .into_dimensionality::<Ix2>()
                 .unwrap();
-            self.df.process(i_f, o_f).unwrap();
+            lsnr.push(self.df.process(i_f, o_f).unwrap());
             // Store processed samples from in outbuf
             for &x in self.outframe.iter() {
                 self.outbuf.push_back(x)
@@ -164,7 +161,7 @@ impl Plugin for DfMono {
             let o_f = mut_slice_as_arrayviewmut(self.outframe.as_mut_slice(), &[1, n])
                 .into_dimensionality::<Ix2>()
                 .unwrap();
-            self.df.process(i_f, o_f).unwrap();
+            lsnr.push(self.df.process(i_f, o_f).unwrap());
             for &x in self.outframe.iter() {
                 self.outbuf.push_back(x)
             }
@@ -181,6 +178,13 @@ impl Plugin for DfMono {
                 *o = self.outbuf.pop_front().unwrap();
             }
         }
+
+        log::info!(
+            "DfMono::run() enhanced frame with size {}. LSNR: {:.1}, Processing time: {:.1}",
+            input.len(),
+            df::mean(&lsnr),
+            t0.elapsed().as_secs_f32() / 1000.
+        );
     }
 }
 impl Plugin for DfStereo {
@@ -191,6 +195,7 @@ impl Plugin for DfStereo {
         log::info!("DfStereo::deactivate()");
     }
     fn run<'a>(&mut self, _sample_count: usize, ports: &[&'a PortConnection<'a>]) {
+        let t0 = Instant::now();
         let n = self.df.hop_size;
         let mut i_idx = 0;
 
@@ -200,12 +205,7 @@ impl Plugin for DfStereo {
         let mut output_r = ports[3].unwrap_audio_mut();
         let atten_lim = ports[4].unwrap_control();
         self.df.set_atten_lim(*atten_lim).unwrap();
-
-        log::info!(
-            "DfStereo::run() with input {} and output {}",
-            input_l.len(),
-            output_l.len()
-        );
+        let mut lsnr = Vec::new();
 
         // Check self.inbuf has some samples from previous run calls and fill up
         loop {
@@ -229,7 +229,7 @@ impl Plugin for DfStereo {
 
             let i_f = self.inframe.as_arrayview();
             let o_f = self.outframe.as_arrayviewmut();
-            self.df.process(i_f, o_f).unwrap();
+            lsnr.push(self.df.process(i_f, o_f).unwrap());
             for (of_ch, ob_ch) in self.outframe.channels().iter().zip(self.outbuf.iter_mut()) {
                 // Store processed samples in self.outbuf
                 for &x in of_ch.iter() {
@@ -253,6 +253,21 @@ impl Plugin for DfStereo {
                     *o = b_ch.pop_front().unwrap();
                 }
             }
+        }
+
+        let l = input_l.len();
+        let td = t0.elapsed();
+        let td_ms = td.as_secs_f32() * 1000.;
+        let rtf = td_ms / (l as f32 / (self.df.sr * 1000) as f32);
+        log::info!(
+            "DfStereo::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.3}ms, RTF: {:.2}",
+            l,
+            df::mean(&lsnr),
+            td_ms,
+            rtf
+        );
+        if rtf >= 1. {
+            log::warn!("Underrun detected. Processing too slow!")
         }
     }
 }

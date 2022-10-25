@@ -511,6 +511,17 @@ where
     });
     (pow_sum / n as f32).sqrt()
 }
+pub fn mean<'a, I>(vals: I) -> f32
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut n = 0;
+    let sum = vals.into_iter().fold(0., |acc, v| {
+        n += 1;
+        acc + v
+    });
+    sum / n as f32
+}
 
 #[cfg(test)]
 mod tests {
