@@ -20,7 +20,10 @@ def spec_figure(
     spec = torch.as_tensor(spec).detach()
     if labels:
         kwargs.setdefault("xlabel", "Time [s]")
-        kwargs.setdefault("ylabel", "Frequency [Hz]")
+        if kwargs.get("kHz", False):
+            kwargs.setdefault("ylabel", "Frequency [kHz]")
+        else:
+            kwargs.setdefault("ylabel", "Frequency [Hz]")
     if from_audio:
         n_fft = kwargs.setdefault("n_fft", 1024)
         hop = kwargs.setdefault("hop", 256)
