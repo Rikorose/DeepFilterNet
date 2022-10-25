@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import argparse
 import concurrent.futures
 import json
@@ -91,7 +93,7 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
             have_write_locks = False
             for line in open(lock_f):
                 line = line.strip()
-                if line.endswith(".write") and not line.startswith(lock):
+                if lock is not None and line.endswith(".write") and not line.startswith(lock):
                     print("Directory currently locked:", line, file=stderr)
                     have_write_locks = True
                     break
