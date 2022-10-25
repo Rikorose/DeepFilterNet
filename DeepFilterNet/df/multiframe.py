@@ -222,11 +222,25 @@ class MfWf(MultiFrameModule):
     """Multi-frame Wiener filter base module."""
 
     def __init__(
-        self, num_freqs: int, frame_size: int, lookahead: int = 0, cholesky_decomp: bool = False
+        self,
+        num_freqs: int,
+        frame_size: int,
+        lookahead: int = 0,
+        cholesky_decomp: bool = False,
+        inverse: bool = True,
     ):
-        """Multi-frame Wiener Filter via an estimate of the inverse"""
+        """Multi-frame Wiener Filter via an estimate of the inverse
+
+        Args:
+            num_freqs (int): Number of frequency bins to apply MVDR filtering to.
+            frame_size (int): Frame size of the MF MVDR filter.
+            lookahead (int): Lookahead of the frame.
+            cholesky_decomp (bool): Whether the input is a cholesky decomposition of the correlation matrix. Defauls to `False`.
+            inverse (bool): Wheter the input is a normal or inverse correlation matrix. Defaults to `True`.
+        """
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
         self.cholesky_decomp = cholesky_decomp
+        self.inverse = inverse
 
     def forward(self, spec: Tensor, ifc: Tensor, iRxx: Tensor) -> Tensor:
         """Multi-frame Wiener filter based on Rxx**-1 and speech IFC vector.
@@ -234,17 +248,19 @@ class MfWf(MultiFrameModule):
         Args:
             spec (complex Tensor): Spectrogram of shape [B, 1, T, F]
             ifc (complex Tensor): Inter-frame speech correlation vector [B, T, F, N*2]
-            iRxx (complex Tensor): Inverse noisy covariance matrix Rxx**-1 [B, T, F, (N**2)*2] OR
+            iRxx (complex Tensor): (Inverse) noisy covariance matrix Rxx**-1 [B, T, F, (N**2)*2] OR
                 cholesky_decomp Rxx=L*L^H of the same shape.
 
         Returns:
             spec (complex Tensor): Filtered spectrogram of shape [B, C, T, F]
         """
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
-        ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
         if self.cholesky_decomp:
-            iRxx = iRxx * iRxx.transpose(3, 4).conj()
+            iRxx = iRxx.matmul(iRxx.transpose(3, 4).conj())
+        if not self.inverse:
+            iRxx = torch.linalg.inv(iRxx)
+        ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         w = torch.einsum("...nm,...m->...n", iRxx, ifc).unsqueeze(1)  # [B, 1, F, N]
         spec_f = self.apply_coefs(spec_f, w)
@@ -260,20 +276,32 @@ class MfMvdr(MultiFrameModule):
     eps: Final[float]
     normalize_ifc: Final[bool]
     cholesky_decomp: Final[bool]
+    inverse: Final[bool]
 
     def __init__(
         self,
         num_freqs: int,
         frame_size: int,
         lookahead: int = 0,
-        eps: float = 1e-8,
         normalize_ifc: bool = True,
         cholesky_decomp: bool = False,
+        inverse: bool = True,
+        eps: float = 1e-8,
     ):
-        """Multi-frame minimum variance distortionless beamformer."""
+        """Multi-frame minimum variance distortionless beamformer.
+
+        Args:
+            num_freqs (int): Number of frequency bins to apply MVDR filtering to.
+            frame_size (int): Frame size of the MF MVDR filter.
+            lookahead (int): Lookahead of the frame.
+            normalize_ifc (bool): Normalize input IFC by IFC[0].
+            cholesky_decomp (bool): Whether the input is a cholesky decomposition of the correlation matrix. Defauls to `False`.
+            inverse (bool): Wheter the input is a normal or inverse correlation matrix. Defaults to `True`.
+        """
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
         self.eps = eps
         self.normalize_ifc = normalize_ifc
+        self.inverse = inverse
         self.cholesky_decomp = cholesky_decomp
 
     def forward(self, spec: Tensor, ifc: Tensor, iRnn: Tensor) -> Tensor:
@@ -282,7 +310,7 @@ class MfMvdr(MultiFrameModule):
         Args:
             spec (complex Tensor): Spectrogram of shape [B, C, T, F]
             ifc (complex Tensor): Inter-frame speech correlation vector [B, C*N*2, T, F]
-            iRnn (complex Tensor): Inverse noise covariance matrix Rnn**-1 [B, T, F (N**2)*2] OR
+            iRnn (complex Tensor): (Inverse) noise covariance matrix Rnn**-1 [B, T, F (N**2)*2] OR
                 cholesky_decomp Rnn=L*L^H of the same shape.
 
         Returns:
@@ -291,7 +319,9 @@ class MfMvdr(MultiFrameModule):
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         iRnn = torch.view_as_complex(iRnn.unflatten(3, (self.frame_size, self.frame_size, 2)))
         if self.cholesky_decomp:
-            iRnn = iRnn * iRnn.transpose(3, 4).conj()
+            iRnn = iRnn.matmul(iRnn.transpose(3, 4).conj())
+        if not self.inverse:
+            iRnn = torch.linalg.inv(iRnn)
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         if self.normalize_ifc:
             ifc0 = ifc[..., -1]
@@ -402,7 +432,7 @@ def compute_ideal_wf():
     save_audio("out/ideal_mfwf.wav", y, p.sr)
 
 
-def compute_ideal_mvdr(cholesky_decomp=False):
+def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
     from icecream import ic, install
 
     import libdf
@@ -411,6 +441,7 @@ def compute_ideal_mvdr(cholesky_decomp=False):
     from df.model import ModelParams
 
     ic.includeContext = True
+    torch.set_printoptions(linewidth=120)
 
     ORDER = 5
     DLOAD = 1e-9
@@ -430,41 +461,48 @@ def compute_ideal_mvdr(cholesky_decomp=False):
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
-    mvdr = MfMvdr(p.fft_size // 2 + 1, ORDER, cholesky_decomp=cholesky_decomp)
+    mvdr = MfMvdr(p.fft_size // 2 + 1, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
     Rss, Rnn = [compute_cov(x, ORDER) for x in (S, N)]
 
-    # A: Normalized IFC
+    # A: IFC, needs to be normalized later
     ifc = Rss[..., -1]
-    ifc0 = ifc[..., -1]
-    ifc0[:, 0] = 1
-    ifc = ifc / (ifc0.unsqueeze(-1) + EPS)
 
     # B: IFC via EVD
     _, v = torch.linalg.eigh(Rss)
     ifc = v[..., -1]  # Choose highest eigenvector
 
     Rnn = _tik_reg(Rnn, DLOAD, EPS)
-    R_inv = torch.inverse(Rnn)
+    if inverse:
+        A = torch.linalg.inv(Rnn)
+    else:
+        A = Rnn
     if cholesky_decomp:
-        L, info = torch.linalg.cholesky_ex(R_inv)
-        ic(torch.where(info > 0, 1, 0).sum())
-        R_inv = L
+        A, info = torch.linalg.cholesky_ex(A)
+        print("Number of errors during cholesky_decomp:", torch.where(info > 0, 1, 0).sum())
     # Manual way
-    num = torch.linalg.solve(Rnn, ifc)
-    # num = torch.einsum("...nm,...m->...n", R_inv, ifc)
-    denum = torch.einsum("...n,...n->...", ifc.conj(), num)
-    w = num / (denum.unsqueeze(-1) + EPS)
-    Y = torch.einsum("...fn,...fn->...f", Xw, w)
+    if manual:
+        ifc0 = ifc[..., -1]
+        ifc = ifc / (ifc0.unsqueeze(-1) + EPS)
+        if cholesky_decomp:
+            A = A.matmul(A.conj().transpose(-1, -2))
+        if inverse:
+            num = torch.einsum("...nm,...m->...n", A, ifc)
+        else:
+            num = torch.linalg.solve(Rnn, ifc)
+        denum = torch.einsum("...n,...n->...", ifc.conj(), num)
+        w = num / (denum.unsqueeze(-1) + EPS)
+        Y = torch.einsum("...fn,...fn->...f", Xw, w)
     # Using torch module (which expects real valued flattened input)
-    Y = torch.view_as_complex(
-        mvdr(
-            torch.view_as_real(X).unsqueeze(1),
-            torch.view_as_real(ifc).flatten(3),
-            torch.view_as_real(R_inv).flatten(3),
-        ).squeeze(1)
-    )
+    else:
+        Y = torch.view_as_complex(
+            mvdr(
+                torch.view_as_real(X).unsqueeze(1),
+                torch.view_as_real(ifc).flatten(3),
+                torch.view_as_real(A).flatten(3),
+            ).squeeze(1)
+        )
     y = df.synthesis(Y.numpy())
     save_audio("out/ideal_mfmvdr.wav", y, p.sr)
