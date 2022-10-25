@@ -1845,9 +1845,8 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tract-core"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72bf19d9329ed3a44e8dcdfb2b7d7d563f68abf1ee4360dc5172a8eb24d3c33f"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "anyhow",
  "bit-set",
@@ -1868,9 +1867,8 @@ dependencies = [
 
 [[package]]
 name = "tract-data"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97725e0c4a6e0839925f0462a6603d69930ba23c4600f3e9c1f03479ce035629"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "anyhow",
  "educe",
@@ -1888,9 +1886,8 @@ dependencies = [
 
 [[package]]
 name = "tract-hir"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40cb9564e176b71d60e071b6ae02cc39ea367c8a1f10786c9c1e82807dcf103d"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "derive-new",
  "educe",
@@ -1900,9 +1897,8 @@ dependencies = [
 
 [[package]]
 name = "tract-linalg"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12c9c8088f72957485194f3bb5ce6412857221d8ac92eaba3e0fade74a496296"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "cc",
  "derive-new",
@@ -1924,9 +1920,8 @@ dependencies = [
 
 [[package]]
 name = "tract-nnef"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4587bd73fe6417cfb7e6acda69d9eebf61bc235bfef13ea2a341848f337e0805"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "byteorder",
  "flate2",
@@ -1939,9 +1934,8 @@ dependencies = [
 
 [[package]]
 name = "tract-onnx"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4257fe9c2ba087a3127a6b88b9afd1526ec925d52abf62b111d0773195e4cfc"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "bytes",
  "derive-new",
@@ -1958,9 +1952,8 @@ dependencies = [
 
 [[package]]
 name = "tract-onnx-opl"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f33fb9b6b680035b000e65598746e3028ac822c9de517f96d1fb7c2f1ada4f6"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "educe",
  "getrandom",
@@ -1971,9 +1964,8 @@ dependencies = [
 
 [[package]]
 name = "tract-pulse"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f372eeae8e59f79c0bcd8525964fd1112bf0aca0255ef408c5ac4a1f21fd1129"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "downcast-rs",
  "lazy_static",
@@ -1982,9 +1974,8 @@ dependencies = [
 
 [[package]]
 name = "tract-pulse-opl"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2fe2d196fa312f2a7ecea31580bfa5baffb2779fc5848d791518016f0f5ef46"
+version = "0.18.3-pre"
+source = "git+https://github.com/sonos/tract#ed00ff7eadc84b345318b042f134602ed743879d"
 dependencies = [
  "downcast-rs",
  "lazy_static",
