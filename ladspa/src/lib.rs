@@ -179,11 +179,16 @@ impl Plugin for DfMono {
             }
         }
 
+        let l = input.len();
+        let td = t0.elapsed();
+        let td_ms = td.as_secs_f32() * 1000.;
+        let rtf = td_ms / (l as f32 / (self.df.sr * 1000) as f32);
         log::info!(
-            "DfMono::run() enhanced frame with size {}. LSNR: {:.1}, Processing time: {:.1}",
-            input.len(),
+            "DfMono::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.1}ms, RTF: {:.2}",
+            l,
             df::mean(&lsnr),
-            t0.elapsed().as_secs_f32() / 1000.
+            td_ms,
+            rtf
         );
     }
 }
@@ -260,14 +265,14 @@ impl Plugin for DfStereo {
         let td_ms = td.as_secs_f32() * 1000.;
         let rtf = td_ms / (l as f32 / (self.df.sr * 1000) as f32);
         log::info!(
-            "DfStereo::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.3}ms, RTF: {:.2}",
+            "DfStereo::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.1}ms, RTF: {:.2}",
             l,
             df::mean(&lsnr),
             td_ms,
             rtf
         );
         if rtf >= 1. {
-            log::warn!("Underrun detected. Processing too slow!")
+            log::warn!("Underrun detected ({:.1}). Processing too slow!", rtf);
         }
     }
 }
