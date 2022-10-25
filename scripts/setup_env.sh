@@ -67,6 +67,7 @@ setup_env() {
     echo "Installing conda env to $env_path"
     conda create -y -q -p "$env_path" \
       python=$PYTHON_V \
+      patchelf \
       "$pytorch_v_arg" \
       torchaudio \
       cudatoolkit=$cuda_version -c "pytorch$nightly" -c conda-forge
@@ -78,6 +79,7 @@ setup_env() {
     # Only need to activate the existing env
     setup_conda
     conda activate "$env"
+    conda install patchelf
 
     echo "Running on env: $CONDA_DEFAULT_ENV"
   fi
