@@ -182,7 +182,7 @@ impl Plugin for DfMono {
         let l = input.len();
         let td = t0.elapsed();
         let td_ms = td.as_secs_f32() * 1000.;
-        let rtf = td_ms / (l as f32 / (self.df.sr * 1000) as f32);
+        let rtf = td_ms / (l as f32 / (self.df.sr / 1000) as f32);
         log::info!(
             "DfMono::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.1}ms, RTF: {:.2}",
             l,
@@ -263,7 +263,7 @@ impl Plugin for DfStereo {
         let l = input_l.len();
         let td = t0.elapsed();
         let td_ms = td.as_secs_f32() * 1000.;
-        let rtf = td_ms / (l as f32 / (self.df.sr * 1000) as f32);
+        let rtf = td_ms / (l as f32 / (self.df.sr / 1000) as f32);
         log::info!(
             "DfStereo::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.1}ms, RTF: {:.2}",
             l,
