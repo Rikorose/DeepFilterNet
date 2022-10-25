@@ -767,14 +767,7 @@ class GroupedLinearEinsum(nn.Module):
         x = x.view(new_shape)
         # The better way, but not supported by torchscript
         #     x = x.unflatten(-1, (self.groups, self.ws))  # [..., G, I/G]
-
-        # This is not supported by tract:
         x = torch.einsum("btgi,gih->btgh", x, self.weight)  # [..., G, H/G]
-        # This does not work with tract too:
-        # x = torch.matmul(x.unsqueeze(3), self.weight).squeeze(3)
-        # Thus, to export the model to onnx with tract compat use:
-        # x = x.unsqueeze(-1).mul(self.weight.unsqueeze(0).unsqueeze(0)).sum(-2)
-
         x = x.flatten(2, 3)  # [B, T, H]
         return x
 
