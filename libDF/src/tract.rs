@@ -315,7 +315,7 @@ impl DfTract {
         Ok(())
     }
 
-    pub fn process(&mut self, noisy: ArrayView2<f32>, mut enh: ArrayViewMut2<f32>) -> Result<()> {
+    pub fn process(&mut self, noisy: ArrayView2<f32>, mut enh: ArrayViewMut2<f32>) -> Result<f32> {
         #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let ch = noisy.len_of(Axis(0));
@@ -471,7 +471,7 @@ impl DfTract {
             (t4 - t3).as_secs_f32() * 1000.,
             t4.elapsed().as_secs_f32() * 1000.,
         );
-        Ok(())
+        Ok(lsnr)
     }
 }
 
