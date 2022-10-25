@@ -115,7 +115,7 @@ fn main() -> Result<()> {
             if ns_f.len_of(Axis(1)) < model.hop_size {
                 break;
             }
-            model.process(ns_f, enh_f)?
+            model.process(ns_f, enh_f)?;
         }
         let elapsed = t0.elapsed().as_secs_f32();
         let t_audio = noisy.len_of(Axis(1)) as f32 / sr as f32;
