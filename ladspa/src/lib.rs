@@ -24,6 +24,9 @@ struct DfStereo {
 
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
+const MODEL: &[u8] = include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz");
+// To use the original DeepFilterNet2 model use this instead:
+// const MODEL: & [u8] = include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz");
 
 fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
     let ts = buf.timestamp_millis();
@@ -52,9 +55,7 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
             .init();
     });
 
-    let df_params =
-        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
-            .expect("Could not load model tar.");
+    let df_params = DfParams::from_bytes(MODEL).expect("Could not load model tar.");
     let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
@@ -79,9 +80,7 @@ pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin +
             .init();
     });
 
-    let df_params =
-        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz"))
-            .expect("Could not load model tar.");
+    let df_params = DfParams::from_bytes(MODEL).expect("Could not load model tar.");
     let r_params = RuntimeParams::new(2, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
@@ -179,17 +178,20 @@ impl Plugin for DfMono {
             }
         }
 
-        let l = input.len();
         let td = t0.elapsed();
         let td_ms = td.as_secs_f32() * 1000.;
-        let rtf = td_ms / (l as f32 / (self.df.sr / 1000) as f32);
+        let t_audio = input.len() as f32 / self.df.sr as f32;
+        let rtf = td.as_secs_f32() / t_audio;
         log::info!(
-            "DfMono::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.1}ms, RTF: {:.2}",
-            l,
+            "DfMono::run() enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
+            input.len(),
             df::mean(&lsnr),
             td_ms,
             rtf
         );
+        if rtf >= 1. {
+            log::warn!("Underrun detected ({:.1}). Processing too slow!", rtf);
+        }
     }
 }
 impl Plugin for DfStereo {
@@ -260,13 +262,13 @@ impl Plugin for DfStereo {
             }
         }
 
-        let l = input_l.len();
         let td = t0.elapsed();
         let td_ms = td.as_secs_f32() * 1000.;
-        let rtf = td_ms / (l as f32 / (self.df.sr / 1000) as f32);
+        let t_audio = input_l.len() as f32 / self.df.sr as f32;
+        let rtf = td.as_secs_f32() / t_audio;
         log::info!(
-            "DfStereo::run() enhanced frame with size {}. SNR: {:.1}, Processing time: {:.1}ms, RTF: {:.2}",
-            l,
+            "DfStereo::run() enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
+            input_l.len(),
             df::mean(&lsnr),
             td_ms,
             rtf
