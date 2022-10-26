@@ -274,7 +274,7 @@ jobs:
       # Emit backtraces on panics.
       RUST_BACKTRACE: 1
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
@@ -296,6 +296,7 @@ jobs:
           - build: win-msvc
             os: windows-2022
             target: x86_64-pc-windows-msvc
+            ext: .exe
     defaults:
       run:
         shell: bash
@@ -323,14 +324,14 @@ jobs:
           echo "target dir is: ${{ env.TARGET_DIR }}"
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
           echo "DF version is: ${{ env.DF_VERSION }}"
-          echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}" >> $GITHUB_ENV
+          echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}${{ matrix.ext }}" >> $GITHUB_ENV
 
       - name: Build release binary
         run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc,wav-utils --profile=release-lto -p deep_filter --bin deep-filter ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/deep-filter" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
+          mv "target/${{ matrix.target }}/release-lto/deep-filter${{ matrix.ext }}" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
           chmod +x "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
 
       - uses: actions/upload-artifact@v3
