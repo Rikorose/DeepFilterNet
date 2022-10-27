@@ -89,8 +89,8 @@ setup_env() {
     rustup default stable
     rustup update stable
     pip install -U maturin
-    maturin develop --release -m "$PROJECT_HOME"/pyDF/Cargo.toml
-    maturin develop --release -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
+    maturin develop --profile=release-lto -m "$PROJECT_HOME"/pyDF/Cargo.toml
+    maturin develop --profile=release-lto -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
   fi
   if [ $INSTALL_PYDEPS -eq 1 ]; then
     echo "Installing requirements"
