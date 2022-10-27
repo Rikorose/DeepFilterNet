@@ -186,7 +186,7 @@ class MaskLoss(nn.Module):
         factors: List[float] = [1],
         f_under: float = 1,
         eps=1e-12,
-        factor=1,
+        factor: float = 1.0,
         gamma_pred: Optional[float] = None,
     ):
         super().__init__()
@@ -196,6 +196,8 @@ class MaskLoss(nn.Module):
             self.mask_fn = irm
         elif mask == "iam":
             self.mask_fn = iam
+        elif mask == "spec":
+            self.mask_fn = None
         else:
             raise ValueError("Unsupported mask function.")
         self.gamma = gamma
@@ -221,11 +223,19 @@ class MaskLoss(nn.Module):
 
     @torch.jit.export
     def erb_mask_compr(self, clean: Tensor, noisy: Tensor, compressed: bool = True) -> Tensor:
-        mask = self.mask_fn(clean, noisy)
-        mask = torch.matmul(mask, self.erb_fb).clamp_min(self.eps)
+        mask_fn = self.mask_fn or iam
+        mask = mask_fn(clean, noisy)
+        mask = self.erb(mask)
         if compressed:
             mask = mask.pow(self.gamma)
         return mask
+
+    @torch.jit.export
+    def erb(self, x: Tensor, clamp_min=True) -> Tensor:
+        x = torch.matmul(x, self.erb_fb)
+        if clamp_min:
+            x = x.clamp_min(clamp_min)
+        return x
 
     @torch.jit.export
     def erb_inv(self, x: Tensor) -> Tensor:
@@ -239,8 +249,12 @@ class MaskLoss(nn.Module):
         if not torch.isfinite(input).all():
             raise ValueError("Input is NaN")
         assert input.min() >= 0
-        g_t = self.erb_mask_compr(clean, noisy, compressed=True)
-        g_p = input.clamp_min(self.eps).pow(self.gamma_pred)
+        if self.mask_fn is not None:
+            g_t = self.erb_mask_compr(clean, noisy, compressed=True)
+            g_p = input.clamp_min(self.eps).pow(self.gamma_pred)
+        else:
+            g_t = self.erb(clean.abs()).pow(self.gamma)  # We use directly the clean spectrum
+            g_p = (self.erb(noisy.abs()) * input).pow(self.gamma_pred)
         loss = torch.zeros((), device=input.device)
         tmp = g_t.sub(g_p).pow(2)
         if self.f_under != 1:
@@ -397,12 +411,13 @@ class Loss(nn.Module):
         self.summaries: Dict[str, List[Tensor]] = self.reset_summaries()
         # Mask Loss
         self.ml_f = config("factor", 0, float, section="MaskLoss")  # e.g. 1
+        self.ml_mask = config("mask", 0, str, section="MaskLoss")  # e.g. 1
         self.ml_gamma = config("gamma", 0.6, float, section="MaskLoss")
         self.ml_gamma_pred = config("gamma_pred", 0.6, float, section="MaskLoss")
         self.ml_f_under = config("f_under", 2, float, section="MaskLoss")
         self.ml = MaskLoss(
             state,
-            "iam",
+            mask=self.ml_mask,
             factor=self.ml_f,
             f_under=self.ml_f_under,
             gamma=self.ml_gamma,
@@ -504,8 +519,7 @@ class Loss(nn.Module):
                 sdrl = self.sdrl(ms, clean_td.expand_as(ms))
             else:
                 sdrl = self.sdrl(enhanced_td, clean_td)
-        if self.store_losses and self.istft is not None:
-            assert enhanced_td is not None
+        if self.store_losses and enhanced_td is not None:
             assert clean_td is not None
             self.store_summaries(
                 enhanced_td,
