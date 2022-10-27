@@ -259,7 +259,7 @@ class DfNet(nn.Module):
         if not run_df:
             from loguru import logger
 
-            logger.warning("Runing without DF")
+            logger.warning("Running without DF")
         self.train_mask = train_mask
 
     def forward(

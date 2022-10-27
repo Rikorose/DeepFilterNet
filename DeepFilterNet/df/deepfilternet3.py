@@ -345,10 +345,10 @@ class DfNet(nn.Module):
 
         self.run_erb = p.nb_df + 1 >= self.freq_bins
         if not self.run_erb:
-            logger.warning("Runing without ERB stage")
+            logger.warning("Running without ERB stage")
         self.run_df = run_df
         if not run_df:
-            logger.warning("Runing without DF stage")
+            logger.warning("Running without DF stage")
         self.train_mask = train_mask
         assert p.df_n_iter == 1
 

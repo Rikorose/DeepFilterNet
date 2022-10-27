@@ -349,7 +349,7 @@ class DfNet(nn.Module):
 
         self.run_mff = run_df
         if not run_df:
-            logger.warning("Runing without multi-frame filtering")
+            logger.warning("Running without multi-frame filtering")
         self.train_mask = train_mask
         assert p.df_n_iter == 1
 

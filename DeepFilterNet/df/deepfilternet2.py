@@ -469,7 +469,7 @@ class DfNet(nn.Module):
 
         self.run_df = run_df
         if not run_df:
-            logger.warning("Runing without DF")
+            logger.warning("Running without DF")
         self.train_mask = train_mask
         self.df_iter = p.df_n_iter
         self.df_out_transform = (
