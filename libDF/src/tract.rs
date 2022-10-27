@@ -15,7 +15,6 @@ use tract_core::prelude::*;
 use tract_onnx::{prelude::*, tract_hir::shapefactoid};
 use tract_pulse::{internal::ToDim, model::*};
 
-use crate::transforms::find_max_abs;
 use crate::*;
 
 #[derive(Clone)]

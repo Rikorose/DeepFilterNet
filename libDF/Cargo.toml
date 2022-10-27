@@ -80,6 +80,7 @@ tract = [
 [dependencies]
 rustfft = "^6.0.1"
 realfft = "^3.0.0"
+itertools = "0.10"
 num-complex = { version = "^0.4", features = ["serde"] }
 log = { version = "0.4", features = ["std"], optional = true }
 rand = { version = "0.8", optional = true }

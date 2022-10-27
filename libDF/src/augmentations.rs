@@ -364,7 +364,7 @@ impl Transform for RandBiquadFilter {
             x.mapv_inplace(|x| x * rms / rms_new)
         } else {
             // Guard against clipping
-            let max = find_max_abs(x.iter())?;
+            let max = find_max_abs(x.iter()).unwrap();
             if (max - 1.) > 1e-10 {
                 let f = 1. / (max + 1e-10);
                 log::debug!(
@@ -659,7 +659,7 @@ fn gen_noise_with_scratch(
         // Fast path for white noise
         Array::random((ch, sr), Normal::new(-1., 1.).unwrap())
     };
-    let f = thread_rng()?.uniform(1.1, 100.) / find_max(&noise)?;
+    let f = thread_rng()?.uniform(1.1, 100.) / find_max(&noise).unwrap();
     noise *= f;
     let mut noises = concatenate(
         Axis(1),

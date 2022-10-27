@@ -4,6 +4,7 @@ use std::ops::MulAssign;
 use std::sync::Arc;
 use std::vec::Vec;
 
+use itertools::izip;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
 pub type Complex32 = num_complex::Complex32;
@@ -230,7 +231,7 @@ impl Default for DFState {
 pub fn band_mean_norm_freq(xs: &[Complex32], xout: &mut [f32], state: &mut [f32], alpha: f32) {
     debug_assert_eq!(xs.len(), state.len());
     debug_assert_eq!(xout.len(), state.len());
-    for (x, s, xo) in zip3(xs.iter(), state.iter_mut(), xout.iter_mut()) {
+    for (x, s, xo) in izip!(xs.iter(), state.iter_mut(), xout.iter_mut()) {
         let xabs = x.norm();
         *s = xabs * (1. - alpha) + *s * alpha;
         *xo = xabs - *s;
@@ -261,7 +262,7 @@ pub fn band_unit_norm_t(xs: &[Complex32], state: &mut [f32], alpha: f32, out: &m
     debug_assert_eq!(xs.len(), state.len());
     debug_assert_eq!(xs.len(), out.len() / 2);
     let (o_re, o_im) = out.split_at_mut(xs.len());
-    for (x, s, o_re, o_im) in zip4(
+    for (x, s, o_re, o_im) in izip!(
         xs.iter(),
         state.iter_mut(),
         o_re.iter_mut(),
@@ -358,7 +359,7 @@ fn frame_analysis(input: &[f32], output: &mut [Complex32], state: &mut DFState) 
     let (buf_first, buf_second) = buf.split_at_mut(state.window_size - state.frame_size);
     let (window_first, window_second) = state.window.split_at(state.window_size - state.frame_size);
     let analysis_split = state.analysis_mem.len() - state.frame_size;
-    for (&y, &w, x) in zip3(
+    for (&y, &w, x) in izip!(
         state.analysis_mem.iter(),
         window_first.iter(),
         buf_first.iter_mut(),
@@ -424,7 +425,7 @@ fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFSt
 
 fn apply_window(xs: &[f32], window: &[f32]) -> Vec<f32> {
     let mut out = vec![0.; window.len()];
-    for (&x, &w, o) in zip3(xs.iter(), window.iter(), out.iter_mut()) {
+    for (&x, &w, o) in izip!(xs.iter(), window.iter(), out.iter_mut()) {
         *o = x * w;
     }
     out
@@ -458,48 +459,103 @@ pub fn post_filter(gains: &mut [f32]) {
     }
 }
 
-pub fn zip3<A, B, C>(a: A, b: B, c: C) -> impl Iterator<Item = (A::Item, B::Item, C::Item)>
-where
-    A: IntoIterator,
-    B: IntoIterator,
-    C: IntoIterator,
-{
-    a.into_iter().zip(b.into_iter().zip(c)).map(|(x, (y, z))| (x, y, z))
+pub(crate) struct NonNan(f32);
+
+impl NonNan {
+    fn new(val: f32) -> Option<NonNan> {
+        if val.is_nan() {
+            None
+        } else {
+            Some(NonNan(val))
+        }
+    }
+    fn get(&self) -> f32 {
+        self.0
+    }
 }
-pub fn zip4<A, B, C, D>(
-    a: A,
-    b: B,
-    c: C,
-    d: D,
-) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item)>
+
+pub(crate) fn find_max<'a, I>(vals: I) -> Option<f32>
 where
-    A: IntoIterator,
-    B: IntoIterator,
-    C: IntoIterator,
-    D: IntoIterator,
+    I: IntoIterator<Item = &'a f32>,
 {
-    a.into_iter()
-        .zip(b.into_iter().zip(c.into_iter().zip(d)))
-        .map(|(w, (x, (y, z)))| (w, x, y, z))
+    vals.into_iter().try_fold(0., |acc, v| {
+        let nonnan: NonNan = match NonNan::new(*v) {
+            None => return None,
+            Some(x) => x,
+        };
+        Some(nonnan.get().max(acc))
+    })
 }
-pub fn zip5<A, B, C, D, E>(
-    a: A,
-    b: B,
-    c: C,
-    d: D,
-    e: E,
-) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item, E::Item)>
+
+pub(crate) fn find_max_abs<'a, I>(vals: I) -> Option<f32>
 where
-    A: IntoIterator,
-    B: IntoIterator,
-    C: IntoIterator,
-    D: IntoIterator,
-    E: IntoIterator,
+    I: IntoIterator<Item = &'a f32>,
 {
-    a.into_iter()
-        .zip(b.into_iter().zip(c.into_iter().zip(d.into_iter().zip(e))))
-        .map(|(v, (w, (x, (y, z))))| (v, w, x, y, z))
+    vals.into_iter().try_fold(0., |acc, v| {
+        let nonnan: NonNan = match NonNan::new(v.abs()) {
+            None => return None,
+            Some(x) => x,
+        };
+        Some(nonnan.get().max(acc))
+    })
 }
+
+pub(crate) fn find_min<'a, I>(vals: I) -> Option<f32>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    vals.into_iter().try_fold(0., |acc, v| {
+        let nonnan: NonNan = match NonNan::new(*v) {
+            None => return None,
+            Some(x) => x,
+        };
+        Some(nonnan.get().min(acc))
+    })
+}
+
+pub(crate) fn find_min_abs<'a, I>(vals: I) -> Option<f32>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    vals.into_iter().try_fold(0., |acc, v| {
+        let nonnan: NonNan = match NonNan::new(v.abs()) {
+            None => return None,
+            Some(x) => x,
+        };
+        Some(nonnan.get().min(acc))
+    })
+}
+
+pub(crate) fn argmax<'a, I>(vals: I) -> Option<usize>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut index = 0;
+    let mut high = std::f32::MIN;
+    vals.into_iter().enumerate().for_each(|(i, v)| {
+        if v > &high {
+            high = *v;
+            index = i;
+        }
+    });
+    Some(index)
+}
+
+pub(crate) fn argmax_abs<'a, I>(vals: I) -> Option<usize>
+where
+    I: IntoIterator<Item = &'a f32>,
+{
+    let mut index = 0;
+    let mut high = std::f32::MIN;
+    vals.into_iter().enumerate().for_each(|(i, v)| {
+        if v > &high {
+            high = v.abs();
+            index = i;
+        }
+    });
+    Some(index)
+}
+
 pub fn rms<'a, I>(vals: I) -> f32
 where
     I: IntoIterator<Item = &'a f32>,
@@ -511,6 +567,7 @@ where
     });
     (pow_sum / n as f32).sqrt()
 }
+
 pub fn mean<'a, I>(vals: I) -> f32
 where
     I: IntoIterator<Item = &'a f32>,
@@ -521,6 +578,21 @@ where
         acc + v
     });
     sum / n as f32
+}
+
+pub(crate) fn median<T>(x: &mut [T]) -> T
+where
+    T: PartialOrd<T> + Copy,
+{
+    if x.len() == 1 {
+        return x[0];
+    }
+    if x.is_empty() {
+        panic!("Empty input slice");
+    }
+    x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = x.len() / 2;
+    x[mid]
 }
 
 #[cfg(test)]
