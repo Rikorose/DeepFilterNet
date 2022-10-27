@@ -34,14 +34,15 @@ jobs:
           if [[ $DF_VERSION =~ ^.*-pre$ ]]; then DF_VERSION="$DF_VERSION"-"$(git rev-parse --short HEAD)"; fi
           echo "DF_VERSION=$DF_VERSION"
           echo "DF_VERSION=$DF_VERSION" >> $GITHUB_ENV
+          echo "DF_VERSION=$DF_VERSION" >> $GITHUB_OUTPUT
       - name: Create Release
         id: release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ env.DF_VERSION }}
-          release_name: ${{ env.DF_VERSION }}
+          tag_name: v${{ env.DF_VERSION }}
+          release_name: v${{ env.DF_VERSION }}
           draft: true
 
   build-libdf-wheels:
