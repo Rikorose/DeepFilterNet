@@ -343,7 +343,7 @@ class DfNet(nn.Module):
         self.df_dec = DfDecoder()
         self.df_out_transform = DfOutputReshapeMF(self.df_order, p.nb_df)
 
-        self.run_erb = p.nb_df + 1 >= self.freq_bins
+        self.run_erb = p.nb_df + 1 < self.freq_bins
         if not self.run_erb:
             logger.warning("Running without ERB stage")
         self.run_df = run_df
