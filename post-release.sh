@@ -31,5 +31,6 @@ echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./
 
 fd "(pyproject)|(Cargo)" -t f -e toml -X git add {}
 fd "(pyproject)|(Cargo)" -t f -e .lock -X git add {}
+git add Cargo.lock
 
 git commit -m "post-release v$VERSION"
