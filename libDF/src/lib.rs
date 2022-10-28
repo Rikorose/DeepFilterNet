@@ -26,8 +26,6 @@ mod reexport_dataset_modules {
 }
 #[cfg(feature = "dataset")]
 pub use reexport_dataset_modules::*;
-#[cfg(feature = "cache")]
-mod cache;
 #[cfg(feature = "tract")]
 pub mod tract;
 #[cfg(all(feature = "wav-utils", not(feature = "dataset")))]

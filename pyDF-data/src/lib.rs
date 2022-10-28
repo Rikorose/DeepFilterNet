@@ -95,7 +95,6 @@ impl _FdDataLoader {
         p_air_absorption: Option<f32>,
         drop_last: Option<bool>,
         overfit: Option<bool>,
-        cache_valid: Option<bool>,
         seed: Option<u64>,
         min_nb_erb_freqs: Option<usize>,
         global_sampling_factor: Option<f32>,
@@ -157,11 +156,6 @@ impl _FdDataLoader {
         let valid_handle = {
             let valid_cfg = cfg.split_config(Split::Valid);
             let valid_ds_builder = ds_builder.clone();
-            let valid_ds_builder = if cache_valid.unwrap_or(false) {
-                valid_ds_builder.cache_valid_dataset(None)
-            } else {
-                valid_ds_builder
-            };
             thread::spawn(|| valid_ds_builder.dataset(valid_cfg).build_fft_dataset())
         };
         let test_handle = {

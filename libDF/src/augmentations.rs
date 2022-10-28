@@ -1339,7 +1339,6 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     pub fn test_reverb() -> Result<()> {
         setup();
