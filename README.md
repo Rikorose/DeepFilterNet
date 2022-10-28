@@ -158,7 +158,7 @@ cd path/to/DeepFilterNet/DeepFilterNet
 #   type: One of `speech`, `noise`, `rir`
 #   audio_files: Text file containing paths to audio files to include in the dataset
 #   hdf5_db: Output HDF5 dataset.
-python df/prepare_data.py --sr 48000 speech training_set.txt TRAIN_SET_SPEECH.hdf5
+python df/scripts/prepare_data.py --sr 48000 speech training_set.txt TRAIN_SET_SPEECH.hdf5
 ```
 All datasets should be made available in one dataset folder for the train script.
 
