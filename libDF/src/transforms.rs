@@ -560,10 +560,9 @@ pub(crate) fn estimate_bandwidth(
 mod tests {
     use std::sync::Once;
 
-    use util::seed_from_u64;
-
     use super::*;
-    use crate::{augmentations::low_pass, wav_utils::*};
+    use crate::util::seed_from_u64;
+    use crate::wav_utils::*;
 
     static INIT: Once = Once::new();
 
@@ -613,35 +612,6 @@ mod tests {
         }
         write_wav_iter("../out/original.wav", sample.iter(), sr as u32, ch).unwrap();
         write_wav_iter("../out/stft_istft.wav", out.iter(), sr as u32, ch).unwrap();
-        Ok(())
-    }
-
-    #[test]
-    pub fn test_low_pass() -> Result<()> {
-        let (sample, sr) = setup();
-        let sr = sr as u32;
-        let mut lowpass_res = sample.clone();
-        let mut lowpass_biquad = sample.clone();
-        let ch = sample.len_of(Axis(0)) as u16;
-        let f = 8000.;
-        let mut mem = [0.; 2];
-        let (b, a) = low_pass(f, 0.707, sr as usize);
-        biquad_inplace(&mut lowpass_biquad, &mut mem, &b, &a);
-        write_wav_iter("../out/lowpass_biquad.wav", lowpass_biquad.iter(), sr, ch).unwrap();
-        let xx: f64 = sample.iter().map(|&n| n as f64 * n as f64).sum();
-        let yy: f64 = lowpass_biquad.iter().map(|&n| n as f64 * n as f64).sum();
-        let xy: f64 = sample.iter().zip(lowpass_biquad).map(|(&n, m)| n as f64 * m as f64).sum();
-        let corr = xy / (xx.sqrt() * yy.sqrt());
-        dbg!(corr);
-
-        lowpass_res = low_pass_resample(lowpass_res.view(), f as usize, sr as usize).unwrap();
-        write_wav_iter("../out/lowpass_resample.wav", lowpass_res.iter(), sr, ch).unwrap();
-
-        let xx: f64 = sample.iter().map(|&n| n as f64 * n as f64).sum();
-        let yy: f64 = lowpass_res.iter().map(|&n| n as f64 * n as f64).sum();
-        let xy: f64 = sample.iter().zip(lowpass_res).map(|(&n, m)| n as f64 * m as f64).sum();
-        let corr = xy / (xx.sqrt() * yy.sqrt());
-        dbg!(corr);
         Ok(())
     }
 

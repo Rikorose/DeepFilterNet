@@ -1235,7 +1235,7 @@ mod tests {
     static INIT: Once = Once::new();
 
     /// Setup function that is only run once, even if called multiple times.
-    fn setup() {
+    fn setup() -> (Array2<f32>, usize) {
         seed_from_u64(42);
         create_out_dir().expect("Could not create output directory");
 
@@ -1248,6 +1248,10 @@ mod tests {
                 // Ignore errors initializing the logger if tests race to configure it
                 .try_init();
         });
+        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+        let sr = reader.sr;
+        let test_sample = reader.samples_arr2().unwrap();
+        (test_sample, sr)
     }
 
     fn create_out_dir() -> std::io::Result<()> {
@@ -1308,21 +1312,33 @@ mod tests {
 
     #[test]
     pub fn test_low_pass() -> Result<()> {
-        setup();
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
-        let sr = reader.sr as u32;
-        let mut test_sample = reader.samples_arr2()?;
-        let mut test_sample2 = test_sample.clone();
-        let ch = test_sample.len_of(Axis(0)) as u16;
+        let (sample, sr) = setup();
+        let sr = sr as u32;
+        let mut lowpass_res = sample.clone();
+        let mut lowpass_biquad = sample.clone();
+        let ch = sample.len_of(Axis(0)) as u16;
         let f = 8000.;
         let mut mem = [0.; 2];
         let (b, a) = low_pass(f, 0.707, sr as usize);
-        biquad_inplace(&mut test_sample, &mut mem, &b, &a);
-        write_wav_iter("../out/lowpass.wav", test_sample.iter(), sr, ch)?;
-        test_sample2 = low_pass_resample(test_sample2.view(), f as usize, sr as usize)?;
-        write_wav_iter("../out/lowpass_resample.wav", test_sample2.iter(), sr, ch)?;
+        biquad_inplace(&mut lowpass_biquad, &mut mem, &b, &a);
+        write_wav_iter("../out/lowpass_biquad.wav", lowpass_biquad.iter(), sr, ch).unwrap();
+        let xx: f64 = sample.iter().map(|&n| n as f64 * n as f64).sum();
+        let yy: f64 = lowpass_biquad.iter().map(|&n| n as f64 * n as f64).sum();
+        let xy: f64 = sample.iter().zip(lowpass_biquad).map(|(&n, m)| n as f64 * m as f64).sum();
+        let corr = xy / (xx.sqrt() * yy.sqrt());
+        dbg!(corr);
+
+        lowpass_res = low_pass_resample(lowpass_res.view(), f as usize, sr as usize).unwrap();
+        write_wav_iter("../out/lowpass_resample.wav", lowpass_res.iter(), sr, ch).unwrap();
+
+        let xx: f64 = sample.iter().map(|&n| n as f64 * n as f64).sum();
+        let yy: f64 = lowpass_res.iter().map(|&n| n as f64 * n as f64).sum();
+        let xy: f64 = sample.iter().zip(lowpass_res).map(|(&n, m)| n as f64 * m as f64).sum();
+        let corr = xy / (xx.sqrt() * yy.sqrt());
+        dbg!(corr);
         Ok(())
     }
+
 
     #[test]
     pub fn test_reverb() -> Result<()> {

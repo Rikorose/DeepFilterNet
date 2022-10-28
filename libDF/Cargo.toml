@@ -123,6 +123,7 @@ jemallocator = { version = "0.5.0", optional = true }
 rand = "0.8"
 rstest = "0.15"
 env_logger = "0.9"
+log = { version = "0.4", features = ["std"] }
 
 [package.metadata.deb]
 assets = [

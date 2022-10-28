@@ -478,7 +478,7 @@ pub(crate) fn find_max<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
-    vals.into_iter().try_fold(0., |acc, v| {
+    vals.into_iter().try_fold(f32::MIN, |acc, v| {
         let nonnan: NonNan = match NonNan::new(*v) {
             None => return None,
             Some(x) => x,
@@ -504,7 +504,7 @@ pub(crate) fn find_min<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
-    vals.into_iter().try_fold(0., |acc, v| {
+    vals.into_iter().try_fold(f32::MAX, |acc, v| {
         let nonnan: NonNan = match NonNan::new(*v) {
             None => return None,
             Some(x) => x,
