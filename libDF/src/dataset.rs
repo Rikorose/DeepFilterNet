@@ -116,8 +116,11 @@ type Signal = Array2<f32>;
 fn one() -> f32 {
     1.
 }
+/// Struct to check if a dataset was modified on disk.
+/// This is used for caching the HDF5 keys, i.e. speech and noise file names.
+/// The modification is checked via last modification time and file size.
 #[derive(Hash, Debug, Clone)]
-pub struct DatasetModified(SystemTime, u64); // Modified time and file size
+pub struct DatasetModified(SystemTime, u64);
 impl DatasetModified {
     fn new(file_name: &str) -> Result<Self> {
         let meta_data = fs::metadata(file_name)?;
@@ -132,6 +135,15 @@ impl DatasetModified {
         Ok(DatasetModified(modified, size))
     }
 }
+/// HDF5 config for each dataset.
+///
+/// Contains:
+///     - file name of the HDF5 dataset on disk.
+///     - sampling factor to over/under sample the dataset during training.
+///     - fallback sampling rate if the HDF5 dataset does not store the sampling rate.
+///     - fallback max_freq (unused)
+///     - cached key list may additionally be used for loading the HDF5 keys from a cache file.
+///     - modified hash is used to indicate if the cached key list is up to date.
 #[derive(Deserialize, Debug, Clone)]
 pub struct Hdf5Cfg(
     pub String,                                                 // file name
@@ -201,12 +213,19 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     t.hash(&mut s);
     s.finish()
 }
+
+/// Keys within a HDF5 dataset.
+///
+/// - filename: File name of the HDF5 dataset.
+/// - hash: Modified hash of the dataset corresponding to loaded keys.
+/// - keys: Speech/noise file names contained in the dataset.
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Hdf5Keys {
     pub filename: String,
     hash: u64,
     keys: Vec<String>,
 }
+/// Dataset Configuration for train, validation, and test.
 #[derive(Deserialize, Debug)]
 pub struct DatasetConfigJson {
     pub train: Vec<Hdf5Cfg>,
@@ -252,6 +271,7 @@ impl DatasetConfigJson {
         }
     }
 }
+/// Helper struct to load cached HDF5 keys from a JSON file.
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct DatasetConfigCacheJson(Vec<Hdf5Keys>);
 impl DatasetConfigCacheJson {
@@ -281,6 +301,7 @@ impl DatasetConfigCacheJson {
     }
 }
 
+/// Helper struct containing all `Hdf5Cfg`s of a single split (train/valid/test).
 #[derive(Debug, Clone)]
 pub struct DatasetSplitConfig {
     pub hdf5s: Vec<Hdf5Cfg>,
@@ -300,6 +321,8 @@ impl DatasetSplitConfig {
     }
 }
 
+/// Dataset base struct for the `DataLoader`.
+/// Contains all (train, valid, test) `FftDataset`s.
 pub struct Datasets {
     pub train: FftDataset,
     pub valid: FftDataset,
@@ -354,6 +377,10 @@ pub trait Data: Sized + Clone + Default + Send + Sync + Zero + 'static {}
 impl Data for f32 {}
 impl Data for Complex32 {}
 
+/// A dataset sample containing a noisy/clean pair for training.
+///
+/// This struct is used for holding the augmented time-domain signal as well as the complex
+/// STFT-domain signal from `FftDataset`.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Sample<T>
 where
