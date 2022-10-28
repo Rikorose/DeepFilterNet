@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter};
-#[cfg(any(feature = "cache", feature = "vorbis"))]
+#[cfg(feature = "vorbis")]
 use std::io::{Cursor, Read, Seek};
 use std::ops::Range;
 use std::path::Path;
@@ -28,8 +28,6 @@ use thiserror::Error;
 #[cfg(feature = "vorbis")]
 use {lewton::inside_ogg::OggStreamReader, ogg::reading::PacketReader as OggPacketReader};
 
-#[cfg(feature = "cache")]
-use crate::cache::ValidCache;
 use crate::{augmentations::*, transforms::*, util::*, *};
 
 type Result<T> = std::result::Result<T, DfDatasetError>;
@@ -57,9 +55,6 @@ pub enum DfDatasetError {
     TransformError(#[from] crate::transforms::TransformError),
     #[error("DF Augmentation Error")]
     AugmentationError(#[from] crate::augmentations::AugmentationError),
-    #[cfg(feature = "cache")]
-    #[error("DF Cache Error")]
-    CacheError(#[from] crate::cache::DfCacheError),
     #[error("DF Utils Error")]
     UtilsError(#[from] crate::util::UtilsError),
     #[error("Error Detail")]
@@ -522,33 +517,6 @@ impl DatasetBuilder {
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
-        #[cfg(feature = "cache")]
-        let cache = {
-            if self.cache_valid && split == Split::Valid {
-                let ds_path = Path::new(&self.ds_dir);
-                let hash = {
-                    let mut hash_vec: Vec<u64> =
-                        ds.config.values().map(|c| c.hash().unwrap()).collect();
-                    hash_vec.push(fft_size as u64);
-                    hash_vec.push(hop_size as u64);
-                    hash_vec.push(nb_erb as u64);
-                    calculate_hash(&hash_vec)
-                };
-                let cache_path = ds_path.join(format!("{}_cache_{}", split, hash));
-                Some(ValidCache::new(
-                    &cache_path,
-                    hash,
-                    ds.len(),
-                    self.cache_valid_max_gb,
-                )?)
-            } else {
-                None
-            }
-        };
-        #[cfg(not(feature = "cache"))]
-        if self.cache_valid && split == Split::Valid {
-            panic!("Dataset not compiled with caching capabilities");
-        }
         Ok(FftDataset {
             ds,
             fft_size,
@@ -557,8 +525,6 @@ impl DatasetBuilder {
             nb_spec: self.nb_spec,
             norm_alpha: self.norm_alpha,
             min_nb_freqs: self.min_nb_freqs,
-            #[cfg(feature = "cache")]
-            cache,
         })
     }
     pub fn build_td_dataset(self) -> Result<TdDataset> {
@@ -810,8 +776,6 @@ pub struct FftDataset {
     nb_spec: Option<usize>,
     norm_alpha: Option<f32>,
     min_nb_freqs: Option<usize>,
-    #[cfg(feature = "cache")]
-    cache: Option<ValidCache>,
 }
 impl FftDataset {
     pub fn get_hdf5cfg(&self, filename: &str) -> Option<&Hdf5Cfg> {
@@ -822,17 +786,6 @@ impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
         #[cfg(feature = "timings")]
         let t0 = Instant::now();
-        #[cfg(feature = "cache")]
-        let hash = if let Some(cache) = self.cache.as_ref() {
-            let hash = calculate_hash(&(idx, seed));
-            if let Some(s) = cache.load_sample(hash)? {
-                log::trace!("Found cached sample for idx {} (hash: {})", idx, hash);
-                return Ok(s);
-            }
-            hash
-        } else {
-            0
-        };
         let sample: Sample<f32> = self.ds.get_sample(idx, seed)?;
 
         // To frequency domain
@@ -877,11 +830,6 @@ impl Dataset<Complex32> for FftDataset {
             idx: sample.idx,
             downsample_freq: sample.downsample_freq,
         };
-        #[cfg(feature = "cache")]
-        if let Some(cache) = self.cache.as_ref() {
-            log::trace!("Caching sample for idx {} (hash: {})", idx, hash);
-            cache.cache_sample(hash, &sample)?;
-        }
         #[cfg(feature = "timings")]
         log::trace!(
             "FD sample: {:?} ms",
@@ -907,15 +855,6 @@ impl Dataset<Complex32> for FftDataset {
     }
 
     fn need_generate_keys(&self) -> bool {
-        #[cfg(feature = "cache")]
-        if let Some(cache) = self.cache.as_ref() {
-            match cache.flush() {
-                Ok(_) => (),
-                Err(e) => {
-                    log::warn!("Failed to flush cache: {:?}", e);
-                }
-            }
-        }
         self.ds.need_generate_keys()
     }
 
@@ -2319,64 +2258,6 @@ mod tests {
         );
         write_wav_arr2("../out/speech.wav", speech.view(), sr as u32).unwrap();
         write_wav_arr2("../out/noisy.wav", noisy.view(), sr as u32).unwrap();
-        Ok(())
-    }
-    #[cfg(feature = "cache")]
-    #[test]
-    pub fn test_cached_valid_dataset() -> Result<()> {
-        use std::collections::BTreeMap;
-
-        setup();
-        seed_from_u64(42);
-        let fft_size = 960;
-        let hop_size = Some(480);
-        let nb_erb = Some(32);
-        let nb_spec = Some(32);
-        let norm_alpha = None;
-        let sr = 48000;
-        let ds_dir = "../assets/";
-        for item in fs::read_dir(Path::new(ds_dir))? {
-            let item = item?.path();
-            if item.is_dir()
-                && item.file_name().unwrap().to_str().unwrap().starts_with("valid_cache_")
-            {
-                log::info!("Removing existing cache '{:?}'", item);
-                fs::remove_dir_all(item)?;
-            }
-        }
-        let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
-        for c in cfg.valid.iter_mut() {
-            c.1 = 10.0; // Set sampling factor
-        }
-        let builder = DatasetBuilder::new(ds_dir, sr)
-            .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
-            .max_len(1.);
-        let mut val_ds = builder
-            .cache_valid_dataset(Some(0.02)) // Limit by 20 MB
-            .dataset(cfg.split_config(Split::Valid))
-            .build_fft_dataset()?;
-        let ds_len = val_ds.len();
-        let mut mixture_cache = BTreeMap::new();
-        log::info!("Dataset length: {}", ds_len);
-        for seed in [42, 43] {
-            for epoch in 0..2 {
-                val_ds.set_seed(seed);
-                if val_ds.need_generate_keys() {
-                    val_ds.generate_keys(Some(epoch as u64))?
-                }
-                for idx in 0..ds_len {
-                    let sample = val_ds.get_sample(idx, Some(seed + idx as u64))?;
-                    let key = (seed, idx);
-                    if let Some(cached_noisy) = mixture_cache.get(&key) {
-                        log::info!("Found sample {:?} in cache", key);
-                        assert_eq!(sample.noisy, cached_noisy);
-                    } else {
-                        mixture_cache.insert(key, sample.noisy.clone());
-                    }
-                }
-            }
-        }
-
         Ok(())
     }
 }

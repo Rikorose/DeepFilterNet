@@ -84,7 +84,6 @@ class PytorchDataLoader:
         p_clipping: Optional[float] = None,  # Clipping distortion applied to the (noisy) speech
         p_air_absorption: Optional[float] = None,  # Distortion applied to the (noisy) speech
         overfit: bool = False,  # Overfit on one epoch
-        cache_valid: bool = False,  # Cache validiation dataset
         seed: int = 0,
         min_nb_erb_freqs: Optional[int] = None,  # Minimum number of frequency bins per ERB band
         log_timings: bool = False,
@@ -119,7 +118,6 @@ class PytorchDataLoader:
             prefetch=prefetch_loader,
             drop_last=drop_last,
             overfit=overfit,
-            cache_valid=cache_valid,
             seed=seed,
             min_nb_erb_freqs=min_nb_erb_freqs,
             global_sampling_factor=global_sampling_factor,
