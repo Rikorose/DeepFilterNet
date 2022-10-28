@@ -223,7 +223,7 @@ impl DfTract {
         let rolling_spec_buf = VecDeque::with_capacity(df_order + lookahead);
         let rolling_spec_buf_x = VecDeque::with_capacity(lookahead);
 
-        let mut state = DFState::new(sr as usize, fft_size, hop_size, nb_erb, min_nb_erb_freqs);
+        let mut state = DFState::new(sr, fft_size, hop_size, nb_erb, min_nb_erb_freqs);
         state.init_norm_states(nb_df);
         let df_states = vec![state];
 
@@ -543,8 +543,8 @@ fn init_encoder_impl(
     m = m
         .with_input_fact(0, feat_erb)?
         .with_input_fact(1, feat_spec)?
-        .with_input_names(&["feat_erb", "feat_spec"])?
-        .with_output_names(&["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"])?;
+        .with_input_names(["feat_erb", "feat_spec"])?
+        .with_output_names(["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"])?;
 
     m.analyse(true)?;
     let mut m = m.into_typed()?;
@@ -600,8 +600,8 @@ fn init_erb_decoder_impl(
         .with_input_fact(2, e2)?
         .with_input_fact(3, e1)?
         .with_input_fact(4, e0)?
-        .with_input_names(&["emb", "e3", "e2", "e1", "e0"])?
-        .with_output_names(&["m"])?;
+        .with_input_names(["emb", "e3", "e2", "e1", "e0"])?
+        .with_output_names(["m"])?;
 
     m.analyse(true)?;
     let mut m = m.into_typed()?;
@@ -654,8 +654,8 @@ fn init_df_decoder_impl(
     m = m
         .with_input_fact(0, emb)?
         .with_input_fact(1, c0)?
-        .with_input_names(&["emb", "c0"])?
-        .with_output_names(&["coefs"])?;
+        .with_input_names(["emb", "c0"])?
+        .with_output_names(["coefs"])?;
 
     m.analyse(true)?;
     let mut m = m.into_typed()?;
