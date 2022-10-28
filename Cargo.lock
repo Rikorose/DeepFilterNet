@@ -340,6 +340,7 @@ dependencies = [
  "flate2",
  "hdf5",
  "hound",
+ "itertools",
  "jemallocator",
  "lewton",
  "log",

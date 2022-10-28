@@ -558,16 +558,33 @@ pub(crate) fn estimate_bandwidth(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
+    use util::seed_from_u64;
+
     use super::*;
     use crate::{augmentations::low_pass, wav_utils::*};
 
+    static INIT: Once = Once::new();
+
     /// Setup function that is only run once, even if called multiple times.
     fn setup() -> (Array2<f32>, usize) {
+        seed_from_u64(42);
         create_out_dir().expect("Could not create output directory");
+
+        INIT.call_once(|| {
+            let _ = env_logger::builder()
+                // Include all events in tests
+                .filter_module("df", log::LevelFilter::max())
+                // Ensure events are captured by `cargo test`
+                .is_test(true)
+                // Ignore errors initializing the logger if tests race to configure it
+                .try_init();
+        });
         let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
         let sr = reader.sr;
-        let sample = reader.samples_arr2().unwrap();
-        (sample, sr)
+        let test_sample = reader.samples_arr2().unwrap();
+        (test_sample, sr)
     }
 
     fn create_out_dir() -> std::io::Result<()> {
@@ -695,7 +712,7 @@ mod tests {
         let mut x = vec![vec![0f32; 10]; 1];
         x[0][2] = 3f32;
         x[0][5] = -10f32;
-        let max = find_max_abs(x.iter().flatten())?;
+        let max = find_max_abs(x.iter().flatten()).expect("NaN");
         assert_eq!(max, 10.);
         Ok(())
     }
