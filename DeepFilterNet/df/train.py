@@ -160,7 +160,6 @@ def main():
         log_timings=log_timings,
         global_sampling_factor=config("GLOBAL_DS_SAMPLING_F", 1.0, float, section="train"),
         snrs=config("DATALOADER_SNRS", [-5, 0, 5, 10, 20, 40], Csv(int), section="train"),  # type: ignore
-        cache_valid=config("VALIDATION_SET_CACHING", False, bool, section="train"),
         log_level=log_level,
     )
 

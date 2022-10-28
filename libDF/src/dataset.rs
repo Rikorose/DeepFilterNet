@@ -463,8 +463,6 @@ pub struct DatasetBuilder {
     global_sampling_f: Option<f32>,
     snrs: Option<Vec<i8>>,
     gains: Option<Vec<i8>>,
-    cache_valid: bool,
-    cache_valid_max_gb: Option<f32>,
     num_threads: Option<usize>,
     p_bandwidth_ext: Option<f32>,
     p_clipping: Option<f32>,
@@ -489,8 +487,6 @@ impl DatasetBuilder {
             global_sampling_f: None,
             snrs: None,
             gains: None,
-            cache_valid: false,
-            cache_valid_max_gb: None,
             num_threads: None,
             p_bandwidth_ext: None,
             p_clipping: None,
@@ -746,12 +742,6 @@ impl DatasetBuilder {
     }
     pub fn num_threads(mut self, n: usize) -> Self {
         self.num_threads = Some(n);
-        self
-    }
-    /// Use a cache for validation set. If `max_gb` is None use `DF_CACHE_MAX_GB` env is used.
-    pub fn cache_valid_dataset(mut self, max_gb: Option<f32>) -> Self {
-        self.cache_valid = true;
-        self.cache_valid_max_gb = max_gb;
         self
     }
     pub fn bandwidth_extension(mut self, p: f32) -> Self {
