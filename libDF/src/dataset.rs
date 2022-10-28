@@ -1,5 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::fmt;
 #[cfg(feature = "timings")]
 use std::fmt::Write as _;
