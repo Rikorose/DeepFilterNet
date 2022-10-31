@@ -83,7 +83,18 @@ setup_env() {
 
     echo "Running on env: $CONDA_DEFAULT_ENV"
   fi
-  if [ $INSTALL_LIBDF -eq 1 ]; then
+  if [ "$INSTALL_PYDEPS" -eq 1 ]; then
+    echo "Installing requirements"
+    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
+    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
+    pip install h5py
+  fi
+  if [ "$INSTALL_PYTESTDEPS" -eq 1 ]; then
+    echo "Installing test requirements"
+    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
+    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements_test.txt
+  fi
+  if [ "$INSTALL_LIBDF" -eq 1 ]; then
     echo "Installing DeepFilterLib"
     cd "$PROJECT_HOME"/ || exit 10
     rustup default stable
@@ -91,17 +102,6 @@ setup_env() {
     pip install -U maturin
     maturin develop --profile=release-lto -m "$PROJECT_HOME"/pyDF/Cargo.toml
     maturin develop --profile=release-lto -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
-  fi
-  if [ $INSTALL_PYDEPS -eq 1 ]; then
-    echo "Installing requirements"
-    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
-    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
-    pip install h5py
-  fi
-  if [ $INSTALL_PYTESTDEPS -eq 1 ]; then
-    echo "Installing test requirements"
-    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
-    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements_test.txt
   fi
 }
 
