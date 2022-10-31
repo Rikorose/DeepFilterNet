@@ -13,10 +13,8 @@ def main():
     output_name = sys.argv[2]
     assert os.path.isfile(input_name), usage
     input = np.load(input_name)
-    print(input)
     out = {}
     for name in sys.argv[3:]:
-        print(name, input[name])
         out[name] = input[name]
     if output_name != "/dev/null":
         np.savez_compressed(output_name, **out)

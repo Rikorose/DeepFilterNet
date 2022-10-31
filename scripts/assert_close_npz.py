@@ -4,8 +4,8 @@ import sys
 
 import numpy as np
 
-ATOL = 1e-5
-RTOL = 1e-7
+ATOL = 1e-4
+RTOL = 1e-6
 
 
 def main():
