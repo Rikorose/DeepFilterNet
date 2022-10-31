@@ -3,7 +3,7 @@ from typing import Final, List, Optional, Tuple
 
 import torch
 from loguru import logger
-from torch import Tensor, cholesky, nn
+from torch import Tensor, nn
 
 import df.multiframe as MF
 from df.config import Csv, DfParams, config

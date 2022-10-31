@@ -276,7 +276,6 @@ def export(
     np.savez_compressed(os.path.join(export_dir, "df_dec_output.npz"), coefs=coefs.numpy())
 
 
-
 def main(args):
     print(args)
     model, df_state, _ = init_df(

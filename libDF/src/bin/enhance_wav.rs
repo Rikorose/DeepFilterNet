@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::exit, time::Instant};
 
 use anyhow::Result;
 use clap::{Parser, ValueHint};
-use df::{tract::*, wav_utils::*, transforms::resample};
+use df::{tract::*, transforms::resample, wav_utils::*};
 use ndarray::{prelude::*, Axis};
 
 #[cfg(all(
