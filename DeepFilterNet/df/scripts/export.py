@@ -213,6 +213,7 @@ def export(
         lsnr=lsnr.numpy(),
     )
 
+    # Export erb decoder
     np.savez_compressed(
         os.path.join(export_dir, "erb_dec_input.npz"),
         emb=emb.numpy(),
@@ -221,7 +222,6 @@ def export(
         e2=e2.numpy(),
         e3=e3.numpy(),
     )
-    # Export erb decoder
     inputs = (emb.clone(), e3, e2, e1, e0)
     input_names = ["emb", "e3", "e2", "e1", "e0"]
     output_names = ["m"]
@@ -249,6 +249,9 @@ def export(
     np.savez_compressed(os.path.join(export_dir, "erb_dec_output.npz"), m=m.numpy())
 
     # Export df decoder
+    np.savez_compressed(
+        os.path.join(export_dir, "df_dec_input.npz"), emb=emb.numpy(), c0=c0.numpy()
+    )
     inputs = (emb.clone(), c0)
     input_names = ["emb", "c0"]
     output_names = ["coefs"]
@@ -258,7 +261,7 @@ def export(
         "coefs": {1: "S"},
     }
     path = os.path.join(export_dir, "df_dec.onnx")
-    coefs = export_impl(  # noqa
+    coefs, _ = export_impl(  # noqa
         path,
         model.df_dec,
         inputs=inputs,
@@ -270,6 +273,8 @@ def export(
         simplify=simplify,
         opset_version=opset,
     )
+    np.savez_compressed(os.path.join(export_dir, "df_dec_output.npz"), coefs=coefs.numpy())
+
 
 
 def main(args):
