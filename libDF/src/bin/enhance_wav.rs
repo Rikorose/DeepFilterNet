@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::exit, time::Instant};
 
 use anyhow::Result;
 use clap::{Parser, ValueHint};
-use df::{tract::*, wav_utils::*};
+use df::{tract::*, wav_utils::*, transforms::resample};
 use ndarray::{prelude::*, Axis};
 
 #[cfg(all(
@@ -103,8 +103,11 @@ fn main() -> Result<()> {
             model = DfTract::new(df_params.clone(), &r_params)?;
             sr = model.sr;
         }
-        assert_eq!(sr, reader.sr);
-        let noisy = reader.samples_arr2()?;
+        let sample_sr = reader.sr;
+        let mut noisy = reader.samples_arr2()?;
+        if sr != sample_sr {
+            noisy = resample(noisy.view(), sample_sr, sr, None).expect("Error during resample()");
+        }
         let mut enh: Array2<f32> = ArrayD::default(noisy.shape()).into_dimensionality()?;
         let t0 = Instant::now();
         for (ns_f, enh_f) in noisy

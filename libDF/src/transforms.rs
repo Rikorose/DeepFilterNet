@@ -351,7 +351,7 @@ pub(crate) fn low_pass_resample(
     Ok(x)
 }
 /// Resample using a synchronous resample from rubato
-pub(crate) fn resample(
+pub fn resample(
     x: ArrayView2<f32>,
     sr: usize,
     new_sr: usize,
