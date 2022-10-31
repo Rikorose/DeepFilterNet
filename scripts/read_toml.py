@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-from configparser import ConfigParser
-import sys
 import os
+import sys
+from configparser import ConfigParser
 
-USAGE=f"Usage: {sys.argv[0]} <file> <section> <parameter>"
+USAGE = f"Usage: {sys.argv[0]} <file> <section> <parameter>"
 assert len(sys.argv) == 4, USAGE
 assert os.path.isfile(sys.argv[1]), USAGE
 
