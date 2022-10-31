@@ -3,7 +3,7 @@ from typing import Final, List, Optional, Tuple
 
 import torch
 from loguru import logger
-from torch import Tensor, nn
+from torch import Tensor, cholesky, nn
 
 import df.multiframe as MF
 from df.config import Csv, DfParams, config
@@ -64,6 +64,12 @@ class ModelParams(DfParams):
         self.mfop_method: str = config(
             "MFOP_METHOD", cast=str, default="WF", section=self.section
         ).upper()
+        self.mf_use_inverse: bool = config(
+            "MF_USE_INVERSE", cast=bool, default=True, section=self.section
+        )
+        self.mf_use_cholesky_decomp: bool = config(
+            "MF_USE_CHOLESKY_DECOMP", cast=bool, default=False, section=self.section
+        )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
 
 
@@ -327,14 +333,16 @@ class DfNet(nn.Module):
         self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
 
         self.df_order = p.df_order
-        assert p.mfop_method in ("WF", "WF_C", "MVDR", "MVDR_C")
-        cholesky_decomp = p.mfop_method.endswith("_C")
+        assert p.mfop_method in ("WF", "MVDR")
+        cholesky_decomp = p.mf_use_cholesky_decomp
+        inverse = p.mf_use_inverse
         if p.mfop_method.startswith("WF"):
             self.mf_op = MF.MfWf(
                 num_freqs=p.nb_df,
                 frame_size=p.df_order,
                 lookahead=self.df_lookahead,
                 cholesky_decomp=cholesky_decomp,
+                inverse=inverse,
             )
         elif p.mfop_method.startswith("MVDR"):
             self.mf_op = MF.MfMvdr(
@@ -342,6 +350,7 @@ class DfNet(nn.Module):
                 frame_size=p.df_order,
                 lookahead=self.df_lookahead,
                 cholesky_decomp=cholesky_decomp,
+                inverse=inverse,
             )
         else:
             raise NotImplementedError(p.mfop_method)
