@@ -65,7 +65,7 @@ echo
 tract -v \
   "$1"/enc.onnx \
   --onnx-ignore-output-shapes \
-  -i 1,1,S,"$NB_ERB",f32 -i 1,2,S,"$NB_ERB",f32 \
+  -i 1,1,S,"$NB_ERB",f32 -i 1,2,S,"$NB_DF",f32 \
   --pulse 1 run \
   --input-from-bundle "$1"/enc_input.npz \
   --assert-output-bundle "$1"/enc_output.npz \
