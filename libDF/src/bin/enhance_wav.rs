@@ -48,8 +48,16 @@ struct Args {
     #[arg(long, value_parser, default_value_t = 1)]
     reduce_mask: i32,
     /// Logging verbosity
-    #[arg(short, long)]
-    verbose: bool,
+    // #[arg(short, long)]
+    // verbose: bool,
+    #[arg(
+        long,
+        short = 'v',
+        action = clap::ArgAction::Count,
+        global = true,
+        help = "Increase logging verbosity with multiple `-vvv`",
+    )]
+    verbose: u8,
     // Output directory with enhanced audio files. Defaults to 'out'
     #[arg(short, long, default_value = "out", value_hint = ValueHint::DirPath)]
     output_dir: PathBuf,
@@ -61,10 +69,15 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let level = match args.verbose {
-        true => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Info,
+        0 => log::LevelFilter::Error,
+        1 => log::LevelFilter::Warn,
+        2 => log::LevelFilter::Info,
+        3 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
     };
-    env_logger::builder().filter_level(level).init();
+    env_logger::Builder::from_env(env_logger::Env::default())
+        .filter_level(level)
+        .init();
 
     // Initialize with 1 channel
     let mut r_params = RuntimeParams::new(
@@ -122,7 +135,7 @@ fn main() -> Result<()> {
         }
         let elapsed = t0.elapsed().as_secs_f32();
         let t_audio = noisy.len_of(Axis(1)) as f32 / sr as f32;
-        println!(
+        log::info!(
             "Enhanced audio file {} in {:.2} (RTF: {})",
             file.display(),
             elapsed,
