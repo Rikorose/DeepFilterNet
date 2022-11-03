@@ -376,19 +376,21 @@ def _tik_reg(mat: torch.Tensor, reg: float = 1e-7, eps: float = 1e-8) -> torch.T
     return mat
 
 
-def compute_cov(X: Tensor, N: int):
+def compute_corr(X: Tensor, N: int):
     Xw = F.pad(X, (0, 0, N - 1, 0)).unfold(1, N, 1)
     Rxx = torch.einsum("...n,...m->...mn", Xw, Xw.conj())
     return Rxx
 
 
-def compute_ideal_wf():
+def compute_ideal_wf(rxx_via_rssrnn=False, avg_rxx=False):
     from icecream import install
 
     import libdf
     from df.config import config
     from df.io import load_audio, save_audio
     from df.model import ModelParams
+
+    torch.set_printoptions(linewidth=140)
 
     ORDER = 5
     DLOAD = 1e-9
@@ -398,6 +400,10 @@ def compute_ideal_wf():
 
     config.use_defaults()
     p = ModelParams()
+    p.fft_size = 96
+    p.hop_size = 24
+    p.sr = 24000
+
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
     s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
         0, keepdim=True
@@ -412,10 +418,17 @@ def compute_ideal_wf():
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
-    Rss, Rnn = [compute_cov(X, ORDER) for X in (S, N)]
+    Rss, Rnn, Rxx = [compute_corr(A, ORDER) for A in (S, N, X)]
     ifc = Rss[..., -1]
     Rnn = _tik_reg(Rnn, DLOAD, EPS)
-    Rxx = Rss + Rnn  # Adding these is a lot better compared to estimating Rxx from X
+    if rxx_via_rssrnn:
+        # Adding these is slightly better compared to estimating Rxx from X
+        Rxx = Rss + Rnn
+    else:
+        Rxx = _tik_reg(Rxx, DLOAD, EPS)
+    if avg_rxx:
+        diag = Rxx.diagonal(dim1=-2, dim2=-1)
+        diag[..., :] = diag.mean(-1, keepdim=True)
     R_inv = torch.inverse(Rxx)
     # Manual way
     w = torch.einsum("...nm,...m->...n", R_inv, ifc)
@@ -465,7 +478,7 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
-    Rss, Rnn = [compute_cov(x, ORDER) for x in (S, N)]
+    Rss, Rnn = [compute_corr(x, ORDER) for x in (S, N)]
 
     # A: IFC, needs to be normalized later
     ifc = Rss[..., -1]
