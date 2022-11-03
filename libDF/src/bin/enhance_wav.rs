@@ -96,7 +96,7 @@ fn main() -> Result<()> {
             }
         }
     } else {
-        DfParams::from_bytes(include_bytes!("../../../models/DeepFilterNet2_onnx.tar.gz"))?
+        DfParams::default()
     };
     let mut model: DfTract = DfTract::new(df_params.clone(), &r_params)?;
     let mut sr = model.sr;

@@ -7,6 +7,7 @@ description = "Noise supression using deep filtering"
 repository = "https://github.com/Rikorose/DeepFilterNet"
 license = "MIT/Apache-2.0"
 readme = "../README.md"
+rust-version = "1.56"
 
 [lib]
 name = "df"
@@ -25,10 +26,10 @@ required-features = ["dataset", "bin"]
 [[bin]]
 name = "deep-filter"
 path = "src/bin/enhance_wav.rs"
-required-features = ["bin", "tract", "wav-utils"]
+required-features = ["bin", "tract", "wav-utils", "transforms"]
 
 [features]
-default = []
+default = ["default_model"]
 
 transforms = ["thiserror", "ndarray", "rubato"]
 dataset = [
@@ -75,6 +76,8 @@ tract = [
   "flate2",
   "tar",
 ]
+default_model = []
+capi = ["tract", "ndarray", "default_model"]
 
 [dependencies]
 rustfft = "^6.0.1"
@@ -118,6 +121,9 @@ rand = "0.8"
 rstest = "0.15"
 env_logger = "0.9"
 log = { version = "0.4", features = ["std"] }
+
+[package.metadata.capi]
+header_name = "deep_filter"
 
 [package.metadata.deb]
 assets = [
