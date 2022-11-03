@@ -415,7 +415,6 @@ def run_epoch(
                                 batch.snr.detach(),
                                 lsnr.detach().float(),
                                 os.path.join(summary_dir, "nan"),
-                                mask_loss=losses.ml,
                                 prefix=split + f"_e{epoch}_i{i}_b{batch_idx}_ds{clean_idx}",
                                 idx=batch_idx,
                             )
@@ -457,7 +456,6 @@ def run_epoch(
                 batch.snr.detach(),
                 lsnr.detach().float(),
                 summary_dir,
-                mask_loss=losses.ml,
                 prefix=split,
             )
     try:
@@ -571,7 +569,6 @@ def summary_write(
     snrs: Tensor,
     lsnr: Tensor,
     summary_dir: str,
-    mask_loss: Optional[MaskLoss] = None,
     prefix="train",
     idx: Optional[int] = None,
 ):
@@ -587,12 +584,6 @@ def summary_write(
     def synthesis(x: Tensor) -> Tensor:
         return torch.as_tensor(state.synthesis(make_np(as_complex(x.detach()))))
 
-    if mask_loss is not None:
-        ideal = mask_loss.erb_mask_compr(clean[idx], noisy[idx], compressed=False)
-        ideal = noisy[idx] * mask_loss.erb_inv(ideal)
-        torchaudio.save(
-            os.path.join(summary_dir, f"{prefix}_idealmask_snr{snr}.wav"), synthesis(ideal), p.sr
-        )
     torchaudio.save(
         os.path.join(summary_dir, f"{prefix}_clean_snr{snr}.wav"), synthesis(clean[idx]), p.sr
     )
