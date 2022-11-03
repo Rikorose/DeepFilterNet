@@ -64,6 +64,12 @@ impl DfParams {
         })
     }
 }
+impl Default for DfParams {
+    fn default() -> Self {
+        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz"))
+            .expect("Could not load model config")
+    }
+}
 
 #[derive(Clone)]
 pub enum ReduceMask {
@@ -110,6 +116,14 @@ impl RuntimeParams {
             reduce_mask,
         }
     }
+    pub fn default_with_ch(channels: usize) -> Self {
+        RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN)
+    }
+}
+impl Default for RuntimeParams {
+    fn default() -> Self {
+        RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN)
+    }
 }
 
 pub type TractModel = TypedSimpleState<TypedModel, TypedSimplePlan<TypedModel>>;
@@ -144,6 +158,15 @@ pub struct DfTract {
     m_zeros: Vec<f32>,
     rolling_spec_buf: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
+}
+
+#[cfg(all(not(feature = "capi"), feature="default_model"))]
+impl Default for DfTract {
+    fn default() -> Self {
+        let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
+        let df_params = DfParams::default();
+        DfTract::new(df_params, &r_params).expect("Could not load DfTract")
+    }
 }
 
 impl DfTract {
