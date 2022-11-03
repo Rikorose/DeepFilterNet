@@ -520,7 +520,7 @@ impl RandClipping {
         let max = max.unwrap_or(1.0);
         let f = |c| self.sdr(x.view(), self.clip(x.view(), c).view()) - target_snr;
         let (a, b) = (0.01 * max, 0.99 * max);
-        match roots::find_root_brent(a, b, &f, &mut self.eps_c.clone()) {
+        match roots::find_root_brent(a, b, f, &mut self.eps_c.clone()) {
             Ok(c) => Some(c),
             Err(e) => {
                 log::warn!("RandClipping: Failed to find root: {:?}", e);
