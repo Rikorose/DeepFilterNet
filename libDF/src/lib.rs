@@ -30,6 +30,8 @@ pub use reexport_dataset_modules::*;
 pub mod tract;
 #[cfg(all(feature = "wav-utils", not(feature = "dataset")))]
 pub mod wav_utils;
+#[cfg(any(cargo_c, feature = "capi"))]
+mod capi;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
     9.265 * (freq_hz / (24.7 * 9.265)).ln_1p()
