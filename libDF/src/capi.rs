@@ -3,8 +3,9 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_float};
 use std::path::PathBuf;
 
-use crate::tract::*;
 use ndarray::prelude::*;
+
+use crate::tract::*;
 
 pub struct DFState(crate::tract::DfTract);
 

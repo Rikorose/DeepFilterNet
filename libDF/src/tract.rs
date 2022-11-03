@@ -160,7 +160,7 @@ pub struct DfTract {
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
 }
 
-#[cfg(all(not(feature = "capi"), feature="default_model"))]
+#[cfg(all(not(feature = "capi"), feature = "default_model"))]
 impl Default for DfTract {
     fn default() -> Self {
         let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
