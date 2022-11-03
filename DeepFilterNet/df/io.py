@@ -34,6 +34,8 @@ def load_audio(
     if "method" in kwargs:
         rkwargs["method"] = kwargs.pop("method")
     info: AudioMetaData = ta.info(file, **ikwargs)
+    if "num_frames" in kwargs and sr is not None:
+        kwargs["num_frames"] *= info.sample_rate // sr
     audio, orig_sr = ta.load(file, **kwargs)
     if sr is not None and orig_sr != sr:
         if verbose:
