@@ -18,7 +18,7 @@ from torch.types import Number
 from df.checkpoint import check_patience, load_model, read_cp, write_cp
 from df.config import Csv, config
 from df.logger import init_logger, log_metrics, log_model_summary
-from df.loss import Istft, Loss, MaskLoss
+from df.loss import Istft, Loss
 from df.lr import cosine_scheduler
 from df.model import ModelParams
 from df.modules import get_device
