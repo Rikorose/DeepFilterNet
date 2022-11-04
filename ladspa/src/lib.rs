@@ -6,6 +6,7 @@ use std::{collections::VecDeque, io};
 use df::tract::*;
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
 use ndarray::prelude::*;
+use uuid::Uuid;
 
 static INIT_LOGGER: Once = Once::new();
 
@@ -14,12 +15,14 @@ struct DfMono {
     inframe: Vec<f32>,
     outframe: Vec<f32>,
     outbuf: VecDeque<f32>,
+    id: String,
 }
 struct DfStereo {
     df: DfTract,
     inframe: StereoBuffer,
     outframe: StereoBuffer,
     outbuf: [VecDeque<f32>; 2],
+    id: String,
 }
 
 const ID_MONO: u64 = 7843795;
@@ -62,13 +65,15 @@ pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + S
     let inframe = Vec::with_capacity(m.hop_size);
     let outbuf = VecDeque::with_capacity(m.hop_size);
     let outframe = vec![0f32; m.hop_size];
+    let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
+    log::info!("DfMono {} | Initialized plugin", &id);
     let plugin = DfMono {
         df: m,
         inframe,
         outframe,
         outbuf,
+        id,
     };
-    log::info!("Initialized DeepFilter Mono plugin");
     Box::new(plugin)
 }
 
@@ -91,24 +96,26 @@ pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin +
         VecDeque::with_capacity(m.hop_size),
         VecDeque::with_capacity(m.hop_size),
     ];
+    let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
+    log::info!("DfStereo {} | Initialized plugin", &id);
     let plugin = DfStereo {
         df: m,
         inframe,
         outframe,
         outbuf,
+        id,
     };
-    log::info!("Initialized DeepFilter Stereo plugin");
     Box::new(plugin)
 }
 
 impl Plugin for DfMono {
     fn activate(&mut self) {
-        log::info!("DfMono::activate()");
+        log::info!("DfMono {} | activate", self.id);
     }
     fn deactivate(&mut self) {
-        log::info!("DfMono::deactivate()");
+        log::info!("DfMono {} | deactivate", self.id);
     }
-    fn run<'a>(&mut self, _sample_count: usize, ports: &[&'a PortConnection<'a>]) {
+    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
         let t0 = Instant::now();
         let n = self.df.hop_size;
         let mut i_idx = 0;
@@ -178,30 +185,38 @@ impl Plugin for DfMono {
             }
         }
 
+        if lsnr.is_empty() {
+            return;
+        }
         let td = t0.elapsed();
         let td_ms = td.as_secs_f32() * 1000.;
-        let t_audio = input.len() as f32 / self.df.sr as f32;
+        let t_audio = sample_count as f32 / self.df.sr as f32;
         let rtf = td.as_secs_f32() / t_audio;
         log::info!(
-            "DfMono::run() enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
-            input.len(),
+            "DfMono {} | Enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
+            self.id,
+            sample_count,
             df::mean(&lsnr),
             td_ms,
             rtf
         );
         if rtf >= 1. {
-            log::warn!("Underrun detected ({:.1}). Processing too slow!", rtf);
+            log::warn!(
+                "DfMono {} | Underrun detected ({:.2}). Processing too slow!",
+                self.id,
+                rtf
+            );
         }
     }
 }
 impl Plugin for DfStereo {
     fn activate(&mut self) {
-        log::info!("DfStereo::activate()");
+        log::info!("DfStereo {} | activate", self.id);
     }
     fn deactivate(&mut self) {
-        log::info!("DfStereo::deactivate()");
+        log::info!("DfStereo {} | deactivate", self.id);
     }
-    fn run<'a>(&mut self, _sample_count: usize, ports: &[&'a PortConnection<'a>]) {
+    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
         let t0 = Instant::now();
         let n = self.df.hop_size;
         let mut i_idx = 0;
@@ -262,19 +277,27 @@ impl Plugin for DfStereo {
             }
         }
 
+        if lsnr.is_empty() {
+            return;
+        }
         let td = t0.elapsed();
         let td_ms = td.as_secs_f32() * 1000.;
-        let t_audio = input_l.len() as f32 / self.df.sr as f32;
+        let t_audio = sample_count as f32 / self.df.sr as f32;
         let rtf = td.as_secs_f32() / t_audio;
         log::info!(
-            "DfStereo::run() enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
-            input_l.len(),
+            "DfStereo {} | Enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
+            self.id,
+            sample_count,
             df::mean(&lsnr),
             td_ms,
             rtf
         );
         if rtf >= 1. {
-            log::warn!("Underrun detected ({:.1}). Processing too slow!", rtf);
+            log::warn!(
+                "DfStereo {} | Underrun detected ({:.2}). Processing too slow!",
+                self.id,
+                rtf
+            );
         }
     }
 }
