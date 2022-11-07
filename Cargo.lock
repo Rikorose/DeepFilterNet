@@ -311,6 +311,7 @@ dependencies = [
  "ladspa",
  "log",
  "ndarray",
+ "uuid",
  "wmidi",
 ]
 
@@ -1992,6 +1993,16 @@ name = "unindent"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58ee9362deb4a96cef4d437d1ad49cffc9b9e92d202b6995674e928ce684f112"
+
+[[package]]
+name = "uuid"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "feb41e78f93363bb2df8b0e86a2ca30eed7806ea16ea0c790d757cf93f79be83"
+dependencies = [
+ "getrandom",
+ "rand",
+]
 
 [[package]]
 name = "vec_map"
