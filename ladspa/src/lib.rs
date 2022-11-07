@@ -28,6 +28,7 @@ struct DfPlugin {
     sr: usize,
     frame_size: usize,
     proc_delay: usize,
+    t_proc_change: usize,
     sleep_duration: Duration,
     control_hist: DfControlHistory,
     _h: JoinHandle<()>, // Worker handle
@@ -148,7 +149,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
                 o_ch.push_back(0f32)
             }
         }
-        let sleep_duration = Duration::from_secs_f32(m.hop_size as f32 / sr as f32 / 2.);
+        let sleep_duration = Duration::from_secs_f32(m.hop_size as f32 / sr as f32 / 5.);
         let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
 
         let (controlsender, recv) = channel();
@@ -172,6 +173,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             id,
             frame_size,
             proc_delay,
+            t_proc_change: 0,
             sleep_duration,
             control_hist: hist,
             _h: worker_handle,
@@ -261,11 +263,18 @@ impl Plugin for DfPlugin {
         let rtf = td.as_secs_f32() / t_audio;
         if rtf >= 1. {
             log::warn!(
-                "DF {} | Underrun detected ({:.2}). Processing too slow!",
+                "DF {} | Underrun detected (RTF: {:.2}). Processing too slow!",
                 self.id,
                 rtf
             );
+            if self.proc_delay >= self.sr {
+                panic!(
+                    "DF {} | Processing too slow! Please upgrade your CPU.",
+                    self.id,
+                );
+            }
             self.proc_delay += self.frame_size;
+            self.t_proc_change = 0;
             log::info!(
                 "DF {} | Increasing processing latency to {:.1}ms",
                 self.id,
@@ -276,7 +285,33 @@ impl Plugin for DfPlugin {
                     o_ch.push_back(0f32)
                 }
             }
+        } else if self.t_proc_change > 10 * self.sr / self.frame_size
+            && rtf < 0.5
+            && self.proc_delay >= self.frame_size
+        {
+            // Reduce delay again
+            let dropped_samples = {
+                let o_q = &mut self.outqueue.lock().unwrap();
+                if o_q[0].len() < self.frame_size {
+                    false
+                } else {
+                    for o_q_ch in o_q.iter_mut().take(self.frame_size) {
+                        o_q_ch.pop_front().unwrap();
+                    }
+                    true
+                }
+            };
+            if dropped_samples {
+                self.proc_delay -= self.frame_size;
+                self.t_proc_change = 0;
+                log::info!(
+                    "DF {} | Decreasing processing latency to {:.1}ms",
+                    self.id,
+                    self.proc_delay as f32 * 1000. / self.sr as f32
+                );
+            }
         }
+        self.t_proc_change += 1;
     }
 }
 
