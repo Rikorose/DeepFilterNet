@@ -29,6 +29,9 @@ impl DFState {
 /// Args:
 ///     - path: File path to a DeepFilterNet tar.gz onnx model
 ///     - atten_lim: Attenuation limit in dB.
+///
+/// Returns:
+///     - DF state doing the full processing: stft, DNN noise reduction, istft.
 #[no_mangle]
 pub unsafe extern "C" fn df_create(
     path: *const c_char,
@@ -59,6 +62,14 @@ pub unsafe extern "C" fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
 }
 
 /// Processes a chunk of samples.
+///
+/// Args:
+///     - df_state: Created via df_create()
+///     - input: Input buffer of length df_get_frame_length()
+///     - output: Output buffer of length df_get_frame_length()
+///
+/// Returns:
+///     - Local SNR of the current frame.
 #[no_mangle]
 pub unsafe extern "C" fn df_process_frame(
     st: *mut DFState,
