@@ -1,7 +1,12 @@
-use std::io::Write;
-use std::sync::Once;
-use std::time::Instant;
-use std::{collections::VecDeque, io};
+use std::collections::VecDeque;
+use std::io::{self, Write};
+use std::sync::mpsc::Receiver;
+use std::sync::{
+    mpsc::{channel, Sender},
+    Arc, Mutex, Once,
+};
+use std::thread::{self, sleep, JoinHandle};
+use std::time::{Duration, Instant};
 
 use df::tract::*;
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
@@ -10,26 +15,27 @@ use uuid::Uuid;
 
 static INIT_LOGGER: Once = Once::new();
 
-struct DfMono {
-    df: DfTract,
-    inframe: Vec<f32>,
-    outframe: Vec<f32>,
-    outbuf: VecDeque<f32>,
+type SampleQueue = Arc<Mutex<Vec<VecDeque<f32>>>>;
+type ControlSender = Sender<(DfControl, f32)>;
+type ControlReceiver = Receiver<(DfControl, f32)>;
+
+struct DfPlugin {
+    inqueue: SampleQueue,
+    outqueue: SampleQueue,
+    controlsender: ControlSender,
     id: String,
-}
-struct DfStereo {
-    df: DfTract,
-    inframe: StereoBuffer,
-    outframe: StereoBuffer,
-    outbuf: [VecDeque<f32>; 2],
-    id: String,
+    ch: usize,
+    sr: usize,
+    frame_size: usize,
+    proc_delay: usize,
+    sleep_duration: Duration,
+    control_hist: DfControlHistory,
+    _h: JoinHandle<()>, // Worker handle
 }
 
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
 const MODEL: &[u8] = include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz");
-// To use the original DeepFilterNet2 model use this instead:
-// const MODEL: & [u8] = include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz");
 
 fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
     let ts = buf.timestamp_millis();
@@ -50,322 +56,227 @@ fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io:
     )
 }
 
-pub fn new_df_mono(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
-    INIT_LOGGER.call_once(|| {
-        env_logger::builder()
-            .filter_level(log::LevelFilter::Info)
-            .format(log_format)
-            .init();
-    });
-
-    let df_params = DfParams::from_bytes(MODEL).expect("Could not load model tar.");
-    let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
-    let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
-    assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
-    let inframe = Vec::with_capacity(m.hop_size);
-    let outbuf = VecDeque::with_capacity(m.hop_size);
-    let outframe = vec![0f32; m.hop_size];
-    let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
-    log::info!("DfMono {} | Initialized plugin", &id);
-    let plugin = DfMono {
-        df: m,
-        inframe,
-        outframe,
-        outbuf,
-        id,
-    };
-    Box::new(plugin)
-}
-
-pub fn new_df_stereo(_: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
-    INIT_LOGGER.call_once(|| {
-        env_logger::builder()
-            .filter_level(log::LevelFilter::Info)
-            .format(log_format)
-            .init();
-    });
-
-    let df_params = DfParams::from_bytes(MODEL).expect("Could not load model tar.");
-    let r_params = RuntimeParams::new(2, false, 100., -10., 30., 20., ReduceMask::MEAN);
-    let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
-    assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
-    let inframe = StereoBuffer::with_frame_size(m.hop_size);
-    let mut outframe = StereoBuffer::with_frame_size(m.hop_size);
-    outframe.as_uninit();
-    let outbuf = [
-        VecDeque::with_capacity(m.hop_size),
-        VecDeque::with_capacity(m.hop_size),
-    ];
-    let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
-    log::info!("DfStereo {} | Initialized plugin", &id);
-    let plugin = DfStereo {
-        df: m,
-        inframe,
-        outframe,
-        outbuf,
-        id,
-    };
-    Box::new(plugin)
-}
-
-impl Plugin for DfMono {
-    fn activate(&mut self) {
-        log::info!("DfMono {} | activate", self.id);
-    }
-    fn deactivate(&mut self) {
-        log::info!("DfMono {} | deactivate", self.id);
-    }
-    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
-        let t0 = Instant::now();
-        let n = self.df.hop_size;
-        let mut i_idx = 0;
-
-        let input = ports[0].unwrap_audio();
-        let mut output = ports[1].unwrap_audio_mut();
-        let atten_lim = ports[2].unwrap_control();
-        self.df.set_atten_lim(*atten_lim).unwrap();
-
-        // Check self.inbuf has some samples from previous run calls and fill up
-        let mut missing = n.saturating_sub(self.inframe.len());
-        if missing > input.len() {
-            missing = input.len()
-        }
-        if !self.inframe.is_empty() && missing > 0 {
-            self.inframe.extend_from_slice(&input[..missing]);
-            i_idx = missing;
-        }
-        debug_assert!(
-            self.inframe.len() <= n,
-            "inbuf len ({}) should not exceed frame size ({}).",
-            self.inframe.len(),
-            n
-        );
-
-        let mut lsnr = Vec::new();
-        // Check if self.inbuf has enough samples and process
-        if self.inframe.len() == n {
-            let i_f = slice_as_arrayview(self.inframe.as_slice(), &[1, n])
-                .into_dimensionality::<Ix2>()
-                .unwrap();
-            let o_f = mut_slice_as_arrayviewmut(self.outframe.as_mut_slice(), &[1, n])
-                .into_dimensionality::<Ix2>()
-                .unwrap();
-            lsnr.push(self.df.process(i_f, o_f).unwrap());
-            // Store processed samples from in outbuf
-            for &x in self.outframe.iter() {
-                self.outbuf.push_back(x)
-            }
-            self.inframe.clear();
-        }
-
-        // Check if new input has enough samples and run
-        while input.len() - i_idx >= n {
-            let i_f = slice_as_arrayview(&input[i_idx..i_idx + n], &[1, n])
-                .into_dimensionality::<Ix2>()
-                .unwrap();
-            i_idx += n;
-            let o_f = mut_slice_as_arrayviewmut(self.outframe.as_mut_slice(), &[1, n])
-                .into_dimensionality::<Ix2>()
-                .unwrap();
-            lsnr.push(self.df.process(i_f, o_f).unwrap());
-            for &x in self.outframe.iter() {
-                self.outbuf.push_back(x)
-            }
-        }
-
-        // Check if input has remaining samples that have not been processed and save them for later
-        if i_idx < input.len() {
-            self.inframe.extend_from_slice(&input[i_idx..]);
-        }
-
-        // Pass alrady processed samples to the output buffer
-        if self.outbuf.len() >= output.len() {
-            for o in output.iter_mut() {
-                *o = self.outbuf.pop_front().unwrap();
-            }
-        }
-
-        if lsnr.is_empty() {
-            return;
-        }
-        let td = t0.elapsed();
-        let td_ms = td.as_secs_f32() * 1000.;
-        let t_audio = sample_count as f32 / self.df.sr as f32;
-        let rtf = td.as_secs_f32() / t_audio;
-        log::info!(
-            "DfMono {} | Enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
-            self.id,
-            sample_count,
-            df::mean(&lsnr),
-            td_ms,
-            rtf
-        );
-        if rtf >= 1. {
-            log::warn!(
-                "DfMono {} | Underrun detected ({:.2}). Processing too slow!",
-                self.id,
-                rtf
-            );
-        }
-    }
-}
-impl Plugin for DfStereo {
-    fn activate(&mut self) {
-        log::info!("DfStereo {} | activate", self.id);
-    }
-    fn deactivate(&mut self) {
-        log::info!("DfStereo {} | deactivate", self.id);
-    }
-    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
-        let t0 = Instant::now();
-        let n = self.df.hop_size;
-        let mut i_idx = 0;
-
-        let input_l = ports[0].unwrap_audio();
-        let input_r = ports[1].unwrap_audio();
-        let mut output_l = ports[2].unwrap_audio_mut();
-        let mut output_r = ports[3].unwrap_audio_mut();
-        let atten_lim = ports[4].unwrap_control();
-        self.df.set_atten_lim(*atten_lim).unwrap();
-        let mut lsnr = Vec::new();
-
-        // Check self.inbuf has some samples from previous run calls and fill up
+fn get_worker_fn(
+    mut df: DfTract,
+    inqueue: SampleQueue,
+    outqueue: SampleQueue,
+    controls: ControlReceiver,
+    sleep_duration: Duration,
+    id: String,
+) -> impl FnMut() {
+    move || {
+        let mut inframe = Array2::zeros((df.ch, df.hop_size));
+        let mut outframe = Array2::zeros((df.ch, df.hop_size));
+        let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
-            let missing = n.saturating_sub(self.inframe.len()).min(input_l.len() - i_idx);
-            if missing > 0 {
-                self.inframe.extend(
-                    &input_l[i_idx..i_idx + missing],
-                    &input_r[i_idx..i_idx + missing],
-                );
-                i_idx += missing;
-            }
-
-            // Check if self.inbuf has enough samples and process
-            debug_assert!(
-                self.inframe.len() <= n,
-                "inbuf len should not exceed frame size."
-            );
-            if self.inframe.len() < n {
-                break;
-            }
-
-            let i_f = self.inframe.as_arrayview();
-            let o_f = self.outframe.as_arrayviewmut();
-            lsnr.push(self.df.process(i_f, o_f).unwrap());
-            for (of_ch, ob_ch) in self.outframe.channels().iter().zip(self.outbuf.iter_mut()) {
-                // Store processed samples in self.outbuf
-                for &x in of_ch.iter() {
-                    ob_ch.push_back(x)
+            if let Ok((c, v)) = controls.try_recv() {
+                match c {
+                    DfControl::AttenLim => {
+                        df.set_atten_lim(v).expect("Failed to set attenuation limit.");
+                    }
                 }
             }
-            self.inframe.clear();
-        }
-
-        // Check if input has remaining samples that have not been processed and save them for later
-        if i_idx < input_l.len() {
-            self.inframe.extend(&input_l[i_idx..], &input_r[i_idx..]);
-        }
-
-        // Pass processed samples to the output buffer
-        if self.outbuf[0].len() > output_l.len() {
-            for (o_ch, b_ch) in
-                [&mut output_l, &mut output_r].iter_mut().zip(self.outbuf.iter_mut())
+            let got_samples = {
+                let mut q = inqueue.lock().unwrap();
+                if q[0].len() >= df.hop_size {
+                    for (i_q_ch, mut i_ch) in q.iter_mut().zip(inframe.outer_iter_mut()) {
+                        for i in i_ch.iter_mut() {
+                            *i = i_q_ch.pop_front().unwrap();
+                        }
+                    }
+                    true
+                } else {
+                    false
+                }
+            };
+            if !got_samples {
+                sleep(sleep_duration);
+                continue;
+            }
+            let t0 = Instant::now();
+            let lsnr = df
+                .process(inframe.view(), outframe.view_mut())
+                .expect("Error during df::process");
             {
-                for o in o_ch.iter_mut() {
-                    *o = b_ch.pop_front().unwrap();
+                let mut o_q = outqueue.lock().unwrap();
+                for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
+                    for &o in o_ch.iter() {
+                        o_q_ch.push_back(o)
+                    }
+                }
+            }
+            let td_ms = t0.elapsed().as_secs_f32() * 1000.;
+            log::debug!(
+                "DF {} | Enhanced {:.1}ms frame. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
+                id,
+                t_audio_ms,
+                lsnr,
+                td_ms,
+                td_ms / t_audio_ms
+            );
+        }
+    }
+}
+
+fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
+    move |_: &PluginDescriptor, sample_rate: u64| {
+        INIT_LOGGER.call_once(|| {
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+                .format(log_format)
+                .init();
+        });
+
+        let df_params = DfParams::from_bytes(MODEL).expect("Could not load model tar.");
+        let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
+        let m =
+            DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+        assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
+        let inqueue = Arc::new(Mutex::new(vec![
+            VecDeque::with_capacity(m.hop_size * 4);
+            channels
+        ]));
+        let outqueue = Arc::new(Mutex::new(vec![
+            VecDeque::with_capacity(m.hop_size * 4);
+            channels
+        ]));
+        let sr = m.sr;
+        let frame_size = m.hop_size;
+        let proc_delay = m.hop_size;
+        // Add a buffer of 1 frame to compensate processing delays causing underruns
+        for o_ch in outqueue.lock().unwrap().iter_mut() {
+            for _ in 0..proc_delay {
+                o_ch.push_back(0f32)
+            }
+        }
+        let sleep_duration = Duration::from_secs_f32(m.hop_size as f32 / sr as f32 / 2.);
+        let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
+
+        let (controlsender, recv) = channel();
+
+        let worker_handle = thread::spawn(get_worker_fn(
+            m,
+            Arc::clone(&inqueue),
+            Arc::clone(&outqueue),
+            recv,
+            sleep_duration,
+            id.clone(),
+        ));
+        let hist = DfControlHistory::default();
+        log::info!("DF {} | Initialized plugin", &id);
+        DfPlugin {
+            inqueue,
+            outqueue,
+            controlsender,
+            ch: channels,
+            sr,
+            id,
+            frame_size,
+            proc_delay,
+            sleep_duration,
+            control_hist: hist,
+            _h: worker_handle,
+        }
+    }
+}
+
+enum DfControl {
+    AttenLim,
+}
+struct DfControlHistory {
+    atten_lim: f32,
+}
+impl Default for DfControlHistory {
+    fn default() -> Self {
+        Self { atten_lim: 100. }
+    }
+}
+impl DfControlHistory {
+    fn get(&self, c: DfControl) -> f32 {
+        match c {
+            DfControl::AttenLim => self.atten_lim,
+        }
+    }
+    fn set(&mut self, c: DfControl, v: f32) {
+        match c {
+            DfControl::AttenLim => self.atten_lim = v,
+        }
+    }
+}
+
+impl Plugin for DfPlugin {
+    fn activate(&mut self) {
+        log::info!("DF {} | activate", self.id);
+    }
+    fn deactivate(&mut self) {
+        log::info!("DF {} | deactivate", self.id);
+    }
+    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
+        let t0 = Instant::now();
+
+        let mut i = 0;
+        let mut inputs = Vec::with_capacity(self.ch);
+        let mut outputs = Vec::with_capacity(self.ch);
+        for _ in 0..self.ch {
+            inputs.push(ports[i].unwrap_audio());
+            i += 1;
+        }
+        for _ in 0..self.ch {
+            outputs.push(ports[i].unwrap_audio_mut());
+            i += 1;
+        }
+        let &atten_lim = ports[i].unwrap_control();
+        if atten_lim != self.control_hist.get(DfControl::AttenLim) {
+            self.controlsender
+                .send((DfControl::AttenLim, atten_lim))
+                .expect("Failed to send control");
+            self.control_hist.set(DfControl::AttenLim, atten_lim);
+        }
+
+        {
+            let i_q = &mut self.inqueue.lock().unwrap();
+            for (i_ch, i_q_ch) in inputs.iter().zip(i_q.iter_mut()) {
+                for &i in i_ch.iter() {
+                    i_q_ch.push_back(i)
                 }
             }
         }
 
-        if lsnr.is_empty() {
-            return;
+        'outer: loop {
+            {
+                let o_q = &mut self.outqueue.lock().unwrap();
+                if o_q[0].len() >= sample_count {
+                    for (o_q_ch, o_ch) in o_q.iter_mut().zip(outputs.iter_mut()) {
+                        for o in o_ch.iter_mut() {
+                            *o = o_q_ch.pop_front().unwrap();
+                        }
+                    }
+                    break 'outer;
+                }
+            }
+            sleep(self.sleep_duration);
         }
+
         let td = t0.elapsed();
-        let td_ms = td.as_secs_f32() * 1000.;
-        let t_audio = sample_count as f32 / self.df.sr as f32;
+        let t_audio = sample_count as f32 / self.sr as f32;
         let rtf = td.as_secs_f32() / t_audio;
-        log::info!(
-            "DfStereo {} | Enhanced frame with size {}. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
-            self.id,
-            sample_count,
-            df::mean(&lsnr),
-            td_ms,
-            rtf
-        );
         if rtf >= 1. {
             log::warn!(
-                "DfStereo {} | Underrun detected ({:.2}). Processing too slow!",
+                "DF {} | Underrun detected ({:.2}). Processing too slow!",
                 self.id,
                 rtf
             );
+            self.proc_delay += self.frame_size;
+            log::info!(
+                "DF {} | Increasing processing latency to {:.1}ms",
+                self.id,
+                self.proc_delay as f32 * 1000. / self.sr as f32
+            );
+            for o_ch in self.outqueue.lock().unwrap().iter_mut() {
+                for _ in 0..self.frame_size {
+                    o_ch.push_back(0f32)
+                }
+            }
         }
-    }
-}
-
-struct StereoBuffer {
-    b: Vec<f32>, // buffer
-    idx: usize,  // current idx
-    c: usize,    // capacity
-}
-impl StereoBuffer {
-    pub fn with_frame_size(n: usize) -> Self {
-        Self {
-            b: vec![0.; n * 2],
-            idx: 0,
-            c: n,
-        }
-    }
-    #[inline]
-    pub fn capacity(&self) -> usize {
-        self.c
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.idx
-    }
-    // #[inline]
-    // pub fn is_empty(&self) -> bool {
-    //     self.idx == 0
-    // }
-    #[inline]
-    pub fn clear(&mut self) {
-        self.idx = 0;
-    }
-    pub fn extend(&mut self, left: &[f32], right: &[f32]) {
-        debug_assert_eq!(
-            left.len(),
-            right.len(),
-            "Left and right channels have different amount of samples."
-        );
-        debug_assert!(
-            left.len() + self.len() <= self.capacity(),
-            "New samples exceed capacity."
-        );
-        let n = left.len();
-        self.b[self.idx..self.idx + n].clone_from_slice(left);
-        self.b[self.c + self.idx..self.c + self.idx + n].clone_from_slice(right);
-        self.idx += n;
-    }
-    pub fn channels(&self) -> [&[f32]; 2] {
-        let (left, right) = self.b.split_at(self.c);
-        [&left[..self.idx], &right[..self.idx]]
-    }
-    #[inline]
-    pub fn as_arrayview(&self) -> ArrayView2<f32> {
-        debug_assert!(self.idx > 0);
-        slice_as_arrayview(&self.b, &[2, self.idx]).into_dimensionality().unwrap()
-    }
-    #[inline]
-    pub fn as_arrayviewmut(&mut self) -> ArrayViewMut2<f32> {
-        debug_assert!(self.idx > 0);
-        mut_slice_as_arrayviewmut(&mut self.b, &[2, self.idx])
-            .into_dimensionality()
-            .unwrap()
-    }
-    /// Sets the len of buffer to its capacity and provides and provides access to uninitialized
-    /// data.
-    pub fn as_uninit(&mut self) {
-        self.idx = self.c
     }
 }
 
@@ -399,7 +310,7 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     upper_bound: Some(100.),
                 },
             ],
-            new: new_df_mono,
+            new: |d, sr| Box::new(get_new_df(1)(d, sr)),
         }),
         1 => Some(PluginDescriptor {
             unique_id: ID_STEREO,
@@ -438,7 +349,7 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     upper_bound: Some(100.),
                 },
             ],
-            new: new_df_stereo,
+            new: |d, sr| Box::new(get_new_df(2)(d, sr)),
         }),
         _ => None,
     }
