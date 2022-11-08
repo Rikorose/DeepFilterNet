@@ -22,7 +22,7 @@ type ControlReceiver = Receiver<(DfControl, f32)>;
 struct DfPlugin {
     inqueue: SampleQueue,
     outqueue: SampleQueue,
-    controlsender: ControlSender,
+    controlqueue: ControlSender,
     id: String,
     ch: usize,
     sr: usize,
@@ -73,8 +73,11 @@ fn get_worker_fn(
             if let Ok((c, v)) = controls.try_recv() {
                 match c {
                     DfControl::AttenLim => {
-                        df.set_atten_lim(v).expect("Failed to set attenuation limit.");
+                        df.set_atten_lim(v).expect("Failed to set attenuation limit.")
                     }
+                    DfControl::MinThreshDb => df.min_db_thresh = v,
+                    DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
+                    DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
                 }
             }
             let got_samples = {
@@ -167,7 +170,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         DfPlugin {
             inqueue,
             outqueue,
-            controlsender,
+            controlqueue: controlsender,
             ch: channels,
             sr,
             id,
@@ -183,24 +186,52 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
 
 enum DfControl {
     AttenLim,
+    MinThreshDb,
+    MaxErbThreshDb,
+    MaxDfThreshDb,
+}
+impl DfControl {
+    fn from_port_name(name: &str) -> Self {
+        match name {
+            "Attenuation Limit (dB)" => Self::AttenLim,
+            "Min processing threshold (dB)" => Self::MinThreshDb,
+            "Max ERB processing threshold (dB)" => Self::MaxErbThreshDb,
+            "Max DF processing threshold (dB)" => Self::MaxDfThreshDb,
+            _ => panic!("name not found"),
+        }
+    }
 }
 struct DfControlHistory {
     atten_lim: f32,
+    min_thresh_db: f32,
+    max_erb_thresh_db: f32,
+    max_df_thresh_db: f32,
 }
 impl Default for DfControlHistory {
     fn default() -> Self {
-        Self { atten_lim: 100. }
+        Self {
+            atten_lim: 100.,
+            min_thresh_db: -10.,
+            max_erb_thresh_db: 30.,
+            max_df_thresh_db: 20.,
+        }
     }
 }
 impl DfControlHistory {
-    fn get(&self, c: DfControl) -> f32 {
+    fn get(&self, c: &DfControl) -> f32 {
         match c {
             DfControl::AttenLim => self.atten_lim,
+            DfControl::MinThreshDb => self.min_thresh_db,
+            DfControl::MaxErbThreshDb => self.max_erb_thresh_db,
+            DfControl::MaxDfThreshDb => self.max_df_thresh_db,
         }
     }
-    fn set(&mut self, c: DfControl, v: f32) {
+    fn set(&mut self, c: &DfControl, v: f32) {
         match c {
             DfControl::AttenLim => self.atten_lim = v,
+            DfControl::MinThreshDb => self.min_thresh_db = v,
+            DfControl::MaxErbThreshDb => self.max_erb_thresh_db = v,
+            DfControl::MaxDfThreshDb => self.max_df_thresh_db = v,
         }
     }
 }
@@ -226,12 +257,14 @@ impl Plugin for DfPlugin {
             outputs.push(ports[i].unwrap_audio_mut());
             i += 1;
         }
-        let &atten_lim = ports[i].unwrap_control();
-        if atten_lim != self.control_hist.get(DfControl::AttenLim) {
-            self.controlsender
-                .send((DfControl::AttenLim, atten_lim))
-                .expect("Failed to send control");
-            self.control_hist.set(DfControl::AttenLim, atten_lim);
+        for p in ports[i..].iter() {
+            let &v = p.unwrap_control();
+            let c = DfControl::from_port_name(p.port.name);
+            if v != self.control_hist.get(&c) {
+                log::info!("DF {} | Setting '{}' to {:.1}", self.id, p.port.name, v);
+                self.control_hist.set(&c, v);
+                self.controlqueue.send((c, v)).expect("Failed to send control parameter");
+            }
         }
 
         {
@@ -269,7 +302,7 @@ impl Plugin for DfPlugin {
             );
             if self.proc_delay >= self.sr {
                 panic!(
-                    "DF {} | Processing too slow! Please upgrade your CPU.",
+                    "DF {} | Processing too slow! Please upgrade your CPU. Try to decrease 'Max DF processing threshold (dB)'.",
                     self.id,
                 );
             }
@@ -340,9 +373,33 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Attenuation Limit (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::High),
+                    default: Some(DefaultValue::Maximum),
                     lower_bound: Some(0.),
                     upper_bound: Some(100.),
+                },
+                Port {
+                    name: "Min processing threshold (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Minimum),
+                    lower_bound: Some(-15.),
+                    upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Max ERB processing threshold (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Maximum),
+                    lower_bound: Some(-15.),
+                    upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Max DF processing threshold (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::High),
+                    lower_bound: Some(-15.),
+                    upper_bound: Some(35.),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(1)(d, sr)),
@@ -379,9 +436,33 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Attenuation Limit (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::High),
+                    default: Some(DefaultValue::Maximum),
                     lower_bound: Some(0.),
                     upper_bound: Some(100.),
+                },
+                Port {
+                    name: "Min processing threshold (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Minimum),
+                    lower_bound: Some(-15.),
+                    upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Max ERB processing threshold (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Maximum),
+                    lower_bound: Some(-15.),
+                    upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Max DF processing threshold (dB)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::High),
+                    lower_bound: Some(-15.),
+                    upper_bound: Some(35.),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(2)(d, sr)),
