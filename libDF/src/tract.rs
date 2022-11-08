@@ -276,7 +276,7 @@ impl DfTract {
         } else if lim < 0.1 {
             bail!("Attenuation limit to strong. No noise reduction will be performed");
         } else {
-            log::debug!("Setting attenuation limit to {:.0} dB", lim);
+            log::debug!("Setting attenuation limit to {:.1} dB", lim);
             Some(10f32.powf(-lim / 20.))
         };
         Ok(())
@@ -322,7 +322,7 @@ impl DfTract {
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
         debug_assert_eq!(noisy.len_of(Axis(1)), self.hop_size);
         let max_a = find_max_abs(noisy.iter()).expect("NaN");
-        if max_a > 0.99 {
+        if max_a > 0.9999 {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
 

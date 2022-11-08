@@ -48,8 +48,6 @@ struct Args {
     #[arg(long, value_parser, default_value_t = 1)]
     reduce_mask: i32,
     /// Logging verbosity
-    // #[arg(short, long)]
-    // verbose: bool,
     #[arg(
         long,
         short = 'v',
@@ -146,14 +144,11 @@ fn main() -> Result<()> {
         if args.compensate_delay {
             enh.slice_axis_inplace(Axis(1), ndarray::Slice::from(delay..));
         }
-        write_wav_arr2(enh_file.to_str().unwrap(), enh.view(), sr as u32)?;
+        if sr != sample_sr {
+            enh = resample(enh.view(), sr, sample_sr, None).expect("Error during resample()");
+        }
+        write_wav_arr2(enh_file.to_str().unwrap(), enh.view(), sample_sr as u32)?;
     }
-
-    // let mut n_erb_pause: isize = 0;
-    // let df_init_delay = -(df_init_delay as isize);
-    // let mut n_df_frames: isize = df_init_delay;
-    // let mut n_df_pause: isize = 0;
-    // let min_f_t: isize = df_order as isize;
 
     Ok(())
 }
