@@ -78,6 +78,7 @@ def export_impl(
     opset_version=14,
     check: bool = True,
     simplify: bool = True,
+    print_graph: bool = False,
 ):
     export_dir = os.path.dirname(path)
     if not os.path.isdir(export_dir):
@@ -121,6 +122,8 @@ def export_impl(
     if simplify:
         path = onnx_simplify(path, input_dict, shapes_dict(inputs, input_names))
         logger.info(f"  Saved simplified model {path}")
+    if print_graph:
+        onnx.helper.printable_graph(onnx.load_model(path).graph)
 
     return outputs
 
@@ -134,6 +137,7 @@ def export(
     simplify: bool = True,
     opset=14,
     export_full: bool = False,
+    print_graph: bool = False,
 ):
     model = deepcopy(model).to("cpu")
     model.eval()
@@ -166,6 +170,7 @@ def export(
             check=check,
             simplify=simplify,
             opset_version=opset,
+            print_graph=print_graph,
         )
 
     # Export encoder
@@ -196,6 +201,7 @@ def export(
         check=check,
         simplify=simplify,
         opset_version=opset,
+        print_graph=print_graph,
     )
     np.savez_compressed(
         os.path.join(export_dir, "enc_input.npz"),
@@ -245,6 +251,7 @@ def export(
         check=check,
         simplify=simplify,
         opset_version=opset,
+        print_graph=print_graph,
     )
     np.savez_compressed(os.path.join(export_dir, "erb_dec_output.npz"), m=m.numpy())
 
@@ -272,6 +279,7 @@ def export(
         check=check,
         simplify=simplify,
         opset_version=opset,
+        print_graph=print_graph,
     )
     np.savez_compressed(os.path.join(export_dir, "df_dec_output.npz"), coefs=coefs.numpy())
 
