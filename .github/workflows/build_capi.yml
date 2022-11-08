@@ -1,0 +1,118 @@
+name: Build C-API
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    env:
+      # For some builds, we use cross to test on 32-bit and big-endian
+      # systems.
+      CARGO: cargo
+      # When CARGO is set to CROSS, this is set to `--target matrix.target`.
+      TARGET_FLAGS: ""
+      # When CARGO is set to CROSS, TARGET_DIR includes matrix.target.
+      TARGET_DIR: ./target
+      # Emit backtraces on panics.
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        include:
+          - build: linux-x86
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            libname: libdeep_filter_ladspa
+            libext: so
+          - build: linux-arm-v7
+            os: ubuntu-22.04
+            target: armv7-unknown-linux-gnueabihf
+            cc: arm-linux-gnueabihf-gcc
+            cargoc-feat: '--features=vendored-openssl'
+            libname: libdeep_filter_ladspa
+            libext: so
+          - build: linux-arm-aarch64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            cc: aarch64-linux-gnu-gcc
+            cargoc-feat: '--features=vendored-openssl'
+            libname: libdeep_filter_ladspa
+            libext: so
+          - build: macos-x86
+            os: macos-12
+            target: x86_64-apple-darwin
+            libname: libdeep_filter_ladspa
+            libext: dylib
+          - build: macos-aarch64
+            os: macos-12
+            target: aarch64-apple-darwin
+            libname: libdeep_filter_ladspa
+            libext: dylib
+          - build: win-msvc
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            libname: deep_filter_ladspa
+            libext: dll
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install gcc-arm-linux-gnueabihf 
+        if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
+        run: |
+          mkdir .cargo
+          sudo apt-get install gcc-arm-linux-gnueabihf crossbuild-essential-armhf
+          echo -e "[target.${{ matrix.target }}]\nlinker=\"${{ matrix.cc }}\"\n" > .cargo/config
+
+      - name: Install gcc-aarch64-linux-gnu
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        run: |
+          mkdir .cargo
+          sudo apt-get install gcc-aarch64-linux-gnu crossbuild-essential-arm64
+          echo -e "[target.${{ matrix.target }}]\nlinker=\"${{ matrix.cc }}\"\n" > .cargo/config
+
+      - name: Setup target
+        run: |
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Install cargo-c
+        run: |
+          cargo install cargo-c ${{ matrix.cargoc-feat }}
+
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.TARGET_FLAGS }}"
+          echo "target dir is: ${{ env.TARGET_DIR }}"
+
+      - name: Build release binary
+        run: ${{ env.CARGO }} cinstall --profile=release-lto --destdir=${{ env.TARGET_DIR }} -p deep_filter ${{ env.TARGET_FLAGS }}
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: clib-${{ matrix.target }}
+          path: ${{ env.TARGET_DIR }}/usr
