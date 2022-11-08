@@ -241,6 +241,21 @@ class MfWf(MultiFrameModule):
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
         self.cholesky_decomp = cholesky_decomp
         self.inverse = inverse
+        self.triu_idcs = torch.triu_indices(self.frame_size, self.frame_size, 1)
+        self.tril_idcs = torch.empty_like(self.triu_idcs)
+        self.tril_idcs[0] = self.triu_idcs[1]
+        self.tril_idcs[1] = self.triu_idcs[0]
+
+    def get_r_factor(self):
+        """Return an factor f such that Rxx/f in range [-1, 1]"""
+        if self.inverse and self.cholesky_decomp:
+            return 2e3
+        elif self.inverse and not self.cholesky_decomp:
+            return 3e7
+        elif not self.inverse and self.cholesky_decomp:
+            return 2e-4
+        elif not self.inverse and not self.cholesky_decomp:
+            return 5e-6
 
     def forward(self, spec: Tensor, ifc: Tensor, iRxx: Tensor) -> Tensor:
         """Multi-frame Wiener filter based on Rxx**-1 and speech IFC vector.
@@ -254,11 +269,21 @@ class MfWf(MultiFrameModule):
         Returns:
             spec (complex Tensor): Filtered spectrogram of shape [B, C, T, F]
         """
+
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
-        if self.cholesky_decomp:
-            iRxx = iRxx.matmul(iRxx.transpose(3, 4).conj())
         if not self.inverse:
+            # We have a standard correlation matrix as input. Imaginary part on the diagonal shoul be 0.
+            torch.diagonal(iRxx, dim1=-1, dim2=-2).imag = 0.0
+            # Triu should be complex conj of tril
+            tril_conj = iRxx[:, :, :, self.tril_idcs[0], self.tril_idcs[1]].conj()
+            iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
+        if self.cholesky_decomp:
+            # Upper triangular (wo. diagonal) must be zero
+            iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
+            # Revert cholesky decomposition
+            iRxx = iRxx.matmul(iRxx.transpose(3, 4).conj())
+        if not self.inverse:  # Is already an inverse input. No need to inverse it again.
             iRxx = torch.linalg.inv(iRxx)
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
@@ -303,6 +328,21 @@ class MfMvdr(MultiFrameModule):
         self.normalize_ifc = normalize_ifc
         self.inverse = inverse
         self.cholesky_decomp = cholesky_decomp
+        self.triu_idcs = torch.triu_indices(self.frame_size, self.frame_size, 1)
+        self.tril_idcs = torch.empty_like(self.triu_idcs)
+        self.tril_idcs[0] = self.triu_idcs[1]
+        self.tril_idcs[1] = self.triu_idcs[0]
+
+    def get_r_factor(self):
+        """Return an factor f such that Rnn/f in range [-1, 1]"""
+        if self.inverse and self.cholesky_decomp:
+            return 2e4
+        elif self.inverse and not self.cholesky_decomp:
+            return 3e8
+        elif not self.inverse and self.cholesky_decomp:
+            return 5e-5
+        elif not self.inverse and not self.cholesky_decomp:
+            return 1e-6
 
     def forward(self, spec: Tensor, ifc: Tensor, iRnn: Tensor) -> Tensor:
         """Multi-frame MVDR filter based on Rnn**-1 and speech IFC vector.
@@ -318,7 +358,16 @@ class MfMvdr(MultiFrameModule):
         """
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         iRnn = torch.view_as_complex(iRnn.unflatten(3, (self.frame_size, self.frame_size, 2)))
+        if not self.inverse:
+            # We have a standard correlation matrix as input. Imaginary part on the diagonal shoul be 0.
+            torch.diagonal(iRnn, dim1=-1, dim2=-2).imag = 0.0
+            # Triu should be complex conj of tril
+            tril_conj = iRnn[:, :, :, self.tril_idcs[0], self.tril_idcs[1]].conj()
+            iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
         if self.cholesky_decomp:
+            # Upper triangular (wo. diagonal) must be zero
+            iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
+            # Revert cholesky decomposition
             iRnn = iRnn.matmul(iRnn.transpose(3, 4).conj())
         if not self.inverse:
             iRnn = torch.linalg.inv(iRnn)
@@ -338,7 +387,7 @@ class MfMvdr(MultiFrameModule):
 
 
 # From torchaudio
-def _compute_mat_trace(input: torch.Tensor, dim1: int = -1, dim2: int = -2) -> torch.Tensor:
+def _compute_mat_trace(input: torch.Tensor, dim1: int = -2, dim2: int = -1) -> torch.Tensor:
     r"""Compute the trace of a Tensor along ``dim1`` and ``dim2`` dimensions.
     Args:
         input (torch.Tensor): Tensor of dimension `(..., channel, channel)`
@@ -382,8 +431,10 @@ def compute_corr(X: Tensor, N: int):
     return Rxx
 
 
-def compute_ideal_wf(rxx_via_rssrnn=False, avg_rxx=False):
-    from icecream import install
+def compute_ideal_wf(
+    rxx_via_rssrnn=False, avg_rxx=False, cholesky_decomp=False, inverse=True, manual=False
+):
+    from icecream import ic, install
 
     import libdf
     from df.config import config
@@ -397,6 +448,7 @@ def compute_ideal_wf(rxx_via_rssrnn=False, avg_rxx=False):
     EPS = 1e-8
 
     install()
+    ic.includeContext = True
 
     config.use_defaults()
     p = ModelParams()
@@ -414,7 +466,7 @@ def compute_ideal_wf(rxx_via_rssrnn=False, avg_rxx=False):
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
-    wf = MfWf(p.fft_size // 2 + 1, ORDER)
+    wf = MfWf(p.fft_size // 2 + 1, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
@@ -429,16 +481,22 @@ def compute_ideal_wf(rxx_via_rssrnn=False, avg_rxx=False):
     if avg_rxx:
         diag = Rxx.diagonal(dim1=-2, dim2=-1)
         diag[..., :] = diag.mean(-1, keepdim=True)
-    R_inv = torch.inverse(Rxx)
+    A = Rxx
+    if inverse:
+        A = torch.linalg.inv(A)
+    if cholesky_decomp:
+        A, info = torch.linalg.cholesky_ex(A)
+        print("Number of errors during cholesky_decomp:", torch.where(info > 0, 1, 0).sum())
+    ic(A.abs().mean())
     # Manual way
-    w = torch.einsum("...nm,...m->...n", R_inv, ifc)
+    w = torch.einsum("...nm,...m->...n", A, ifc)
     Y = torch.einsum("...fn,...fn->...f", Xw, w)
     # Using torch module (which expects real valued flattened input)
     Y = torch.view_as_complex(
         wf(
             torch.view_as_real(X).unsqueeze(1),
             torch.view_as_real(ifc).flatten(3),
-            torch.view_as_real(R_inv).flatten(3),
+            torch.view_as_real(A).flatten(3),
         ).squeeze(1)
     )
     y = df.synthesis(Y.numpy())
@@ -487,14 +545,13 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
     _, v = torch.linalg.eigh(Rss)
     ifc = v[..., -1]  # Choose highest eigenvector
 
-    Rnn = _tik_reg(Rnn, DLOAD, EPS)
+    A = _tik_reg(Rnn, DLOAD, EPS)
     if inverse:
-        A = torch.linalg.inv(Rnn)
-    else:
-        A = Rnn
+        A = torch.linalg.inv(A)
     if cholesky_decomp:
         A, info = torch.linalg.cholesky_ex(A)
         print("Number of errors during cholesky_decomp:", torch.where(info > 0, 1, 0).sum())
+    ic(A.abs().mean())
     # Manual way
     if manual:
         ifc0 = ifc[..., -1]
