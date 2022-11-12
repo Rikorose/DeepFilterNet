@@ -80,8 +80,8 @@ default_model = []
 capi = ["tract", "ndarray", "default_model"]
 
 [dependencies]
-rustfft = "^6.0.1"
-realfft = "^3.0.1"
+rustfft = "^6.1.0"
+realfft = "^3.1.0"
 itertools = "0.10"
 num-complex = { version = "^0.4", features = ["serde"] }
 log = { version = "0.4", features = ["std"], optional = true }
