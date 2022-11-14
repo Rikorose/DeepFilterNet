@@ -492,8 +492,18 @@ def compute_ideal_wf(rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, 
         print("Number of errors during cholesky_decomp:", torch.where(info > 0, 1, 0).sum())
     ic(A.abs().mean())
     # Manual way
-    w = torch.einsum("...nm,...m->...n", A, ifc)
-    Y = torch.einsum("...fn,...fn->...f", Xw, w)
+    if manual:
+        w = torch.einsum("...nm,...m->...n", A, ifc)
+        Y = torch.einsum("...fn,...fn->...f", Xw, w)
+    else:
+        # Using torch module (which expects real valued flattened input)
+        Y = torch.view_as_complex(
+            wf(
+                torch.view_as_real(X).unsqueeze(1),
+                torch.view_as_real(ifc).flatten(3),
+                torch.view_as_real(A).flatten(3),
+            ).squeeze(1)
+        )
     # Using torch module (which expects real valued flattened input)
     Y = torch.view_as_complex(
         wf(
