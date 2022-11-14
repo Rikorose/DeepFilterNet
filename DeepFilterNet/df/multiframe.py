@@ -438,9 +438,7 @@ def compute_corr(X: Tensor, N: int):
     return Rxx
 
 
-def compute_ideal_wf(
-    rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, manual=False
-):
+def compute_ideal_wf(rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, manual=False):
     from icecream import ic, install
 
     import libdf
