@@ -126,6 +126,9 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
     move |_: &PluginDescriptor, sample_rate: u64| {
         INIT_LOGGER.call_once(|| {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+                .filter_module("tract_linalg", log::LevelFilter::Info)
+                .filter_module("tract_core", log::LevelFilter::Info)
+                .filter_module("tract_hir", log::LevelFilter::Info)
                 .format(log_format)
                 .init();
         });
