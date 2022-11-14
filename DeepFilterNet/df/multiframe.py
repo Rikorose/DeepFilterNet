@@ -228,6 +228,8 @@ class MfWf(MultiFrameModule):
         lookahead: int = 0,
         cholesky_decomp: bool = False,
         inverse: bool = True,
+        eps=1e-8,
+        dload=1e-7,
     ):
         """Multi-frame Wiener Filter via an estimate of the inverse
 
@@ -245,6 +247,8 @@ class MfWf(MultiFrameModule):
         self.tril_idcs = torch.empty_like(self.triu_idcs)
         self.tril_idcs[0] = self.triu_idcs[1]
         self.tril_idcs[1] = self.triu_idcs[0]
+        self.eps = eps
+        self.dload = dload
 
     def get_r_factor(self):
         """Return an factor f such that Rxx/f in range [-1, 1]"""
@@ -275,6 +279,8 @@ class MfWf(MultiFrameModule):
         if not self.inverse:
             # We have a standard correlation matrix as input. Imaginary part on the diagonal shoul be 0.
             torch.diagonal(iRxx, dim1=-1, dim2=-2).imag = 0.0
+            # Regularization on diag for stability
+            iRxx = _tik_reg(iRxx, self.dload, self.eps)
             # Triu should be complex conj of tril
             tril_conj = iRxx[:, :, :, self.tril_idcs[0], self.tril_idcs[1]].conj()
             iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
@@ -283,11 +289,12 @@ class MfWf(MultiFrameModule):
             iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
             # Revert cholesky decomposition
             iRxx = iRxx.matmul(iRxx.transpose(3, 4).conj())
-        if not self.inverse:  # Is already an inverse input. No need to inverse it again.
-            iRxx = torch.linalg.inv(iRxx)
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        w = torch.einsum("...nm,...m->...n", iRxx, ifc).unsqueeze(1)  # [B, 1, F, N]
+        if not self.inverse:  # Is already an inverse input. No need to inverse it again.
+            w = torch.linalg.solve(iRxx, ifc).unsqueeze(1)
+        else:
+            w = torch.einsum("...nm,...m->...n", iRxx, ifc).unsqueeze(1)  # [B, 1, F, N]
         spec_f = self.apply_coefs(spec_f, w)
         if self.training:
             spec = spec.clone()
@@ -299,7 +306,6 @@ class MfMvdr(MultiFrameModule):
     """Multi-frame minimum variance distortionless beamformer based on Rnn**-1 and speech IFC vector."""
 
     eps: Final[float]
-    normalize_ifc: Final[bool]
     cholesky_decomp: Final[bool]
     inverse: Final[bool]
 
@@ -308,10 +314,10 @@ class MfMvdr(MultiFrameModule):
         num_freqs: int,
         frame_size: int,
         lookahead: int = 0,
-        normalize_ifc: bool = True,
         cholesky_decomp: bool = False,
         inverse: bool = True,
-        eps: float = 1e-8,
+        eps=1e-8,
+        dload=1e-7,
     ):
         """Multi-frame minimum variance distortionless beamformer.
 
@@ -319,19 +325,18 @@ class MfMvdr(MultiFrameModule):
             num_freqs (int): Number of frequency bins to apply MVDR filtering to.
             frame_size (int): Frame size of the MF MVDR filter.
             lookahead (int): Lookahead of the frame.
-            normalize_ifc (bool): Normalize input IFC by IFC[0].
             cholesky_decomp (bool): Whether the input is a cholesky decomposition of the correlation matrix. Defauls to `False`.
             inverse (bool): Wheter the input is a normal or inverse correlation matrix. Defaults to `True`.
         """
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
-        self.eps = eps
-        self.normalize_ifc = normalize_ifc
         self.inverse = inverse
         self.cholesky_decomp = cholesky_decomp
         self.triu_idcs = torch.triu_indices(self.frame_size, self.frame_size, 1)
         self.tril_idcs = torch.empty_like(self.triu_idcs)
         self.tril_idcs[0] = self.triu_idcs[1]
         self.tril_idcs[1] = self.triu_idcs[0]
+        self.eps = eps
+        self.dload = dload
 
     def get_r_factor(self):
         """Return an factor f such that Rnn/f in range [-1, 1]"""
@@ -361,6 +366,8 @@ class MfMvdr(MultiFrameModule):
         if not self.inverse:
             # We have a standard correlation matrix as input. Imaginary part on the diagonal shoul be 0.
             torch.diagonal(iRnn, dim1=-1, dim2=-2).imag = 0.0
+            # Regularization on diag for stability
+            iRnn = _tik_reg(iRnn, self.dload, self.eps)
             # Triu should be complex conj of tril
             tril_conj = iRnn[:, :, :, self.tril_idcs[0], self.tril_idcs[1]].conj()
             iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
@@ -369,16 +376,16 @@ class MfMvdr(MultiFrameModule):
             iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
             # Revert cholesky decomposition
             iRnn = iRnn.matmul(iRnn.transpose(3, 4).conj())
-        if not self.inverse:
-            iRnn = torch.linalg.inv(iRnn)
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
-        if self.normalize_ifc:
-            ifc0 = ifc[..., -1]
-            ifc = ifc / (ifc0.unsqueeze(-1) + self.eps)
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        numerator = torch.einsum("...nm,...m->...n", iRnn, ifc)  # [B, C, F, N]
+        if not self.inverse:
+            numerator = torch.linalg.solve(iRnn, ifc)
+        else:
+            numerator = torch.einsum("...nm,...m->...n", iRnn, ifc)  # [B, C, F, N]
         denumerator = torch.einsum("...n,...n->...", ifc.conj(), numerator)
-        w = (numerator / (denumerator.real.unsqueeze(-1) + self.eps)).unsqueeze(1)
+        # Normalize numerator
+        scale = ifc[..., -1, None].conj()
+        w = (numerator * scale / (denumerator.real.unsqueeze(-1) + self.eps)).unsqueeze(1)
         spec_f = self.apply_coefs(spec_f, w)
         if self.training:
             spec = spec.clone()
@@ -455,6 +462,7 @@ def compute_ideal_wf(
     p.fft_size = 96
     p.hop_size = 24
     p.sr = 24000
+    n_freqs = p.fft_size // 2 + 1
 
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
     s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
@@ -466,7 +474,7 @@ def compute_ideal_wf(
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
-    wf = MfWf(p.fft_size // 2 + 1, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
+    wf = MfWf(n_freqs, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
@@ -522,6 +530,11 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
 
     config.use_defaults()
     p = ModelParams()
+    p.fft_size = 96
+    p.hop_size = 24
+    p.sr = 24000
+    n_freqs = p.fft_size // 2 + 1
+
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
     s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
         0, keepdim=True
@@ -532,7 +545,7 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
-    mvdr = MfMvdr(p.fft_size // 2 + 1, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
+    mvdr = MfMvdr(n_freqs, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
