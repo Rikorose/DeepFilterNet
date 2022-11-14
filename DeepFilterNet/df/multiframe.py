@@ -439,7 +439,7 @@ def compute_corr(X: Tensor, N: int):
 
 
 def compute_ideal_wf(
-    rxx_via_rssrnn=False, avg_rxx=False, cholesky_decomp=False, inverse=True, manual=False
+    rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, manual=False
 ):
     from icecream import ic, install
 
@@ -486,9 +486,6 @@ def compute_ideal_wf(
         Rxx = Rss + Rnn
     else:
         Rxx = _tik_reg(Rxx, DLOAD, EPS)
-    if avg_rxx:
-        diag = Rxx.diagonal(dim1=-2, dim2=-1)
-        diag[..., :] = diag.mean(-1, keepdim=True)
     A = Rxx
     if inverse:
         A = torch.linalg.inv(A)
