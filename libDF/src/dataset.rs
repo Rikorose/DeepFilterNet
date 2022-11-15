@@ -781,7 +781,8 @@ impl Dataset<Complex32> for FftDataset {
         let nb_erb = self.nb_erb.unwrap_or(1);
         let sr = self.sr();
         let fft_size = self.fft_size;
-        let mut state = DFState::new(sr, fft_size, fft_size / 2, nb_erb, 1);
+        let mut state = DFState::new(sr, fft_size, self.hop_size, nb_erb, 1);
+
         let speech = stft(sample.get_speech_view()?, &mut state, false);
         let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
         if let Some(f) = sample.downsample_freq {
@@ -2221,9 +2222,7 @@ mod tests {
     pub fn test_fft_dataset() -> Result<()> {
         setup();
         seed_from_u64(0);
-        let sr = 48_000;
-        let n_fft = 1024;
-        let n_hop = 512;
+        let (sr, n_fft, n_hop) = (48_000, 1024, 512);
         let nb = 1;
         let dir = "../assets/";
         let cfg = DatasetConfigJson::open("../assets/dataset.cfg").unwrap();

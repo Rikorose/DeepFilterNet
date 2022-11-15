@@ -228,7 +228,7 @@ pub fn low_pass(center_freq: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 
 }
 fn peaking_eq(center_freq: f32, gain_db: f32, q_factor: f32, sr: usize) -> ([f32; 3], [f32; 3]) {
     let w0 = 2. * std::f32::consts::PI * center_freq / sr as f32;
-    let amp = 10f32.powf(gain_db as f32 / 40.);
+    let amp = 10f32.powf(gain_db / 40.);
     let alpha = w0.sin() / 2. / q_factor;
 
     let b0 = 1. + alpha * amp;
@@ -502,10 +502,10 @@ impl RandClipping {
         self
     }
     fn clip_inplace(&self, x: &mut Array2<f32>, c: f32) {
-        x.mapv_inplace(|x| x.max(-c).min(c))
+        x.mapv_inplace(|x| x.clamp(-c, c))
     }
     fn clip(&self, x: ArrayView2<f32>, c: f32) -> Array2<f32> {
-        x.map(|x| x.max(-c).min(c))
+        x.map(|x| x.clamp(-c, c))
     }
     pub fn sdr(&self, orig: ArrayView2<f32>, processed: ArrayView2<f32>) -> f32 {
         debug_assert_eq!(orig.shape(), processed.shape());
@@ -1162,7 +1162,7 @@ impl AirAbsorptionAugmentation {
         let mut i = 0;
         for (c, a) in center_freqs.windows(2).zip(atten_vals.windows(2)) {
             let (c0, c1) = (c[0] as f32, c[1] as f32);
-            let (a0, a1) = (a[0] as f32, a[1] as f32);
+            let (a0, a1) = (a[0], a[1]);
             while i < n_freqs && freqs[i] <= c1 {
                 let x = (freqs[i] - c1) / (c0 - c1);
                 atten_vals_interp[i] = a0 * x + a1 * (1. - x);
