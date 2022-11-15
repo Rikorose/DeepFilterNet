@@ -124,13 +124,21 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           mkdir -p target/wheels
-          maturin build --profile=release-lto --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python${{ matrix.python.version }} -o target/wheels/
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            -i python${{ matrix.python.version }} \
+            -o target/wheels/
 
       - name: Build wheel windows
         if: matrix.os == 'windows-latest'
         run: |
           mkdir -p target/wheels target/repaired
-          maturin build --profile=release-lto --target=${{ matrix.target }} -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe -o target/wheels/
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            -i python.exe \
+            -o target/wheels/
           pip install delvewheel wheel
           delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
           mv target/repaired/* target/wheels/
@@ -139,15 +147,6 @@ jobs:
         with:
           name: libdf-wheels-${{ needs.create-release.outputs.df_version }}
           path: target/wheels/
-      # - name: Upload release archive
-      #   uses: actions/upload-release-asset@v1.0.2
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   with:
-      #     upload_url: ${{ needs.create-release.outputs.upload_url }}
-      #     asset_path: target/wheels/DeepFilterLib-${{ needs.create-release.outputs.df_version }}*.whl
-      #     asset_name: libdf-wheel-${{ needs.create-release.outputs.df_version }}-py${{ matrix.python.version }}-${{ matrix.target }}.whl
-      #     asset_content_type: application/x-wheel+zip
 
   build-deepfilternet-wheels:
     needs: ['create-release']
@@ -170,15 +169,6 @@ jobs:
         with:
           name: deepfilternet-wheels-${{ needs.create-release.outputs.df_version }}
           path: DeepFilterNet/dist/
-      # - name: Upload release archive
-      #   uses: actions/upload-release-asset@v1.0.2
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   with:
-      #     upload_url: ${{ needs.create-release.outputs.upload_url }}
-      #     asset_path: DeepFilterNet/dist/DeepFilterNet-${{ needs.create-release.outputs.df_version }}*.whl
-      #     asset_name: deepfilternet-wheel-${{ needs.create-release.outputs.df_version }}.whl
-      #     asset_content_type: application/x-wheel+zip
 
   publish-pypi-wheels:
     runs-on: ubuntu-22.04
