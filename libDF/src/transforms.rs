@@ -665,8 +665,8 @@ mod tests {
         let sample_ext = istft(x2.view_mut(), &mut state, true);
         write_wav_arr2("../out/sample_ext.wav", sample_ext.view(), sr as u32).unwrap();
 
-        let f_cut_off = 12000.;
-        let max_bin = (f_cut_off / (sr as f32 / fft_size as f32)) as usize;
+        let f_cut_off = 12000;
+        let max_bin = (f_cut_off as f32 / (sr as f32 / fft_size as f32)) as usize;
         let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
         let mut x3 = stft(sample_f2.view(), &mut state, true);
         ext_bandwidth_spectral(&mut x3, max_bin, sr, Some(4));
