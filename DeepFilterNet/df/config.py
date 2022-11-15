@@ -69,8 +69,8 @@ class Config:
         self._fix_clc()
         self._fix_df()
 
-    def use_defaults(self):
-        self.load(path=None, config_must_exist=False)
+    def use_defaults(self, allow_reload=False):
+        self.load(path=None, config_must_exist=False, allow_reload=allow_reload)
 
     def save(self, path: str):
         if not self.modified:
