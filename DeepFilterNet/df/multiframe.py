@@ -221,6 +221,12 @@ class CRM(MultiFrameModule):
 class MfWf(MultiFrameModule):
     """Multi-frame Wiener filter base module."""
 
+    cholesky_decomp: Final[bool]
+    inverse: Final[bool]
+    enforce_constraints: Final[bool]
+    eps: Final[float]
+    dload: Final[float]
+
     def __init__(
         self,
         num_freqs: int,
@@ -228,6 +234,7 @@ class MfWf(MultiFrameModule):
         lookahead: int = 0,
         cholesky_decomp: bool = False,
         inverse: bool = True,
+        enforce_constraints: bool = True,
         eps=1e-8,
         dload=1e-7,
     ):
@@ -238,11 +245,13 @@ class MfWf(MultiFrameModule):
             frame_size (int): Frame size of the MF MVDR filter.
             lookahead (int): Lookahead of the frame.
             cholesky_decomp (bool): Whether the input is a cholesky decomposition of the correlation matrix. Defauls to `False`.
-            inverse (bool): Wheter the input is a normal or inverse correlation matrix. Defaults to `True`.
+            inverse (bool): Whether the input is a normal or inverse correlation matrix. Defaults to `True`.
+            enforce_constraints (bool): Enforce hermetian matrix for non-inverse input and a triangular matrix for cholesky decomposition inpiut.
         """
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
         self.cholesky_decomp = cholesky_decomp
         self.inverse = inverse
+        self.enforce_constraints = enforce_constraints
         self.triu_idcs = torch.triu_indices(self.frame_size, self.frame_size, 1)
         self.tril_idcs = torch.empty_like(self.triu_idcs)
         self.tril_idcs[0] = self.triu_idcs[1]
@@ -276,24 +285,27 @@ class MfWf(MultiFrameModule):
 
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
-        if not self.inverse:
-            # We have a standard correlation matrix as input. Imaginary part on the diagonal shoul be 0.
+        if self.cholesky_decomp:
+            if self.enforce_constraints:
+                # Upper triangular (wo. diagonal) must be zero
+                iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
+            # Revert cholesky decomposition
+            iRxx = iRxx.matmul(iRxx.transpose(3, 4).conj())
+        if self.enforce_constraints and not self.inverse and not self.cholesky_decomp:
+            # If we have a cholesky_decomp input the constraints are already enforced.
+            # We have a standard correlation matrix as input. Imaginary part on the diagonal should be 0.
             torch.diagonal(iRxx, dim1=-1, dim2=-2).imag = 0.0
-            # Regularization on diag for stability
-            iRxx = _tik_reg(iRxx, self.dload, self.eps)
             # Triu should be complex conj of tril
             tril_conj = iRxx[:, :, :, self.tril_idcs[0], self.tril_idcs[1]].conj()
             iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
-        if self.cholesky_decomp:
-            # Upper triangular (wo. diagonal) must be zero
-            iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
-            # Revert cholesky decomposition
-            iRxx = iRxx.matmul(iRxx.transpose(3, 4).conj())
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
         if not self.inverse:  # Is already an inverse input. No need to inverse it again.
+            # Regularization on diag for stability
+            iRxx = _tik_reg(iRxx, self.dload, self.eps)
+            # Compute weights by solving the equation system
             w = torch.linalg.solve(iRxx, ifc).unsqueeze(1)
-        else:
+        else:  # We already have an inverse estimate. Just compute the linear combination.
             w = torch.einsum("...nm,...m->...n", iRxx, ifc).unsqueeze(1)  # [B, 1, F, N]
         spec_f = self.apply_coefs(spec_f, w)
         if self.training:
@@ -305,9 +317,11 @@ class MfWf(MultiFrameModule):
 class MfMvdr(MultiFrameModule):
     """Multi-frame minimum variance distortionless beamformer based on Rnn**-1 and speech IFC vector."""
 
-    eps: Final[float]
     cholesky_decomp: Final[bool]
     inverse: Final[bool]
+    enforce_constraints: Final[bool]
+    eps: Final[float]
+    dload: Final[float]
 
     def __init__(
         self,
@@ -316,6 +330,7 @@ class MfMvdr(MultiFrameModule):
         lookahead: int = 0,
         cholesky_decomp: bool = False,
         inverse: bool = True,
+        enforce_constraints: bool = True,
         eps=1e-8,
         dload=1e-7,
     ):
@@ -326,11 +341,13 @@ class MfMvdr(MultiFrameModule):
             frame_size (int): Frame size of the MF MVDR filter.
             lookahead (int): Lookahead of the frame.
             cholesky_decomp (bool): Whether the input is a cholesky decomposition of the correlation matrix. Defauls to `False`.
-            inverse (bool): Wheter the input is a normal or inverse correlation matrix. Defaults to `True`.
+            inverse (bool): Whether the input is a normal or inverse correlation matrix. Defaults to `True`.
+            enforce_constraints (bool): Enforce hermetian matrix for non-inverse input and a triangular matrix for cholesky decomposition inpiut.
         """
         super().__init__(num_freqs, frame_size, lookahead=lookahead)
-        self.inverse = inverse
         self.cholesky_decomp = cholesky_decomp
+        self.inverse = inverse
+        self.enforce_constraints = enforce_constraints
         self.triu_idcs = torch.triu_indices(self.frame_size, self.frame_size, 1)
         self.tril_idcs = torch.empty_like(self.triu_idcs)
         self.tril_idcs[0] = self.triu_idcs[1]
@@ -363,24 +380,27 @@ class MfMvdr(MultiFrameModule):
         """
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         iRnn = torch.view_as_complex(iRnn.unflatten(3, (self.frame_size, self.frame_size, 2)))
-        if not self.inverse:
-            # We have a standard correlation matrix as input. Imaginary part on the diagonal shoul be 0.
+        if self.cholesky_decomp:
+            if self.enforce_constraints:
+                # Upper triangular (wo. diagonal) must be zero
+                iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
+            # Revert cholesky decomposition
+            iRnn = iRnn.matmul(iRnn.transpose(3, 4).conj())
+        if self.enforce_constraints and not self.inverse and not self.cholesky_decomp:
+            # If we have a cholesky_decomp input the constraints are already enforced.
+            # We have a standard correlation matrix as input. Imaginary part on the diagonal should be 0.
             torch.diagonal(iRnn, dim1=-1, dim2=-2).imag = 0.0
-            # Regularization on diag for stability
-            iRnn = _tik_reg(iRnn, self.dload, self.eps)
             # Triu should be complex conj of tril
             tril_conj = iRnn[:, :, :, self.tril_idcs[0], self.tril_idcs[1]].conj()
             iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
-        if self.cholesky_decomp:
-            # Upper triangular (wo. diagonal) must be zero
-            iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = 0.0
-            # Revert cholesky decomposition
-            iRnn = iRnn.matmul(iRnn.transpose(3, 4).conj())
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        if not self.inverse:
+        if not self.inverse:  # Is already an inverse input. No need to inverse it again.
+            # Regularization on diag for stability
+            iRnn = _tik_reg(iRnn, self.dload, self.eps)
+            # Compute weights by solving the equation system
             numerator = torch.linalg.solve(iRnn, ifc)
-        else:
+        else:  # We already have an inverse estimate. Just compute the linear combination.
             numerator = torch.einsum("...nm,...m->...n", iRnn, ifc)  # [B, C, F, N]
         denumerator = torch.einsum("...n,...n->...", ifc.conj(), numerator)
         # Normalize numerator
@@ -438,7 +458,9 @@ def compute_corr(X: Tensor, N: int):
     return Rxx
 
 
-def compute_ideal_wf(rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, manual=False):
+def compute_ideal_wf(
+    rxx_via_rssrnn=True, cholesky_decomp=False, inverse=True, enforce_constraints=True, manual=False
+):
     from icecream import ic, install
 
     import libdf
@@ -449,13 +471,16 @@ def compute_ideal_wf(rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, 
     torch.set_printoptions(linewidth=140)
 
     ORDER = 5
-    DLOAD = 1e-9
+    DLOAD = 1e-7
     EPS = 1e-8
+    if cholesky_decomp and inverse:
+        DLOAD = 1e-4
+        EPS = 1e-5
 
     install()
     ic.includeContext = True
 
-    config.use_defaults()
+    config.use_defaults(allow_reload=True)
     p = ModelParams()
     p.fft_size = 96
     p.hop_size = 24
@@ -472,7 +497,13 @@ def compute_ideal_wf(rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, 
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
-    wf = MfWf(n_freqs, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
+    wf = MfWf(
+        n_freqs,
+        ORDER,
+        cholesky_decomp=cholesky_decomp,
+        inverse=inverse,
+        enforce_constraints=enforce_constraints,
+    )
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
@@ -505,10 +536,10 @@ def compute_ideal_wf(rxx_via_rssrnn=False, cholesky_decomp=False, inverse=True, 
             ).squeeze(1)
         )
     y = df.synthesis(Y.numpy())
-    save_audio("out/ideal_mfwf.wav", y, p.sr)
+    save_audio("out/ideal_mfwf_c{}_i{}.wav".format(int(cholesky_decomp), int(inverse)), y, p.sr)
 
 
-def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
+def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=True, manual=False):
     from icecream import ic, install
 
     import libdf
@@ -520,16 +551,20 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
     torch.set_printoptions(linewidth=120)
 
     ORDER = 5
-    DLOAD = 1e-9
-    EPS = 1e-9
+    DLOAD = 1e-7
+    EPS = 1e-8
+    if cholesky_decomp and inverse:
+        DLOAD = 1e-4
+        EPS = 1e-5
 
     install()
 
-    config.use_defaults()
+    config.use_defaults(allow_reload=True)
     p = ModelParams()
     p.fft_size = 96
     p.hop_size = 24
     p.sr = 24000
+    n_freqs = p.fft_size // 2 + 1
     n_freqs = p.fft_size // 2 + 1
 
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
@@ -542,7 +577,13 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
-    mvdr = MfMvdr(n_freqs, ORDER, cholesky_decomp=cholesky_decomp, inverse=inverse)
+    mvdr = MfMvdr(
+        n_freqs,
+        ORDER,
+        cholesky_decomp=cholesky_decomp,
+        inverse=inverse,
+        enforce_constraints=enforce_constraints,
+    )
 
     X, S, N = [torch.from_numpy(df.analysis(x.numpy())) for x in (x, s, n)]
     Xw = F.pad(X, (0, 0, ORDER - 1, 0)).unfold(1, ORDER, 1)
@@ -585,4 +626,11 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, manual=False):
             ).squeeze(1)
         )
     y = df.synthesis(Y.numpy())
-    save_audio("out/ideal_mfmvdr.wav", y, p.sr)
+    save_audio("out/ideal_mfmvdr_c{}_i{}.wav".format(int(cholesky_decomp), int(inverse)), y, p.sr)
+
+
+def compute_all_mf(enforce_constraints=True):
+    for m in (compute_ideal_wf, compute_ideal_mvdr):
+        for c in (True, False):
+            for i in (True, False):
+                m(cholesky_decomp=c, inverse=i, enforce_constraints=enforce_constraints)
