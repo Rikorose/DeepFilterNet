@@ -9,8 +9,8 @@
 #SBATCH --mail-type=ALL
 # Time limit format: "hours:minutes:seconds"
 #SBATCH --time=24:00:00
-# Send the SIGUSR1 signal 4 h before time limit
-#SBATCH --signal=B:USR1@14400
+# Send the SIGUSR1 signal 7 h before time limit
+#SBATCH --signal=B:USR1@25200
 
 set -e
 
