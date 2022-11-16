@@ -499,8 +499,8 @@ def load_opt(
     else:
         params = model.parameters()
     supported = {
-        "adam": lambda p: optim.Adam(p, lr=lr, weight_decay=decay, betas=betas),
-        "adamw": lambda p: optim.AdamW(p, lr=lr, weight_decay=decay, betas=betas),
+        "adam": lambda p: optim.Adam(p, lr=lr, weight_decay=decay, betas=betas, amsgrad=True),
+        "adamw": lambda p: optim.AdamW(p, lr=lr, weight_decay=decay, betas=betas, amsgrad=True),
         "sgd": lambda p: optim.SGD(p, lr=lr, momentum=momentum, nesterov=True, weight_decay=decay),
         "rmsprop": lambda p: optim.RMSprop(p, lr=lr, momentum=momentum, weight_decay=decay),
     }
