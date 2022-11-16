@@ -199,7 +199,7 @@ class MaskLoss(nn.Module):
         elif mask == "spec":
             self.mask_fn = None
         else:
-            raise ValueError("Unsupported mask function.")
+            raise ValueError(f"Unsupported mask function: {mask}.")
         self.gamma = gamma
         self.gamma_pred = gamma if gamma_pred is None else gamma_pred
         self.powers = powers
@@ -394,12 +394,18 @@ class LocalSnrLoss(nn.Module):
 
 
 class Loss(nn.Module):
-    ml_f: Final[float]
-    cal_f: Final[float]
-    sl_f: Final[float]
-    mrsl_f: Final[float]
+    """Loss wrapper containing several different loss functions within this file.
+
+    The configuration is done via the config file.
+    """
 
     def __init__(self, state: DF, istft: Optional[Istft] = None):
+        """Loss wrapper containing all methods for loss calculation.
+
+        Args:
+            state (DF): DF state needed for MaskLoss.
+            istft (Callable/Module): Istft method needed for time domain losses.
+        """
         super().__init__()
         p = ModelParams()
         self.lsnr = LocalSnrTarget(ws=20, target_snr_range=[p.lsnr_min - 5, p.lsnr_max + 5])
@@ -411,7 +417,7 @@ class Loss(nn.Module):
         self.summaries: Dict[str, List[Tensor]] = self.reset_summaries()
         # Mask Loss
         self.ml_f = config("factor", 0, float, section="MaskLoss")  # e.g. 1
-        self.ml_mask = config("mask", 0, str, section="MaskLoss")  # e.g. 1
+        self.ml_mask = config("mask", "iam", str, section="MaskLoss")  # e.g. 1
         self.ml_gamma = config("gamma", 0.6, float, section="MaskLoss")
         self.ml_gamma_pred = config("gamma_pred", 0.6, float, section="MaskLoss")
         self.ml_f_under = config("f_under", 2, float, section="MaskLoss")
@@ -473,6 +479,18 @@ class Loss(nn.Module):
         max_freq: Optional[Tensor] = None,
         multi_stage_specs: List[Tensor] = [],
     ):
+        """Computes all losses.
+
+        Args:
+            clean (Tensor): Clean complex spectrum of shape [B, C, T, F].
+            noisy (Tensor): Noisy complex spectrum of shape [B, C, T, F].
+            enhanced (Tensor): Enhanced complex spectrum of shape [B, C, T, F].
+            mask (Tensor): Mask (real-valued) estimate of shape [B, C, T, E], E: Number of ERB bins.
+            lsnr (Tensor): Local SNR estimates of shape [B, T, 1].
+            snrs (Tensor): Input SNRs of the noisy mixture of shape [B].
+            max_freq (Optional, Tensor): Maximum frequency present in the noisy mixtrue (e.g. due to a lower sampling rate) of shape [B].
+            multi_stage_specs (Optional, Tensor): Enhanced complex spectrums of different intermediate outputs of the DNN.
+        """
         max_bin: Optional[Tensor] = None
         if max_freq is not None:
             max_bin = (
