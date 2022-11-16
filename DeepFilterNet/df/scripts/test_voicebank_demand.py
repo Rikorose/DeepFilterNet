@@ -41,6 +41,7 @@ def main(args):
         metrics=["stoi", "composite", "sisdr"],
         csv_path_enh=args.csv_path_enh,
         csv_path_noisy=args.csv_path_noisy,
+        sleep_ms=args.sleep_ms,
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
@@ -72,5 +73,6 @@ if __name__ == "__main__":
         default=None,
         help="Path to csv score file containing metrics of noisy audios.",
     )
+    parser.add_argument("--sleep-ms", type=int, default=0)
     args = parser.parse_args()
     main(args)

@@ -1,5 +1,6 @@
 import csv
 import os
+import time
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from functools import partial
@@ -94,6 +95,7 @@ def evaluation_loop(
     log_percent: int = 25,
     csv_path_enh: Optional[str] = None,
     csv_path_noisy: Optional[str] = None,
+    sleep_ms=0,
 ) -> Dict[str, float]:
     sr = df_state.sr()
     if n_workers >= 1:
@@ -118,6 +120,8 @@ def evaluation_loop(
             if save_audio_callback is not None:
                 enh = torch.as_tensor(enh).to(torch.float32).view(1, -1)
                 save_audio_callback(cleanfn, enh)
+            if sleep_ms > 0:
+                time.sleep(sleep_ms / 1000)
         logger.info("Waiting for metrics computation completion. This could take a few minutes.")
         if csv_path_enh is not None:
             enh = defaultdict(dict)  # {filename: {metric_name: metric_value}}
