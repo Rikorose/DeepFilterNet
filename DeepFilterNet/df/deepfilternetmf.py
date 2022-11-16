@@ -64,8 +64,8 @@ class ModelParams(DfParams):
         self.mfop_method: str = config(
             "MFOP_METHOD", cast=str, default="WF", section=self.section
         ).upper()
-        self.mf_use_inverse: bool = config(
-            "MF_USE_INVERSE", cast=bool, default=True, section=self.section
+        self.mf_est_inverse: bool = config(
+            "MF_ESTIMATE_INVERSE", cast=bool, default=True, section=self.section
         )
         self.mf_use_cholesky_decomp: bool = config(
             "MF_USE_CHOLESKY_DECOMP", cast=bool, default=False, section=self.section
@@ -319,7 +319,7 @@ class DfNet(nn.Module):
         self.emb_dim: int = layer_width * p.nb_erb
         self.erb_bins: int = p.nb_erb
         if p.conv_lookahead > 0:
-            assert p.conv_lookahead == p.df_lookahead
+            assert p.conv_lookahead >= p.df_lookahead
             self.pad_feat = nn.ConstantPad2d((0, 0, -p.conv_lookahead, p.conv_lookahead), 0.0)
         else:
             self.pad_feat = nn.Identity()
@@ -335,7 +335,7 @@ class DfNet(nn.Module):
         self.df_order = p.df_order
         assert p.mfop_method in ("WF", "MVDR")
         cholesky_decomp = p.mf_use_cholesky_decomp
-        inverse = p.mf_use_inverse
+        inverse = p.mf_est_inverse
         if p.mfop_method.startswith("WF"):
             self.mf_op = MF.MfWf(
                 num_freqs=p.nb_df,
