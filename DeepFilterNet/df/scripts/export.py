@@ -289,7 +289,7 @@ def main(args):
         import monkeytype as _
     except ImportError:
         print("Failed to import monkeytype. Please install it via")
-        print("$ pip install monkeytype")
+        print("$ pip install MonkeyType")
         exit(1)
 
     print(args)
