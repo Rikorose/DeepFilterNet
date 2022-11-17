@@ -165,6 +165,20 @@ def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor,
 def enhance(
     model: nn.Module, df_state: DF, audio: Tensor, pad=False, atten_lim_db: Optional[float] = None
 ):
+    """Enhance a single audio given a preloaded model and DF state.
+
+    Args:
+        model (nn.Module): A DeepFilterNet model.
+        df_state (DF): DF state for STFT/ISTFT and feature calculation.
+        audio (Tensor): Time domain audio of shape [C, T]. Sampling rate needs to match to `model` and `df_state`.
+        pad (bool): Pad the audio to compensate for delay due to STFT/ISTFT.
+        atten_lim_db (float): An optional noise attenuation limit in dB. E.g. an attenuation limit of
+            12 dB only suppresses 12 dB and keeps the remaining noise in the resulting audio.
+
+    Returns:
+        enhanced audio (Tensor): If `pad` was `False` of shape [C, T'] where T'<T slightly delayed due to STFT.
+            If `pad` was `True` it has the same shape as the input.
+    """
     model.eval()
     bs = audio.shape[0]
     if hasattr(model, "reset_h0"):
