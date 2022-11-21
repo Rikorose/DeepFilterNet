@@ -24,7 +24,6 @@ fn libdfdata(_py: Python, m: &PyModule) -> PyResult<()> {
 struct _FdDataLoader {
     loader: DataLoader,
     finished: bool,
-    cur_id: isize,
     logger: Receiver<LogMessage>,
 }
 
@@ -205,14 +204,12 @@ impl _FdDataLoader {
         Ok(_FdDataLoader {
             loader,
             finished: false,
-            cur_id: -1,
             logger: log_receiver,
         })
     }
 
     fn start_epoch(&mut self, split: &str, seed: usize) -> PyResult<()> {
         self.finished = false;
-        self.cur_id = -1;
         match self.loader.start_epoch(split, seed) {
             Err(e) => Err(PyValueError::new_err(e.to_string())),
             Ok(()) => Ok(()),
@@ -226,9 +223,6 @@ impl _FdDataLoader {
         }
         match self.loader.get_batch::<Complex32>().to_py_err()? {
             Some(batch) => {
-                let new_id = *batch.ids.iter().max().unwrap() as isize;
-                debug_assert_eq!(new_id, self.cur_id + batch.batch_size() as isize);
-                self.cur_id = new_id;
                 let erb = batch.feat_erb.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
                 let spec = batch.feat_spec.unwrap_or_else(|| ArrayD::zeros(vec![1, 1, 1, 1]));
                 Ok((
