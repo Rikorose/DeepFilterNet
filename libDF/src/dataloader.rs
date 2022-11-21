@@ -49,6 +49,8 @@ pub enum DfDataloaderError {
     DatasetError(#[from] crate::dataset::DfDatasetError),
     #[error("Ndarray Shape Error")]
     NdarrayShapeError(#[from] ndarray::ShapeError),
+    #[error("Panic Error: {0:?}")]
+    PanicError(String),
 }
 
 impl<T> From<std::sync::mpsc::SendError<T>> for DfDataloaderError {
@@ -276,12 +278,23 @@ impl DataLoader {
                         // During valid/test, only use sample_idx as seed
                         sample_idx as u64
                     };
+                    std::panic::set_hook(Box::new(|panic_info| {
+                        let loc = if let Some(location) = panic_info.location() {
+                            format!("in file '{}' at line {}", location.file(), location.line())
+                        } else {
+                            "but can't get location information...".to_string()
+                        };
+                        let payload = panic_info.payload().downcast_ref::<String>().unwrap();
+                        log::error!("Panic occured during get_sample() {}: {}", loc, payload);
+                    }));
                     let sample = match ds.get_sample(sample_idx, Some(seed)) {
                         Ok(s) => Ok(s),
                         Err(e) => {
-                            eprintln!(
+                            log::error!(
                                 "Error during get_sample() (idx: {}, seed {:?}): {:?}",
-                                sample_idx, seed, e
+                                sample_idx,
+                                seed,
+                                e
                             );
                             Err(e.into())
                         }
@@ -457,7 +470,7 @@ impl DataLoader {
                     DfDataloaderError::SendError(_) => (),
                     // Not expected send error due to out_channel closing
                     e => {
-                        eprint!("Error during worker shutdown: {:?}", e);
+                        log::error!("Error during worker shutdown: {:?}", e);
                         return Err(e);
                     }
                 }

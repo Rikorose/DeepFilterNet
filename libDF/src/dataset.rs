@@ -81,8 +81,6 @@ pub enum DfDatasetError {
     SendError(String),
     #[error("Multithreading Recv Error: {0:?}")]
     RecvError(String),
-    #[error("Thread Join Error: {0:?}")]
-    ThreadJoinError(String),
     #[error("Crossbeam Multithreading Send Error: {0:?}")]
     CrossbeamSendError(String),
 }
@@ -787,6 +785,7 @@ impl Dataset<Complex32> for FftDataset {
         let mut noisy = stft(sample.get_noisy_view()?, &mut state, true);
         if let Some(f) = sample.downsample_freq {
             let max_bin = (f as f32 / (sr as f32 / fft_size as f32)) as usize;
+            log::trace!("Extending bandwidth");
             ext_bandwidth_spectral(&mut noisy, max_bin, sr, Some(4));
         }
 
@@ -1153,6 +1152,7 @@ impl Dataset<f32> for TdDataset {
         let &snr = self.snrs.choose(&mut rng).unwrap();
         let &gain = self.gains.choose(&mut rng).unwrap();
         // Truncate to speech len, combine noises and mix to noisy
+        log::trace!("Combining noises");
         let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains.as_slice()))?;
         #[cfg(feature = "timings")]
         let t_ns = Instant::now();
@@ -1176,10 +1176,12 @@ impl Dataset<f32> for TdDataset {
         .unwrap_or_else(|| speech.clone());
         // TD distortions like clipping
         if !self.sp_distortions_td.is_empty() {
+            log::trace!("Distorting speech (TD)");
             self.sp_distortions_td.transform(&mut (&mut speech_distorted).into())?;
         }
         // Bandwidth limitation
         let downsample_freq = if let Some(limiter) = self.bw_limiter.as_ref() {
+            log::trace!("Limiting speech bandwidth");
             let f = limiter.transform(&mut speech_distorted, max_freq)?;
             noise_low_pass = Some(LpParam {
                 cut_off: f,
@@ -1191,11 +1193,13 @@ impl Dataset<f32> for TdDataset {
         };
         if let Some(re) = noise_low_pass {
             // Low pass filtering via resampling to match speech cut off frequency
+            log::trace!("Limiting noise bandwidth via low pass");
             noise = low_pass_resample(noise.view(), re.cut_off, re.sr)?;
             noise.slice_axis_inplace(Axis(1), Slice::from(..len));
         }
         // FD distortions
         if !self.sp_distortions_fd.is_empty() {
+            log::trace!("Distorting speech (FD)");
             let fft_size = 2048;
             let mut state = DFState::new(self.sr, fft_size, fft_size / 2, 1, 1);
             let mut x = stft(speech_distorted.view(), &mut state, false);
@@ -1205,6 +1209,7 @@ impl Dataset<f32> for TdDataset {
         }
         #[cfg(feature = "timings")]
         let t_d = Instant::now(); // distortions
+        log::trace!("Mixing audio signal");
         let (speech, _, noisy) = mix_audio_signal(
             speech,
             Some(speech_distorted),

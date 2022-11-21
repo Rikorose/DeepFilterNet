@@ -9,6 +9,9 @@ name = "libdfdata"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
+[features]
+timings = ["deep_filter/timings"]
+
 [dependencies]
 deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
 pyo3 = { version = "0.17.1", default_features = true, features = [

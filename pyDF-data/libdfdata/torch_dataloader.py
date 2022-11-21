@@ -201,7 +201,11 @@ class PytorchDataLoader:
                     idx, batch = self.idx, self.loader.get_batch()
                     batch = Batch(batch)
                 except RuntimeError as e:
-                    self.loader.cleanup()
+                    try:
+                        self.loader.cleanup()
+                    except RuntimeError as rte:
+                        self.log_dataloader_msgs()
+                        logger.error(f"Error during get_batch() and loader.cleanup(): {str(rte)}")
                     if str(e) == "DF dataloader error: TimeoutError":
                         logger.error("{}. Stopping epoch.".format(str(e)))
                         self.cleanup_pin_memory_thread()
