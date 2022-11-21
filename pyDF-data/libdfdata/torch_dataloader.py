@@ -163,15 +163,17 @@ class PytorchDataLoader:
             self.cleanup_pin_memory_thread()
             self.pin_memory_thread_done_event = threading.Event()
             self.data_queue = queue.Queue(maxsize=self.prefetch)
+            args = (
+                self.worker_out_queue,
+                self.data_queue,
+                torch.cuda.current_device(),
+                self.pin_memory_thread_done_event,
+            )
+            if torch.__version__ >= "1.12.0":
+                args = args + (None,)
             pin_memory_thread = threading.Thread(
                 target=_pin_memory_loop,
-                args=(
-                    self.worker_out_queue,
-                    self.data_queue,
-                    torch.cuda.current_device(),
-                    self.pin_memory_thread_done_event,
-                    None,
-                ),
+                args=args,
                 name="PinMemoryLoop",
             )
             pin_memory_thread.daemon = True
