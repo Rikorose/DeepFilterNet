@@ -128,6 +128,7 @@ impl Default for RuntimeParams {
 
 pub type TractModel = TypedSimpleState<TypedModel, TypedSimplePlan<TypedModel>>;
 
+#[derive(Clone)]
 pub struct DfTract {
     enc: TractModel,
     erb_dec: TractModel,
