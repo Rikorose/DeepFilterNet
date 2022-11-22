@@ -36,7 +36,8 @@ struct DfPlugin {
 
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
-const MODEL: &[u8] = include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz");
+const MODEL_ENCODED: &[u8] = include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz");
+static mut MODEL: Option<DfTract> = None;
 
 fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
     let ts = buf.timestamp_millis();
@@ -122,8 +123,23 @@ fn get_worker_fn(
     }
 }
 
+fn init_df(channels: usize) {
+    unsafe {
+        if let Some(m) = MODEL.as_ref() {
+            if m.ch == channels {
+                return;
+            }
+        }
+    }
+    let df_params = DfParams::from_bytes(MODEL_ENCODED).expect("Could not load model tar.");
+    let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
+    let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+    unsafe { MODEL = Some(df) }
+}
+
 fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
     move |_: &PluginDescriptor, sample_rate: u64| {
+        let t0 = Instant::now();
         INIT_LOGGER.call_once(|| {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
                 .filter_module("tract_linalg", log::LevelFilter::Info)
@@ -133,10 +149,8 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
                 .init();
         });
 
-        let df_params = DfParams::from_bytes(MODEL).expect("Could not load model tar.");
-        let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
-        let m =
-            DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+        init_df(channels);
+        let m = unsafe { MODEL.clone().unwrap() };
         assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
         let inqueue = Arc::new(Mutex::new(vec![
             VecDeque::with_capacity(m.hop_size * 4);
@@ -169,7 +183,11 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             id.clone(),
         ));
         let hist = DfControlHistory::default();
-        log::info!("DF {} | Initialized plugin", &id);
+        log::info!(
+            "DF {} | Initialized plugin in {:.1}ms",
+            &id,
+            t0.elapsed().as_secs_f32() * 1000.
+        );
         DfPlugin {
             inqueue,
             outqueue,
@@ -187,6 +205,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
     }
 }
 
+#[derive(PartialEq)]
 enum DfControl {
     AttenLim,
     MinThreshDb,
@@ -263,6 +282,13 @@ impl Plugin for DfPlugin {
         for p in ports[i..].iter() {
             let &v = p.unwrap_control();
             let c = DfControl::from_port_name(p.port.name);
+            if c == DfControl::AttenLim && v >= 100. {
+                for (i_ch, o_ch) in inputs.iter().zip(outputs.iter_mut()) {
+                    for (&i, o) in i_ch.iter().zip(o_ch.iter_mut()) {
+                        *o = i
+                    }
+                }
+            }
             if v != self.control_hist.get(&c) {
                 log::info!("DF {} | Setting '{}' to {:.1}", self.id, p.port.name, v);
                 self.control_hist.set(&c, v);
