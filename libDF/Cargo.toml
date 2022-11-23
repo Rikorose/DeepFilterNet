@@ -46,6 +46,7 @@ dataset = [
   "rubato",
   "roots",
   "log",
+  "anyhow",
 ]
 timings = []
 logging = ["log"]

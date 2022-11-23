@@ -14,6 +14,7 @@ use std::sync::mpsc::sync_channel;
 use std::time::Instant;
 use std::time::SystemTime;
 
+use anyhow::Context;
 #[cfg(feature = "flac")]
 use claxon;
 use hdf5::{types::VarLenUnicode, File};
@@ -85,6 +86,10 @@ pub enum DfDatasetError {
     ThreadJoinError(String),
     #[error("Crossbeam Multithreading Send Error: {0:?}")]
     CrossbeamSendError(String),
+    #[error("Not enough {0} samples in the dataset.")]
+    NotEnoughSamplesError(String),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error), // source and Display delegate to anyhow::Error
 }
 
 impl<T> From<crossbeam_channel::SendError<T>> for DfDatasetError {
@@ -1032,7 +1037,8 @@ impl TdDataset {
                         "Found sample with length {}. Skipping.",
                         sample.len_of(Axis(1))
                     );
-                    (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+                    (sp_name, sp_key) =
+                        self.sp_keys.choose(rng).context("Failed to sample speech signal")?.clone();
                     continue;
                 }
                 // Extend clean speech to make sure it covers the full spectrum
@@ -1049,7 +1055,8 @@ impl TdDataset {
                     "Speech sample before augmentation {} is zero! Choosing new one.",
                     idx
                 );
-                (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+                (sp_name, sp_key) =
+                    self.sp_keys.choose(rng).context("Failed to sample speech signal")?.clone();
                 continue;
             }
             self.sp_augmentations.transform(&mut (&mut sample).into())?;
@@ -1058,13 +1065,15 @@ impl TdDataset {
                     "Speech sample after augmentation {} is zero! Choosing new one.",
                     idx
                 );
-                (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+                (sp_name, sp_key) =
+                    self.sp_keys.choose(rng).context("Failed to sample speech signal")?.clone();
                 continue;
             }
             cur_len += sample.len_of(Axis(1));
             speech_samples.push(sample);
             if cur_len < self.max_sample_len() {
-                (sp_name, sp_key) = self.sp_keys.choose(rng).unwrap().clone();
+                (sp_name, sp_key) =
+                    self.sp_keys.choose(rng).context("Failed to sample speech signal")?.clone();
             } else {
                 break;
             }
@@ -1087,7 +1096,8 @@ impl TdDataset {
             return Ok((ns, *[-24., -12., -6., 0.].choose(rng).unwrap()));
         }
         loop {
-            let (ns_name, ns_key) = self.ns_keys.iter().choose(rng).unwrap();
+            let (ns_name, ns_key) =
+                self.ns_keys.iter().choose(rng).context("Failed to sample noise signal")?;
             let mut ns = match self.read_max_len(ns_name, ns_key, None) {
                 Err(e) => {
                     log::warn!("Error during noise reading get_sample(): {}", e);
@@ -1295,6 +1305,12 @@ impl Dataset<f32> for TdDataset {
                 DsType::Noise => self.ns_keys.extend(keys),
                 DsType::RIR => self.rir_keys.extend(keys),
             }
+        }
+        if self.sp_keys.is_empty() {
+            return Err(DfDatasetError::NotEnoughSamplesError("speech".to_string()));
+        }
+        if self.ns_keys.is_empty() {
+            return Err(DfDatasetError::NotEnoughSamplesError("noise".to_string()));
         }
         Ok(())
     }
