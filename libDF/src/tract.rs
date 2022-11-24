@@ -66,8 +66,11 @@ impl DfParams {
 }
 impl Default for DfParams {
     fn default() -> Self {
-        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz"))
-            .expect("Could not load model config")
+        #[cfg(feature = "default_model")]
+        return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz"))
+            .expect("Could not load model config");
+        #[cfg(not(feature = "default_model"))]
+        panic!("Not compiled with a default model")
     }
 }
 

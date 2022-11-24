@@ -95,8 +95,11 @@ fn main() -> Result<()> {
                 exit(1)
             }
         }
-    } else {
+    } else if cfg!(feature = "default_model") {
         DfParams::default()
+    } else {
+        log::error!("deep-filter was not compiled with a default model. Please provide a model via '--model <path-to-model.tar.gz>'");
+        exit(2)
     };
     let mut model: DfTract = DfTract::new(df_params.clone(), &r_params)?;
     let mut sr = model.sr;
