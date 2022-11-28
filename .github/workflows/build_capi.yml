@@ -116,3 +116,4 @@ jobs:
         with:
           name: clib-${{ matrix.target }}
           path: ${{ env.TARGET_DIR }}/usr
+          retention-days: 7
