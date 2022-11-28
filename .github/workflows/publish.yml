@@ -264,6 +264,10 @@ jobs:
       TARGET_DIR: ./target
       # Emit backtraces on panics.
       RUST_BACKTRACE: 1
+      # Cargo build options
+      PACKAGE: deep_filter
+      BIN: deep-filter
+      FEATURES: bin,tract,use-jemalloc,wav-utils,transforms,default_model
     strategy:
       fail-fast: false
       matrix:
@@ -318,7 +322,12 @@ jobs:
           echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}${{ matrix.ext }}" >> $GITHUB_ENV
 
       - name: Build release binary
-        run: ${{ env.CARGO }} build --verbose --features bin,tract,use-jemalloc,wav-utils --profile=release-lto -p deep_filter --bin deep-filter ${{ env.TARGET_FLAGS }}
+        run: | 
+          ${{ env.CARGO }} build --verbose --profile=release-lto \
+            --features ${{ env.FEATURES }} \
+            -p ${{ env.PACKAGE }} \
+            --bin ${{ env.BIN }} \
+            ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
