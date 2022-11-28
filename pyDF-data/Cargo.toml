@@ -12,6 +12,7 @@ path = "src/lib.rs"
 
 [features]
 timings = ["deep_filter/timings"]
+hdf5-static = ["deep_filter/hdf5-static"]
 
 [dependencies]
 deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }

@@ -7,7 +7,7 @@ description = "Noise supression using deep filtering"
 repository = "https://github.com/Rikorose/DeepFilterNet"
 license = "MIT/Apache-2.0"
 readme = "../README.md"
-rust-version = "1.56"
+rust-version = "1.60"
 
 [lib]
 name = "df"
@@ -31,54 +31,55 @@ required-features = ["bin", "tract", "wav-utils", "transforms"]
 [features]
 default = ["default_model"]
 
-transforms = ["thiserror", "ndarray", "rubato"]
+transforms = ["dep:thiserror", "dep:ndarray", "dep:rubato"]
 dataset = [
-  "thiserror",
-  "ndarray",
-  "ndarray-rand",
-  "rand_xoshiro",
-  "hdf5",
-  "rayon",
-  "crossbeam-channel",
-  "serde_json",
-  "serde",
-  "hound",
-  "rubato",
-  "roots",
-  "log",
-  "anyhow",
+  "dep:thiserror",
+  "dep:ndarray",
+  "dep:ndarray-rand",
+  "dep:rand_xoshiro",
+  "dep:hdf5",
+  "dep:rayon",
+  "dep:crossbeam-channel",
+  "dep:serde_json",
+  "dep:serde",
+  "dep:hound",
+  "dep:rubato",
+  "dep:roots",
+  "dep:log",
+  "dep:anyhow",
 ]
 timings = []
-logging = ["log"]
-vorbis = ["lewton", "ogg"]
-flac = ["claxon"]
+logging = ["dep:log"]
+vorbis = ["dep:lewton", "dep:ogg"]
+flac = ["dep:claxon"]
 bin = [
-  "clap",
-  "anyhow",
-  "ctrlc",
-  "log",
-  "env_logger",
-  "rand",
-  "ndarray-rand",
-  "rust-ini",
+  "dep:clap",
+  "dep:anyhow",
+  "dep:ctrlc",
+  "dep:env_logger",
+  "dep:rand",
+  "dep:ndarray-rand",
+  "dep:rust-ini",
+  "logging",
 ]
-wav-utils = ["ndarray", "hound"]
-use-jemalloc = ["jemallocator"]
+wav-utils = ["dep:ndarray", "dep:hound"]
+use-jemalloc = ["dep:jemallocator"]
 tract = [
   "transforms",
-  "tract-core",
-  "tract-onnx",
-  "tract-pulse",
-  "tract-hir",
-  "rust-ini",
-  "ndarray",
-  "anyhow",
-  "log",
-  "flate2",
-  "tar",
+  "logging",
+  "dep:tract-core",
+  "dep:tract-onnx",
+  "dep:tract-pulse",
+  "dep:tract-hir",
+  "dep:rust-ini",
+  "dep:ndarray",
+  "dep:anyhow",
+  "dep:flate2",
+  "dep:tar",
 ]
 default_model = []
-capi = ["tract", "ndarray", "default_model"]
+capi = ["tract", "default_model", "dep:ndarray"]
+hdf5-static = ["hdf5?/static"]
 
 [dependencies]
 rustfft = "^6.1.0"
@@ -94,7 +95,7 @@ thiserror = { version = "1.0", optional = true }
 anyhow = { version = "1.0", optional = true, features = ["backtrace"] }
 ctrlc = { version = "3.2", optional = true }
 hound = { version = "3.4", optional = true }
-hdf5 = { version = "^0.8", optional = true, git = "https://github.com/aldanor/hdf5-rust/" }
+hdf5 = { version = "^0.8", optional = true, git = "https://github.com/aldanor/hdf5-rust/", rev="refs/pull/216/head" }
 ndarray = { version = "^0.15", optional = true, features = ["serde"] }
 ndarray-rand = { version = "^0.14", optional = true }
 rayon = { version = "1.5", optional = true }
