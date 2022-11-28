@@ -3,11 +3,15 @@ name = "DeepFilterDataLoader"
 version = "0.3.2-pre"
 authors = ["Hendrik Schröter"]
 edition = "2021"
+rust-version = "1.60"
 
 [lib]
 name = "libdfdata"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
+
+[features]
+timings = ["deep_filter/timings"]
 
 [dependencies]
 deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
