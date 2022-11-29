@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "timings")]
 use std::time::Instant;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use ini::Ini;
 use ndarray::{prelude::*, Axis};
@@ -67,7 +67,7 @@ impl DfParams {
 impl Default for DfParams {
     fn default() -> Self {
         #[cfg(feature = "default_model")]
-        return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet2_onnx.tar.gz"))
+        return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"))
             .expect("Could not load model config");
         #[cfg(not(feature = "default_model"))]
         panic!("Not compiled with a default model")
@@ -160,7 +160,7 @@ pub struct DfTract {
     erb_buf: Tensor,
     cplx_buf: Tensor,
     m_zeros: Vec<f32>,
-    rolling_spec_buf: VecDeque<Tensor>, // Enhanced stage 1 spec buf
+    rolling_spec_buf_y: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
 }
 
@@ -204,13 +204,10 @@ impl DfTract {
             .unwrap_or_else(|| model_cfg.get("df_order").unwrap())
             .parse::<usize>()?;
         let conv_lookahead = model_cfg.get("conv_lookahead").unwrap().parse::<usize>()?;
-        let mut df_lookahead = df_cfg
+        let df_lookahead = df_cfg
             .get("df_lookahead")
             .unwrap_or_else(|| model_cfg.get("df_lookahead").unwrap())
             .parse::<usize>()?;
-        if df_lookahead > 0 {
-            df_lookahead += 1;
-        }
         let n_freqs = fft_size / 2 + 1;
         let alpha = if let Some(a) = df_cfg.get("norm_alpha") {
             a.parse::<f32>()?
@@ -236,10 +233,11 @@ impl DfTract {
 
         let model_type = config.section(Some("train")).unwrap().get("model").unwrap();
         let lookahead = match model_type {
-            // TODO: deepfilternet2 with lookahead has an unexpected offset of the DF coefs when applying DF to spectrum
-            "deepfilternet2" => conv_lookahead + df_lookahead.saturating_sub(1),
+            "deepfilternet2" => bail!(
+                "DeepFilterNet2 models are deprecated. Please use version v0.3.1 for these models."
+            ),
             "deepfilternet3" => conv_lookahead.max(df_lookahead),
-            _ => return Err(anyhow!("Unsupported model type")),
+            _ => bail!("Unsupported model type {}", model_type),
         };
         log::info!(
             "Running with model type {} lookahead {}",
@@ -247,8 +245,8 @@ impl DfTract {
             lookahead
         );
 
-        let rolling_spec_buf = VecDeque::with_capacity(df_order + lookahead);
-        let rolling_spec_buf_x = VecDeque::with_capacity(lookahead);
+        let rolling_spec_buf_y = VecDeque::with_capacity(df_order + lookahead);
+        let rolling_spec_buf_x = VecDeque::with_capacity(lookahead.max(df_order));
 
         let mut state = DFState::new(sr, fft_size, hop_size, nb_erb, min_nb_erb_freqs);
         state.init_norm_states(nb_df);
@@ -280,7 +278,7 @@ impl DfTract {
             erb_buf,
             cplx_buf,
             m_zeros,
-            rolling_spec_buf,
+            rolling_spec_buf_y,
             rolling_spec_buf_x,
             df_states,
             post_filter: rp.post_filter,
@@ -312,12 +310,12 @@ impl DfTract {
     pub fn init(&mut self) -> Result<()> {
         let ch = self.ch;
         let spec_shape = [ch, 1, 1, self.n_freqs, 2];
-        self.rolling_spec_buf.clear();
+        self.rolling_spec_buf_y.clear();
         for _ in 0..(self.df_order + self.conv_lookahead) {
-            self.rolling_spec_buf
+            self.rolling_spec_buf_y
                 .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
-        for _ in 0..self.conv_lookahead + self.df_lookahead {
+        for _ in 0..self.df_order.max(self.lookahead) {
             self.rolling_spec_buf_x
                 .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
@@ -353,7 +351,8 @@ impl DfTract {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
 
-        self.rolling_spec_buf.pop_front();
+        // Signal model: y = f(s + n) = f(x)
+        self.rolling_spec_buf_y.pop_front();
         self.rolling_spec_buf_x.pop_front();
         for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in izip!(
             noisy.axis_iter(Axis(0)),
@@ -373,7 +372,7 @@ impl DfTract {
                 as_slice_mut_complex(cplx_ch.as_slice_mut().unwrap()),
             );
         }
-        self.rolling_spec_buf.push_back(self.spec_buf.clone());
+        self.rolling_spec_buf_y.push_back(self.spec_buf.clone());
         self.rolling_spec_buf_x.push_back(self.spec_buf.clone());
 
         #[cfg(feature = "timings")]
@@ -408,8 +407,11 @@ impl DfTract {
             apply_df
         );
 
-        let mut spec =
-            self.rolling_spec_buf.get_mut(self.df_order - 1).unwrap().to_array_view_mut()?;
+        let mut spec = self
+            .rolling_spec_buf_y
+            .get_mut(self.df_order - 1)
+            .unwrap()
+            .to_array_view_mut()?;
         let mut m = if apply_erb {
             let dec_input = tvec!(
                 emb.clone(),
@@ -449,16 +451,13 @@ impl DfTract {
         let t3 = Instant::now();
 
         // This spectrum will only be used for the upper frequecies
-        let spec = self
-            .rolling_spec_buf
-            .get_mut(self.df_order - 1 - self.df_lookahead.saturating_sub(1))
-            .unwrap();
+        let spec = self.rolling_spec_buf_y.get_mut(self.df_order - 1).unwrap();
         self.spec_buf.clone_from(spec);
         if apply_df {
             let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
             coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
             df(
-                &self.rolling_spec_buf,
+                &self.rolling_spec_buf_x,
                 coefs,
                 self.nb_df,
                 self.df_order,
@@ -470,7 +469,8 @@ impl DfTract {
         // Limit noise attenuation by mixing back some of the noisy signal
         let mut spec_enh = self.spec_buf.to_array_view_mut()?;
         if let Some(lim) = self.atten_lim {
-            let spec_noisy = self.rolling_spec_buf_x.front().unwrap().to_array_view().unwrap();
+            let spec_noisy =
+                self.rolling_spec_buf_x.get(self.lookahead).unwrap().to_array_view().unwrap();
             spec_enh.map_inplace(|x| *x *= 1. - lim);
             spec_enh.scaled_add(lim, &spec_noisy);
         }
@@ -525,6 +525,7 @@ fn df(
     debug_assert_eq!(nb_df, coefs.shape()[1]);
     debug_assert_eq!(df_order, coefs.shape()[2]);
     debug_assert_eq!(ch, spec_out.shape()[0]);
+    debug_assert!(spec.len() >= df_order);
     let mut o_f: ArrayViewMut2<Complex32> =
         as_array_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
             .into_dimensionality()?;
@@ -567,6 +568,11 @@ fn init_encoder_impl(
     let feat_erb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, 1, s, nb_erb));
     let feat_spec = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, 2, s, nb_df));
 
+    log::debug!(
+        "Encoder input: \n feat_erb  [{:?}]\n feat_spec [{:?}]",
+        feat_erb.shape,
+        feat_spec.shape,
+    );
     m = m
         .with_input_fact(0, feat_erb)?
         .with_input_fact(1, feat_spec)?
@@ -607,8 +613,8 @@ fn init_erb_decoder_impl(
     let s = tract_pulse::fact::stream_dim();
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
-    let n_hidden = net_cfg.get("emb_hidden_dim").unwrap().parse::<usize>()?;
     let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
+    let n_hidden = layer_width * nb_erb / 4;
 
     let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
     let e3f = nb_erb / 4;
@@ -619,6 +625,14 @@ fn init_erb_decoder_impl(
     let e0 = InferenceFact::dt_shape(
         f32::datum_type(),
         shapefactoid!(n_ch, layer_width, s, nb_erb),
+    );
+    log::debug!(
+        "ERB decoder input: \n emb [{:?}]\n e3  [{:?}]\n e2  [{:?}]\n e1  [{:?}]\n e0  [{:?}]",
+        emb.shape,
+        e3.shape,
+        e2.shape,
+        e1.shape,
+        e0.shape
     );
 
     m = m
@@ -668,9 +682,10 @@ fn init_df_decoder_impl(
     log::debug!("Start init DF decoder.");
     let s = tract_pulse::fact::stream_dim();
 
+    let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
-    let n_hidden = net_cfg.get("emb_hidden_dim").unwrap().parse::<usize>()?;
     let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
+    let n_hidden = layer_width * nb_erb / 4;
 
     let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
     let c0 = InferenceFact::dt_shape(
@@ -678,6 +693,11 @@ fn init_df_decoder_impl(
         shapefactoid!(n_ch, layer_width, s, nb_df),
     );
 
+    log::debug!(
+        "ERB decoder input: \n emb [{:?}]\n c0  [{:?}]",
+        emb.shape,
+        c0.shape,
+    );
     m = m
         .with_input_fact(0, emb)?
         .with_input_fact(1, c0)?

@@ -36,7 +36,7 @@ struct DfPlugin {
 
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
-const MODEL_ENCODED: &[u8] = include_bytes!("../../models/DeepFilterNet2_onnx_ll.tar.gz");
+const MODEL_ENCODED: &[u8] = include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz");
 static mut MODEL: Option<DfTract> = None;
 
 fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
