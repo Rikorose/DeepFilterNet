@@ -656,7 +656,7 @@ fn gen_noise_with_scratch(
         noise
     } else {
         // Fast path for white noise
-        Array::random((ch, sr), Normal::new(-1., 1.).unwrap())
+        Array::random((ch, sr), Normal::new(0., 1.).unwrap())
     };
     let f = thread_rng()?.uniform(1.1, 100.) / find_max(&noise).unwrap();
     noise *= f;
