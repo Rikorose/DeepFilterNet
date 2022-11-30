@@ -361,18 +361,17 @@ impl Transform for RandBiquadFilter {
         }
         if self.equalize_rms {
             let rms_new = x.map(|&x| x.powi(2)).mean().unwrap().sqrt();
-            x.mapv_inplace(|x| x * rms / rms_new)
-        } else {
-            // Guard against clipping
-            let max = find_max_abs(x.iter()).unwrap();
-            if (max - 1.) > 1e-10 {
-                let f = 1. / (max + 1e-10);
-                log::debug!(
-                    "RandBiquadFilter: Clipping detected. Reducing gain by: {}",
-                    max
-                );
-                x.mapv_inplace(|s| s * f);
-            }
+            x.mapv_inplace(|s| s * rms / rms_new);
+        }
+        // Guard against clipping
+        let max = find_max_abs(x.iter()).unwrap();
+        if (max - 1.) > 1e-10 {
+            let f = 1. / (max + 1e-10);
+            log::debug!(
+                "RandBiquadFilter: Clipping detected. Reducing gain by: {}",
+                max
+            );
+            x.mapv_inplace(|s| s * f);
         }
         Ok(())
     }
