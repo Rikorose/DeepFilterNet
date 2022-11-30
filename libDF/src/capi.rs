@@ -1,6 +1,6 @@
 use std::boxed::Box;
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_float};
+use std::os::raw::{c_char, c_float, c_short};
 use std::path::PathBuf;
 
 use ndarray::prelude::*;
@@ -12,7 +12,7 @@ pub struct DFState(crate::tract::DfTract);
 impl DFState {
     fn new(model_path: &str, channels: usize, atten_lim: f32) -> Self {
         let r_params =
-            RuntimeParams::new(channels, false, atten_lim, -10., 30., 20., ReduceMask::MEAN);
+            RuntimeParams::new(channels, false, atten_lim, -15., 35., 25., ReduceMask::MEAN);
         let df_params =
             DfParams::new(PathBuf::from(model_path)).expect("Could not load model from path");
         let m =
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
     state.0.set_atten_lim(lim_db).expect("Failed to set attenuation limit.")
 }
 
-/// Processes a chunk of samples.
+/// Processes a chunk of f32 samples.
 ///
 /// Args:
 ///     - df_state: Created via df_create()
@@ -81,6 +81,34 @@ pub unsafe extern "C" fn df_process_frame(
     let output = ArrayViewMut2::from_shape_ptr((1, state.0.hop_size), output);
 
     state.0.process(input, output).expect("Failed to process DF frame")
+}
+
+/// Processes a chunk of i16 samples.
+///
+/// Args:
+///     - df_state: Created via df_create()
+///     - input: Input buffer of length df_get_frame_length()
+///     - output: Output buffer of length df_get_frame_length()
+///
+/// Returns:
+///     - Local SNR of the current frame.
+#[no_mangle]
+pub unsafe extern "C" fn df_process_frame_i16(
+    st: *mut DFState,
+    input: *mut c_short,
+    output: *mut c_short,
+) -> c_float {
+    let state = st.as_mut().expect("Invalid pointer");
+    let input = ArrayView2::from_shape_ptr((1, state.0.hop_size), input);
+    let input = input.mapv(|x| x as f32 / 32767.);
+    let mut output = ArrayViewMut2::from_shape_ptr((1, state.0.hop_size), output);
+    let mut tmp = Array2::zeros((1, state.0.hop_size));
+
+    let snr = state.0.process(input.view(), tmp.view_mut()).expect("Failed to process DF frame");
+    for (t, o) in tmp.iter().zip(output.iter_mut()) {
+        *o = (t * 32767.) as i16
+    }
+    snr
 }
 
 /// Free a DeepFilterNet Model
