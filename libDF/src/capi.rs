@@ -104,7 +104,10 @@ pub unsafe extern "C" fn df_process_frame_i16(
     let mut output = ArrayViewMut2::from_shape_ptr((1, state.0.hop_size), output);
     let mut tmp = Array2::zeros((1, state.0.hop_size));
 
-    let snr = state.0.process(input.view(), tmp.view_mut()).expect("Failed to process DF frame");
+    let snr = state
+        .0
+        .process(input.view(), tmp.view_mut())
+        .expect("Failed to process DF frame");
     for (t, o) in tmp.iter().zip(output.iter_mut()) {
         *o = (t * 32767.) as i16
     }

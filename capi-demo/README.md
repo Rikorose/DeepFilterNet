@@ -2,9 +2,9 @@
 
 ```bash
 cargo install cbindgen cargo-c
-cargo cinstall --destdir staging --prefix=usr --libdir=/usr/lib64 -p deep_filter
-cbindgen --config cbindgen.toml --crate deep_filter --output staging/usr/include/df/deep_filter.h
-sudo cp -a staging/* /
+cargo cinstall --destdir staging --prefix=usr/local --libdir=/usr/local/lib64 -p deep_filter
+cbindgen --config cbindgen.toml --crate deep_filter --output staging/usr/local/include/df/deep_filter.h
+sudo cp -a -i staging/* /
 ```
 
 # Compile demo
