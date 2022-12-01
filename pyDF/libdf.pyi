@@ -49,8 +49,17 @@ class DF:
     def reset(self) -> None: ...
 
 def erb(
-    input: ndarray, erb_fb: Union[ndarray, List[int]], db: Optional[bool] = None
-) -> ndarray: ...
+    input: ndarray, erb_fb: Union[ndarray, List[int]], db: bool = True
+) -> ndarray:
+    """ERB filterbank and transform to decibel scale.
+
+    Args:
+        input (array): Spectrum of shape [B, C, T, F]
+        erb_fb (array): ERB filterbank array of shape [B] containing the ERB widths,
+            where B are the number of ERB bins
+        db (bool): Whether to transform the output into decibel scale. Defaults to `True`.
+    """
+    ...
 def erb_inv(input: ndarray, erb_fb: Union[ndarray, List[int]]) -> ndarray: ...
 def erb_norm(erb: ndarray, alpha: float, state: Optional[ndarray] = None) -> ndarray: ...
 def unit_norm(spec: ndarray, alpha: float, state: Optional[ndarray] = None) -> ndarray: ...
