@@ -788,11 +788,11 @@ impl RandReverbSim {
         let ref_level: f32 = rir_mono[ref_idx];
         let min_level = 10f32.powf((min_db + ref_level.log10() * 20.) / 20.);
         let mut idx = len;
-        for (i, v) in rir_mono.slice(s![ref_idx..]).indexed_iter() {
-            if v < &min_level {
-                idx = i;
+        for (i, v) in rir_mono.iter().rev().enumerate() {
+            if v.abs() < min_level {
+                idx = len - i;
             } else {
-                idx = len; // reset
+                break;
             }
         }
         rir.slice_collapse(s![.., ..idx]);
