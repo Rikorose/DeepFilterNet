@@ -1355,7 +1355,6 @@ mod tests {
     pub fn test_clipping() -> Result<()> {
         let (test_sample, sr) = setup();
         let sr = sr as u32;
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav")?;
         let mut test_sample_c = test_sample.clone();
         let ch = test_sample.len_of(Axis(0)) as u16;
         let tsnr = 3.; // Test with 3dB
