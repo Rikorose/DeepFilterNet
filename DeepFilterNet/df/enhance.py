@@ -191,11 +191,11 @@ def enhance(
         audio = F.pad(audio, (0, n_fft))
     nb_df = getattr(model, "nb_df", getattr(model, "df_bins", ModelParams().nb_df))
     spec, erb_feat, spec_feat = df_features(audio, df_state, nb_df, device=get_device())
-    enhanced = model(spec, erb_feat, spec_feat)[0].cpu()
+    enhanced = model(spec.clone(), erb_feat, spec_feat)[0].cpu()
     enhanced = as_complex(enhanced.squeeze(1))
     if atten_lim_db is not None and abs(atten_lim_db) > 0:
         lim = 10 ** (-abs(atten_lim_db) / 20)
-        enhanced = as_complex(spec.squeeze(1)) * lim + enhanced * (1 - lim)
+        enhanced = as_complex(spec.squeeze(1).cpu()) * lim + enhanced * (1 - lim)
     audio = torch.as_tensor(df_state.synthesis(enhanced.numpy()))
     if pad:
         # The frame size is equal to p.hop_size. Given a new frame, the STFT loop requires e.g.
