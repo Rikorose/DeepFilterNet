@@ -97,6 +97,8 @@ maturin develop --release -m pyDF/Cargo.toml
 # Optional: Install libdfdata python package with dataset and dataloading functionality for training
 # Required build dependency: HDF5 headers (e.g. ubuntu: libhdf5-dev)
 maturin develop --release -m pyDF-data/Cargo.toml
+# If you have troubles with hdf5 you may try to build and link hdf5 statically:
+maturin develop --release --features hdf5-static -m pyDF-data/Cargo.toml
 # Install remaining DeepFilterNet python dependencies
 cd DeepFilterNet
 poetry install -E train -E eval # Note: This globally installs DeepFilterNet in your environment
