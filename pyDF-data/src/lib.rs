@@ -109,8 +109,7 @@ impl _FdDataLoader {
         let mut cfg = match DatasetConfigJson::open(config_path) {
             Err(e) => {
                 return Err(PyRuntimeError::new_err(format!(
-                    "DF dataset config not found at '{}' ({:?})",
-                    config_path, e
+                    "DF dataset config not found at '{config_path}' ({e:?})"
                 )))
             }
             Ok(cfg) => cfg,
@@ -300,7 +299,7 @@ impl<T> ResultExt<T> for std::result::Result<T, ShapeError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => Err(PyRuntimeError::new_err(format!("DF shape error: {:?}", e))),
+            Err(e) => Err(PyRuntimeError::new_err(format!("DF shape error: {e:?}"))),
         }
     }
 }
@@ -309,10 +308,7 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDatasetError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "DF dataset error: {:?}",
-                e
-            ))),
+            Err(e) => Err(PyRuntimeError::new_err(format!("DF dataset error: {e:?}"))),
         }
     }
 }
@@ -322,8 +318,7 @@ impl<T> ResultExt<T> for std::result::Result<T, DfDataloaderError> {
         match self {
             Ok(x) => Ok(x),
             Err(e) => Err(PyRuntimeError::new_err(format!(
-                "DF dataloader error: {:?}",
-                e
+                "DF dataloader error: {e:?}"
             ))),
         }
     }

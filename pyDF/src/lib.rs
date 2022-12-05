@@ -155,8 +155,7 @@ fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
             ),
             n => {
                 return Err(PyValueError::new_err(format!(
-                    "Dimension not supported for erb: {}",
-                    n,
+                    "Dimension not supported for erb: {n}",
                 )))
             }
         };
@@ -214,8 +213,7 @@ fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
             ),
             n => {
                 return Err(PyValueError::new_err(format!(
-                    "Dimension not supported for erb: {}",
-                    n,
+                    "Dimension not supported for erb: {n}",
                 )))
             }
         };
@@ -313,7 +311,7 @@ impl<T> ResultExt<T> for std::result::Result<T, ShapeError> {
     fn to_py_err(self) -> PyResult<T> {
         match self {
             Ok(x) => Ok(x),
-            Err(e) => Err(PyRuntimeError::new_err(format!("DF shape error: {:?}", e))),
+            Err(e) => Err(PyRuntimeError::new_err(format!("DF shape error: {e:?}"))),
         }
     }
 }
@@ -323,8 +321,7 @@ impl<T> ResultExt<T> for std::result::Result<T, TransformError> {
         match self {
             Ok(x) => Ok(x),
             Err(e) => Err(PyRuntimeError::new_err(format!(
-                "DF transform error: {:?}",
-                e
+                "DF transform error: {e:?}"
             ))),
         }
     }
