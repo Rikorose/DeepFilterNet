@@ -773,7 +773,7 @@ impl RandReverbSim {
             return Ok(rir);
         }
         decay.slice_mut(s![0, offset..]).assign(&Array1::from_iter(
-            (0..(len - offset)).map(|v| (-(v as f32) * dt / tau).exp()),
+            (0..(len - offset)).map(|v| 10f32.powf(-(v as f32) * dt / tau)),
         ));
         rir = rir * decay;
         Ok(rir)
