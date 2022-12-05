@@ -36,7 +36,7 @@ impl ReadWav {
             Err(e) => {
                 return Err(WavUtilsError::HoundErrorDetail {
                     source: e,
-                    msg: format!("Could not find audio file {}", path),
+                    msg: format!("Could not find audio file {path}"),
                 })
             }
             Ok(r) => r,

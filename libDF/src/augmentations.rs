@@ -883,8 +883,7 @@ impl RandReverbSim {
             Ok(r) => r,
             Err(e) => {
                 return Err(AugmentationError::DfError(format!(
-                    "Error getting RIR in RandReverbSim::transform() {:?}",
-                    e
+                    "Error getting RIR in RandReverbSim::transform() {e:?}"
                 )));
             }
         };
@@ -1280,7 +1279,7 @@ mod tests {
         for (i, t) in transforms.transforms.iter().enumerate() {
             t.transform(&mut (&mut out_manual).into())?;
             write_wav_iter(
-                format!("../out/compose_{}.wav", i).as_str(),
+                format!("../out/compose_{i}.wav").as_str(),
                 out_manual.iter(),
                 sr as u32,
                 ch,

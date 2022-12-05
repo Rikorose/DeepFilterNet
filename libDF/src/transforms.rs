@@ -91,7 +91,7 @@ pub fn fft_with_output(
         let o = output_ch.as_slice_mut().unwrap();
         fft_transform
             .process_with_scratch(i, o, scratch)
-            .map_err(|e| TransformError::DfError(format!("Error in fft(): {:?}", e)))?;
+            .map_err(|e| TransformError::DfError(format!("Error in fft(): {e:?}")))?;
     }
     Ok(())
 }
@@ -117,7 +117,7 @@ pub fn ifft_with_output(
         let o = output_ch.as_slice_mut().unwrap();
         fft_transform
             .process_with_scratch(i, o, scratch)
-            .map_err(|e| TransformError::DfError(format!("Error in ifft(): {:?}", e)))?;
+            .map_err(|e| TransformError::DfError(format!("Error in ifft(): {e:?}")))?;
     }
     Ok(())
 }

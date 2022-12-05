@@ -157,7 +157,7 @@ impl DataLoader {
         hdf5::sync::sync(|| {});
         ThreadPoolBuilder::new()
             .num_threads(num_workers)
-            .thread_name(|idx| format!("DataLoader Worker {}", idx))
+            .thread_name(|idx| format!("DataLoader Worker {idx}"))
             .start_handler(|_| hdf5::sync::sync(|| {}))
             .build_global()
             .unwrap_or(());
@@ -280,8 +280,7 @@ impl DataLoader {
                         Ok(s) => Ok(s),
                         Err(e) => {
                             eprintln!(
-                                "Error during get_sample() (idx: {}, seed {:?}): {:?}",
-                                sample_idx, seed, e
+                                "Error during get_sample() (idx: {sample_idx}, seed {seed:?}): {e:?}"
                             );
                             Err(e.into())
                         }
@@ -451,13 +450,13 @@ impl DataLoader {
         if let Some(thread) = self.fill_thread.take() {
             if let Err(e) = thread
                 .join()
-                .map_err(|e| DfDataloaderError::ThreadJoinError(format!("{:?}", e)))?
+                .map_err(|e| DfDataloaderError::ThreadJoinError(format!("{e:?}")))?
             {
                 match e {
                     DfDataloaderError::SendError(_) => (),
                     // Not expected send error due to out_channel closing
                     e => {
-                        eprint!("Error during worker shutdown: {:?}", e);
+                        eprint!("Error during worker shutdown: {e:?}");
                         return Err(e);
                     }
                 }
@@ -701,8 +700,7 @@ mod tests {
                 for split in Split::iter() {
                     for epoch in 0..2 {
                         println!(
-                        "***** Test: Loader with dataset_size {}, batch_size {}, epoch {} ******",
-                        dataset_size, batch_size, epoch
+                        "***** Test: Loader with dataset_size {dataset_size}, batch_size {batch_size}, epoch {epoch} ******"
                     );
                         loader.start_epoch(split, epoch)?;
                         let mut n_samples = 0;

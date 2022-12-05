@@ -367,7 +367,7 @@ impl From<&str> for Split {
             "train" => Split::Train,
             "valid" => Split::Valid,
             "test" => Split::Test,
-            s => panic!("Split '{}' does not exist.", s),
+            s => panic!("Split '{s}' does not exist."),
         }
     }
 }
@@ -513,7 +513,7 @@ impl DatasetBuilder {
         if let Some(b) = self.nb_spec {
             let nfreqs = fft_size / 2 + 1;
             if b > nfreqs {
-                let msg = format!("Number of spectrogram bins ({}) is larger then number of available frequency bins ({})", b, nfreqs);
+                let msg = format!("Number of spectrogram bins ({b}) is larger then number of available frequency bins ({nfreqs})");
                 return Err(DfDatasetError::DataProcessingError(msg));
             }
         }
@@ -541,7 +541,7 @@ impl DatasetBuilder {
             hdf5::sync::sync(|| {});
             rayon::ThreadPoolBuilder::new()
                 .num_threads(n)
-                .thread_name(|idx| format!("DataLoader Worker {}", idx))
+                .thread_name(|idx| format!("DataLoader Worker {idx}"))
                 .start_handler(|_| hdf5::sync::sync(|| {}))
                 .build_global()
                 .unwrap_or(());
@@ -914,7 +914,7 @@ impl TdDataset {
         .map_err(move |e: DfDatasetError| -> DfDatasetError {
             DfDatasetError::ErrorDetail {
                 source: Box::new(e),
-                msg: format!("Error reading sample '{}' from dataset {}", key, name,),
+                msg: format!("Error reading sample '{key}' from dataset {name}",),
             }
         })?;
         if sr != self.sr {
@@ -1324,7 +1324,7 @@ pub enum DsType {
 }
 impl fmt::Display for DsType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1389,7 +1389,7 @@ impl Hdf5Dataset {
         file.map_err(move |e: hdf5::Error| -> DfDatasetError {
             DfDatasetError::Hdf5ErrorDetail {
                 source: e,
-                msg: format!("Error during File::open of dataset {}", path),
+                msg: format!("Error during File::open of dataset {path}"),
             }
         })
     }
@@ -2186,17 +2186,13 @@ mod tests {
                     let snr_inp_m = calc_snr_xv(m.iter(), n.iter());
                     assert!(
                         (snr_inp_m - snr).abs() < atol,
-                        "Input SNR does not match: {}, {}",
-                        snr_inp_m,
-                        snr
+                        "Input SNR does not match: {snr_inp_m}, {snr}"
                     );
                     // Target SNR between noise and target (clean) speech.
                     let snr_target_c = calc_snr(c.iter(), n.iter());
                     assert!(
                         (snr_target_c - snr).abs() < atol,
-                        "Target SNR does not match: {}, {}",
-                        snr_target_c,
-                        snr,
+                        "Target SNR does not match: {snr_target_c}, {snr}",
                     );
                     // Test the SNR difference between input and target
                     assert!((snr_inp_m - snr_target_c).abs() < atol);
