@@ -65,9 +65,6 @@ jobs:
             cinstall-args: '--crt-static'
             libname: deep_filter_ladspa
             libext: dll
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v3
 
@@ -81,6 +78,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          cache-on-failure: true
 
       - name: Install gcc-arm-linux-gnueabihf
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
@@ -101,6 +99,12 @@ jobs:
           echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
           echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
 
+      - name: Install Perl on Windows
+        if: ${{ runner.os == 'windows' }}
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.34'
+
       - name: Install cargo-c
         run: |
           cargo install cargo-c ${{ matrix.cargoc-feat }}
@@ -112,6 +116,7 @@ jobs:
           echo "target dir is: ${{ env.TARGET_DIR }}"
 
       - name: Build release binary
+        shell: bash
         run: |
           ${{ env.CARGO }} cinstall --profile=release-lto -p deep_filter \
             --destdir=${{ env.TARGET_DIR }} \
@@ -119,9 +124,15 @@ jobs:
             ${{ env.TARGET_FLAGS }}
 
       - name: List built files
+        if: ${{ runner.os != 'macos' }}
         run: tree ${{ env.TARGET_DIR }}
 
+      - name: List built files
+        if: ${{ runner.os == 'macos' }}
+        run: find . ${{ env.TARGET_DIR }}
+
       - name: Rebuild header using the settings in cbindgen.toml
+        shell: bash
         run: |
           cbindgen --config cbindgen.toml --crate deep_filter --output ${{ env.TARGET_DIR }}/deep_filter.h
 
