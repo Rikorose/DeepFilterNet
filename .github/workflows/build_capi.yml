@@ -61,6 +61,8 @@ jobs:
           - build: win-msvc
             os: windows-2022
             target: x86_64-pc-windows-msvc
+            cargoc-feat: '--features=vendored-openssl'
+            cinstall-args: '--crt-static'
             libname: deep_filter_ladspa
             libext: dll
     defaults:
@@ -80,7 +82,7 @@ jobs:
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
-      - name: Install gcc-arm-linux-gnueabihf 
+      - name: Install gcc-arm-linux-gnueabihf
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
         run: |
           mkdir .cargo
@@ -110,7 +112,18 @@ jobs:
           echo "target dir is: ${{ env.TARGET_DIR }}"
 
       - name: Build release binary
-        run: ${{ env.CARGO }} cinstall --profile=release-lto --destdir=${{ env.TARGET_DIR }} -p deep_filter ${{ env.TARGET_FLAGS }}
+        run: |
+          ${{ env.CARGO }} cinstall --profile=release-lto -p deep_filter \
+            --destdir=${{ env.TARGET_DIR }} \
+            ${{ matrix.cinstall-args }} \
+            ${{ env.TARGET_FLAGS }}
+
+      - name: List built files
+        run: tree ${{ env.TARGET_DIR }}
+
+      - name: Rebuild header using the settings in cbindgen.toml
+        run: |
+          cbindgen --config cbindgen.toml --crate deep_filter --output ${{ env.TARGET_DIR }}/deep_filter.h
 
       - uses: actions/upload-artifact@v3
         with:
