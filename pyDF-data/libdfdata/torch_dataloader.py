@@ -139,12 +139,15 @@ class PytorchDataLoader:
         atexit.register(self.loader.cleanup)
 
     def set_batch_size(self, batch_size: int, split: str):
+        """Dynamically update the batch size before calling iter_epoch()"""
         self.loader.set_batch_size(batch_size, split)
 
-    def get_batch_size(self, split: str):
+    def get_batch_size(self, split: str) -> int:
+        """Return the current batch size."""
         return self.loader.batch_size(split)
 
     def cleanup_pin_memory_thread(self):
+        """When using cuda, stop and join the pin memory thread."""
         if self.pin_memory:
             # Check if still running from previous epoch
             if self.pin_memory_thread is not None and self.pin_memory_thread.is_alive():
@@ -159,6 +162,7 @@ class PytorchDataLoader:
                 print("Pinmemory cleanup done")
 
     def setup_data_queue(self):
+        """When using cuda and memory pinning, setup a data queue and start the pin memory worker."""
         if self.pin_memory:
             self.cleanup_pin_memory_thread()
             self.pin_memory_thread_done_event = threading.Event()
@@ -193,6 +197,7 @@ class PytorchDataLoader:
         return self.loader.dataset_len(split)
 
     def cleanup(self):
+        """Cleanup dataloader and join the dataloader workers."""
         self.loader.cleanup()
 
     def _get_worker_queue_dummy(self):
@@ -231,6 +236,7 @@ class PytorchDataLoader:
         return batch
 
     def log_dataloader_msgs(self):
+        """Fetches log messages generated in the rust backend and converts to loguru."""
         # message has type (level: str, message: str, module: Optional[str], lineno: Optional[int])
         for (level, msg, module, lineno) in self.loader.get_log_messages():
             # with logger.contextualize(module: "Dataloader", file=file, lineno=lineno):
@@ -243,6 +249,13 @@ class PytorchDataLoader:
             logger.patch(patch).log(level, msg)
 
     def iter_epoch(self, split: str, seed: int) -> Iterator[Batch]:
+        """Start iterating over a new epoch.
+        During training, it will re-shuffle the dataset before starting dataloader workers.
+
+        Args:
+            split (String): Can be one of `('train', 'valid', 'test')`
+            seed (int): Epoch seed used for shuffeling the dataset and sample augmentation.
+        """
         self.idx = 0
         # Initializes workers. This needs to be done before pin_memory thread is
         # started via setup_data_queue().
