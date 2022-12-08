@@ -124,8 +124,14 @@ rstest = "0.16"
 env_logger = "0.10"
 log = { version = "0.4", features = ["std"] }
 
-[package.metadata.capi]
-header_name = "deep_filter"
+[package.metadata.capi.header]
+name = "deep_filter"
+subdirectory = "deep_filter"
+[package.metadata.capi.pkg_config]
+name = "libdeepfilter"
+filename = "deepfilter"
+[package.metadata.capi.library]
+name = "deepfilter"
 
 [package.metadata.deb]
 assets = [
