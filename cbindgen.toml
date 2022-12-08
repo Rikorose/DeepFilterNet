@@ -1,7 +1,9 @@
 header = "// SPDX-License-Identifier: MIT OR Apache-2.0"
 sys_includes = ["stddef.h", "stdint.h", "stdlib.h"]
 no_includes = true
+include_version = true
 include_guard = "DEEP_FILTER_H"
 tab_width = 4
 style = "Type"
 language = "C"
+cpp_compat = true
