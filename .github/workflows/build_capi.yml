@@ -84,6 +84,7 @@ jobs:
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
         run: |
           mkdir .cargo
+          sudo apt-get update
           sudo apt-get install --no-install-recommends gcc-arm-linux-gnueabihf crossbuild-essential-armhf
           echo -e "[target.${{ matrix.target }}]\nlinker=\"${{ matrix.cc }}\"\n" > .cargo/config
 
@@ -91,6 +92,7 @@ jobs:
         if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
         run: |
           mkdir .cargo
+          sudo apt-get update
           sudo apt-get install --no-install-recommends gcc-aarch64-linux-gnu crossbuild-essential-arm64
           echo -e "[target.${{ matrix.target }}]\nlinker=\"${{ matrix.cc }}\"\n" > .cargo/config
 
