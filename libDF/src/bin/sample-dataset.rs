@@ -116,8 +116,9 @@ fn main() -> Result<()> {
         .max_len(train_cfg.get("max_sample_len_s").unwrap().parse::<f32>()?)
         .snrs(snrs)
         .global_sample_factor(train_cfg.get("global_ds_sampling_f").unwrap().parse::<f32>()?)
-        .prob_reverberation(train_cfg.get("p_reverb").unwrap().parse::<f32>()?)
+        .prob_reverberation(distortion_cfg.get("p_reverb").unwrap().parse::<f32>()?)
         .clipping_distortion(distortion_cfg.get("p_clipping").unwrap().parse::<f32>()?)
+        .zeroing_distortion(distortion_cfg.get("p_zeroing").unwrap().parse::<f32>()?)
         .air_absorption_distortion(distortion_cfg.get("p_air_absorption").unwrap().parse::<f32>()?)
         .bandwidth_extension(distortion_cfg.get("p_bandwidth_ext").unwrap().parse::<f32>()?);
     if split == Split::Train {
@@ -132,7 +133,7 @@ fn main() -> Result<()> {
     }
     write_hdf5_key_cache(ds_cfg_path, &ds_cfg);
     let epoch_seed = args.epoch.unwrap_or_default() as u64;
-    ds.generate_keys(Some(epoch_seed))?;
+    ds.generate_keys(Some(global_seed + epoch_seed))?;
     let mut rng = thread_rng().unwrap();
     let indices = {
         if !args.idx.is_empty() {
@@ -148,7 +149,7 @@ fn main() -> Result<()> {
     };
     for &idx in indices.iter() {
         log::info!("Loading sample {}", idx);
-        let mut sample = ds.get_sample(idx, Some(epoch_seed + idx as u64)).unwrap();
+        let mut sample = ds.get_sample(idx, Some(global_seed + epoch_seed + idx as u64)).unwrap();
         let ch = sample.speech.len_of(Axis(0)) as u16;
         log::info!("Got sample with idx {}", sample.idx);
         let speech = istft(
