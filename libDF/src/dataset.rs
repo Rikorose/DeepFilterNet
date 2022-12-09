@@ -473,6 +473,7 @@ pub struct DatasetBuilder {
     num_threads: Option<usize>,
     p_bandwidth_ext: Option<f32>,
     p_clipping: Option<f32>,
+    p_zeroing: Option<f32>,
     p_air_absorption: Option<f32>,
 }
 impl DatasetBuilder {
@@ -497,6 +498,7 @@ impl DatasetBuilder {
             num_threads: None,
             p_bandwidth_ext: None,
             p_clipping: None,
+            p_zeroing: None,
             p_air_absorption: None,
         }
     }
@@ -643,10 +645,14 @@ impl DatasetBuilder {
                     ))
                 }
             }
-            if let Some(p) = get_env("DF_P_ZEROING") {
+            let p_zeroing: Option<f32> = match get_env("DF_P_ZEROING") {
+                Some(p) => Some(p),
+                None => self.p_zeroing,
+            };
+            if let Some(p) = p_zeroing {
                 sp_distortions_td.push(Box::new(RandZeroingTD::default_with_prob(p)))
             }
-            let p_air_absorption: Option<f32> = match get_env("DF_P_AirAugmentation") {
+            let p_air_absorption: Option<f32> = match get_env("DF_P_AIR_AUG") {
                 Some(p) => Some(p),
                 None => self.p_air_absorption,
             };
@@ -786,6 +792,10 @@ impl DatasetBuilder {
     }
     pub fn clipping_distortion(mut self, p: f32) -> Self {
         self.p_clipping = Some(p);
+        self
+    }
+    pub fn zeroing_distortion(mut self, p: f32) -> Self {
+        self.p_zeroing = Some(p);
         self
     }
     pub fn air_absorption_distortion(mut self, p: f32) -> Self {

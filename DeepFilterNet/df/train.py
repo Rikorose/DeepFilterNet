@@ -153,6 +153,7 @@ def main():
         p_reverb=config("p_reverb", 0.2, float, section="distortion"),
         p_bw_ext=config("p_bandwidth_ext", 0.0, float, section="distortion"),
         p_clipping=config("p_clipping", 0.0, float, section="distortion"),
+        p_zeroing=config("p_zeroing", 0.0, float, section="distortion"),
         p_air_absorption=config("p_air_absorption", 0.0, float, section="distortion"),
         prefetch=config("NUM_PREFETCH_BATCHES", 32, int, section="train"),
         overfit=overfit,
