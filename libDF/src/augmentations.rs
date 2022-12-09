@@ -573,6 +573,65 @@ impl Transform for RandClipping {
         "RandClipping"
     }
 }
+#[derive(Clone)]
+pub struct RandZeroingTD {
+    prob: f32,
+    max_percent: f32,
+    min_sequential_samples: usize,
+    max_sequential_samples: usize,
+}
+impl RandZeroingTD {
+    pub fn with_n_samples(mut self, min: usize, max: usize) -> Self {
+        self.min_sequential_samples = min;
+        self.max_sequential_samples = max;
+        self
+    }
+    pub fn with_max_percent(mut self, p: f32) -> Self {
+        assert!(p < 100.);
+        assert!(p >= 1.);
+        self.max_percent = p;
+        self
+    }
+}
+impl Transform for RandZeroingTD {
+    fn transform(&self, x: &mut TransformInput) -> Result<()> {
+        let x = match x {
+            TransformInput::Spectrum(_) => return Err(AugmentationError::WrongInput),
+            TransformInput::Audio(a) => a,
+        };
+        let mut rng = thread_rng()?;
+        if self.prob == 0. || (self.prob < 1. && rng.uniform(0f32, 1f32) > self.prob) {
+            return Ok(());
+        }
+        // Loop as long as we dropped up to `perc` samples
+        let a_len = x.len_of(Axis(1));
+        let p = rng.uniform(0.01f32, self.max_percent / 100.);
+        let mut cur = 0.;
+        let min = self.min_sequential_samples;
+        let max = self.max_sequential_samples;
+        while cur < p {
+            let pos = rng.uniform(0, a_len - max);
+            let z_len = rng.uniform(min, max);
+            x.slice_mut(s![.., pos..pos + z_len]).map_inplace(|s| *s = 0.);
+            cur += z_len as f32 / a_len as f32;
+        }
+        Ok(())
+    }
+    fn default_with_prob(p: f32) -> Self {
+        Self {
+            prob: p,
+            max_percent: 10.,
+            min_sequential_samples: 240,
+            max_sequential_samples: 1800,
+        }
+    }
+    fn box_clone(&self) -> Box<dyn Transform + Send> {
+        Box::new((*self).clone())
+    }
+    fn name(&self) -> &str {
+        "RandZeroing"
+    }
+}
 
 #[derive(Clone)]
 pub struct RandRemoveDc {
@@ -1373,6 +1432,19 @@ mod tests {
         let resulting_snr = transform.sdr(test_sample.view(), test_sample_c.view());
         write_wav_iter("../out/clipped.wav", test_sample_c.iter(), sr, ch)?;
         dbg!(c, resulting_snr);
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_zeroing() -> Result<()> {
+        let (test_sample, sr) = setup();
+        let sr = sr as u32;
+        let mut test_sample_c = test_sample.clone();
+        let ch = test_sample.len_of(Axis(0)) as u16;
+        let transform = RandZeroingTD::default_with_prob(1.0).with_n_samples(420, 1800);
+        transform.transform(&mut (&mut test_sample_c).into())?;
+        write_wav_iter("../out/original.wav", test_sample.iter(), sr, ch)?;
+        write_wav_iter("../out/zeroed.wav", test_sample_c.iter(), sr, ch)?;
         Ok(())
     }
 
