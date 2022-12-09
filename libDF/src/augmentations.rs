@@ -1060,7 +1060,7 @@ impl RandReverbSim {
             prob_speech: p,
             prob_noise: p,
             prob_resample: p,
-            prob_decay: p,
+            prob_decay: p.max(0.5),
             sr,
             drr_f: None,
         }
