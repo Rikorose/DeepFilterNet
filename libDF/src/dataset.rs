@@ -1,4 +1,6 @@
 use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::env;
+use std::ffi::OsStr;
 use std::fmt;
 #[cfg(feature = "timings")]
 use std::fmt::Write as _;
@@ -9,6 +11,7 @@ use std::io::{BufReader, BufWriter};
 use std::io::{Cursor, Read, Seek};
 use std::ops::Range;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::mpsc::sync_channel;
 #[cfg(feature = "timings")]
 use std::time::Instant;
@@ -611,22 +614,43 @@ impl DatasetBuilder {
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
         let ds_split = datasets.split;
         let sp_augmentations = Compose::new(vec![
-            Box::new(RandRemoveDc::default_with_prob(0.25)),
-            Box::new(RandLFilt::default_with_prob(0.25)),
-            // Box::new(RandBiquadFilter::default_with_prob(0.1).with_sr(self.sr)),
-            Box::new(RandResample::default_with_prob(0.1).with_sr(self.sr)),
+            Box::new(RandRemoveDc::default_with_prob(
+                get_env("DF_P_REMVOE_DC").unwrap_or(0.25),
+            )),
+            Box::new(RandLFilt::default_with_prob(
+                get_env("DF_P_LFILT").unwrap_or(0.25),
+            )),
+            Box::new(
+                RandBiquadFilter::default_with_prob(get_env("DF_P_BIQUAD").unwrap_or(0.0))
+                    .with_sr(self.sr),
+            ),
+            Box::new(
+                RandResample::default_with_prob(get_env("DF_P_LFILT").unwrap_or(0.1))
+                    .with_sr(self.sr),
+            ),
         ]);
         let mut sp_distortions_td = Compose::new(Vec::new());
         let mut sp_distortions_fd = Compose::new(Vec::new());
         if ds_split == Split::Train {
-            if let Some(p) = self.p_clipping {
+            let p_clipping: Option<f32> = match get_env("DF_P_CLIPPING") {
+                Some(p) => Some(p),
+                None => self.p_clipping,
+            };
+            if let Some(p) = p_clipping {
                 if p > 0. {
                     sp_distortions_td.push(Box::new(
                         RandClipping::default_with_prob(p).with_c(0.05..0.9),
                     ))
                 }
             }
-            if let Some(p) = self.p_air_absorption {
+            if let Some(p) = get_env("DF_P_ZEROING") {
+                sp_distortions_td.push(Box::new(RandZeroingTD::default_with_prob(p)))
+            }
+            let p_air_absorption: Option<f32> = match get_env("DF_P_AirAugmentation") {
+                Some(p) => Some(p),
+                None => self.p_air_absorption,
+            };
+            if let Some(p) = p_air_absorption {
                 if p > 0. {
                     sp_distortions_fd
                         .push(Box::new(AirAbsorptionAugmentation::default_with_prob(p)));
@@ -634,9 +658,17 @@ impl DatasetBuilder {
             }
         }
         let mut ns_augmentations = Compose::new(vec![
-            Box::new(RandLFilt::default_with_prob(0.25)),
-            // Box::new(RandBiquadFilter::default_with_prob(0.25).with_sr(self.sr)),
-            Box::new(RandResample::default_with_prob(0.05).with_sr(self.sr)),
+            Box::new(RandLFilt::default_with_prob(
+                get_env("DF_P_LFILT").unwrap_or(0.25),
+            )),
+            Box::new(
+                RandBiquadFilter::default_with_prob(get_env("DF_P_BIQUAD").unwrap_or(0.0))
+                    .with_sr(self.sr),
+            ),
+            Box::new(
+                RandResample::default_with_prob(get_env("DF_P_LFILT").unwrap_or(0.1))
+                    .with_sr(self.sr),
+            ),
         ]);
         if ds_split == Split::Train {
             ns_augmentations.push(Box::new(
@@ -1931,6 +1963,18 @@ fn mix_audio_signal(
         mixture *= f;
     }
     Ok((clean_out, noise, mixture))
+}
+
+fn get_env<T, K>(var: K) -> Option<T>
+where
+    K: AsRef<OsStr>,
+    T: FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Debug,
+{
+    match env::var(var) {
+        Ok(e) => Some(e.parse::<T>().expect("Failed to parse env {var}: {e}")),
+        Err(_) => None,
+    }
 }
 
 #[cfg(test)]

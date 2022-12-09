@@ -621,7 +621,7 @@ impl Transform for RandZeroingTD {
         Self {
             prob: p,
             max_percent: 10.,
-            min_sequential_samples: 240,
+            min_sequential_samples: 120,
             max_sequential_samples: 1800,
         }
     }
