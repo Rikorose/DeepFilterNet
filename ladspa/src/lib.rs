@@ -36,7 +36,6 @@ struct DfPlugin {
 
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
-const MODEL_ENCODED: &[u8] = include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz");
 static mut MODEL: Option<DfTract> = None;
 
 fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
@@ -131,7 +130,7 @@ fn init_df(channels: usize) {
             }
         }
     }
-    let df_params = DfParams::from_bytes(MODEL_ENCODED).expect("Could not load model tar.");
+    let df_params = DfParams::default();
     let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     unsafe { MODEL = Some(df) }
@@ -142,18 +141,6 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         let t0 = Instant::now();
         INIT_LOGGER.call_once(|| {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
-                .filter_module(
-                    "tract_linalg",
-                    env_logger::Env::default().default_filter_or("warn"),
-                )
-                .filter_module(
-                    "tract_core",
-                    env_logger::Env::default().default_filter_or("warn"),
-                )
-                .filter_module(
-                    "tract_hir",
-                    env_logger::Env::default().default_filter_or("warn"),
-                )
                 .format(log_format)
                 .init();
         });
