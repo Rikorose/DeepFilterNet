@@ -57,6 +57,22 @@ fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io:
     )
 }
 
+fn syslog_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
+    writeln!(
+        buf,
+        "<{}>{}: {}",
+        match record.level() {
+            log::Level::Error => 3,
+            log::Level::Warn => 4,
+            log::Level::Info => 6,
+            log::Level::Debug => 7,
+            log::Level::Trace => 7,
+        },
+        record.target(),
+        record.args()
+    )
+}
+
 fn get_worker_fn(
     mut df: DfTract,
     inqueue: SampleQueue,
@@ -139,9 +155,16 @@ fn init_df(channels: usize) {
 fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
     move |_: &PluginDescriptor, sample_rate: u64| {
         let t0 = Instant::now();
+        let f = match std::env::var("RUST_LOG_STYLE") {
+            Ok(s) if s == "SYSTEMD" => syslog_format,
+            _ => log_format,
+        };
         INIT_LOGGER.call_once(|| {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
-                .format(log_format)
+                .filter_module("tract_core", log::LevelFilter::Error)
+                .filter_module("tract_hir", log::LevelFilter::Error)
+                .filter_module("tract_linalg", log::LevelFilter::Error)
+                .format(f)
                 .init();
         });
 
