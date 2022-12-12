@@ -2,6 +2,17 @@
 
 The LADSPA plugin uses a new model without any lookahead. The minimum latency is 20 ms (STFT processing) and additional latency depending on your LADSPA host such as Pipewire.
 
+## Installation
+
+You can download a release build (look for `libdeep_filter_ladspa`) from [here](https://github.com/Rikorose/DeepFilterNet/releases).
+
+Or you can manually build the plugin via:
+
+```bash
+cargo build --release -p deep-filter-ladspa
+ls target/release/libdeep_filter_ladspa* # here should be the compiled plugin
+```
+
 ## Pipewire filter-chain source
 
 You can use Pipewire to create a virtual microphone that suppresses noise. You may use it for any
