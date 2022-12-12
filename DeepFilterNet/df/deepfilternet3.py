@@ -192,9 +192,11 @@ class ErbDecoder(nn.Module):
             linear_groups=p.lin_groups,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
+        t_conv_kernel = list(p.conv_kernel)
+        t_conv_kernel[0] = 1
         tconv_layer = partial(
             ConvTranspose2dNormAct,
-            kernel_size=p.conv_kernel,
+            kernel_size=t_conv_kernel,
             bias=False,
             separable=True,
         )
