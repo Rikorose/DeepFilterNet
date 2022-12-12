@@ -20,6 +20,16 @@ type of application that accesses your microphone, such as VoIP applications lik
 
 Follow the instructions in the [configuration file](filter-chain-configs/deepfilter-mono-source.conf).
 
+To run the filter-chain module use:
+
+```bash
+pipewire -c filter-chain.conf # <- After setting up your filter chain config!
+```
+To debug you may increase the log level via:
+```bash
+RUST_LOG=DEBUG pipewire -c filter-chain.conf
+```
+
 ## Pipewire filter-chain sink
 
 You can use Pipewire to create a virtual output that suppresses noise comming from an application.
