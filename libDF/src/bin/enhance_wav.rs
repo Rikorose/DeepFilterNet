@@ -47,6 +47,9 @@ struct Args {
     /// If used with multiple channels, reduce the mask with max (1) or mean (2)
     #[arg(long, value_parser, default_value_t = 1)]
     reduce_mask: i32,
+    /// Convert model to half floats (16 bit)
+    #[arg(long)]
+    half_floats: bool,
     /// Logging verbosity
     #[arg(
         long,
@@ -86,6 +89,7 @@ fn main() -> Result<()> {
         args.max_db_erb_thresh,
         args.max_db_df_thresh,
         args.reduce_mask.try_into().unwrap(),
+        args.half_floats,
     );
     let df_params = if let Some(tar) = args.model.as_ref() {
         match DfParams::new(tar.clone()) {
