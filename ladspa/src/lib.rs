@@ -1,9 +1,9 @@
-use std::collections::VecDeque;
 use std::io::{self, Write};
+use std::mem::MaybeUninit;
 use std::sync::mpsc::Receiver;
 use std::sync::{
     mpsc::{channel, Sender},
-    Arc, Mutex, Once,
+    Arc, Once,
 };
 use std::thread::{self, sleep, JoinHandle};
 use std::time::{Duration, Instant};
@@ -11,17 +11,20 @@ use std::time::{Duration, Instant};
 use df::tract::*;
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
 use ndarray::prelude::*;
+use ringbuf::{consumer::Consumer, producer::Producer, HeapRb, SharedRb};
 use uuid::Uuid;
 
 static INIT_LOGGER: Once = Once::new();
 
-type SampleQueue = Arc<Mutex<Vec<VecDeque<f32>>>>;
 type ControlSender = Sender<(DfControl, f32)>;
 type ControlReceiver = Receiver<(DfControl, f32)>;
 
+type Prod = Vec<Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>>;
+type Cons = Vec<Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>>;
+
 struct DfPlugin {
-    inqueue: SampleQueue,
-    outqueue: SampleQueue,
+    i_prod: Prod,
+    o_cons: Cons,
     controlqueue: ControlSender,
     id: String,
     ch: usize,
@@ -75,8 +78,8 @@ fn syslog_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> 
 
 fn get_worker_fn(
     mut df: DfTract,
-    inqueue: SampleQueue,
-    outqueue: SampleQueue,
+    mut i_cons: Cons,
+    mut o_prod: Prod,
     controls: ControlReceiver,
     sleep_duration: Duration,
     id: String,
@@ -85,7 +88,9 @@ fn get_worker_fn(
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
-        loop {
+        let mut inc_d = false;
+        let mut dec_d = false;
+        'outer: loop {
             if let Ok((c, v)) = controls.try_recv() {
                 match c {
                     DfControl::AttenLim => {
@@ -94,35 +99,48 @@ fn get_worker_fn(
                     DfControl::MinThreshDb => df.min_db_thresh = v,
                     DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
-                }
-            }
-            let got_samples = {
-                let mut q = inqueue.lock().unwrap();
-                if q[0].len() >= df.hop_size {
-                    for (i_q_ch, mut i_ch) in q.iter_mut().zip(inframe.outer_iter_mut()) {
-                        for i in i_ch.iter_mut() {
-                            *i = i_q_ch.pop_front().unwrap();
+                    DfControl::ProcDelay => {
+                        if v == 1. {
+                            inc_d = true
+                        } else {
+                            dec_d = true
                         }
                     }
-                    true
-                } else {
-                    false
                 }
-            };
-            if !got_samples {
-                sleep(sleep_duration);
-                continue;
+            }
+            if inc_d {
+                // Just replay the old buffer again
+                for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_prod.iter_mut()) {
+                    o_q_ch.push_slice(o_ch.as_slice_memory_order().unwrap());
+                }
+                // dbg!();
+                inc_d = false;
+            }
+            for (i_q_ch, mut i_ch) in i_cons.iter_mut().zip(inframe.outer_iter_mut()) {
+                let mut count = 0;
+                let i_ch = i_ch.as_slice_memory_order_mut().unwrap();
+                loop {
+                    count += i_q_ch.pop_slice(&mut i_ch[count..]);
+                    if count >= df.hop_size {
+                        break;
+                    }
+                    sleep(sleep_duration);
+                }
+                debug_assert_eq!(count, df.hop_size);
+            }
+            if dec_d {
+                // Don't process the incomming samples, skip to the new ones in the next iteration
+                dec_d = false;
+                // dbg!();
+                continue 'outer;
             }
             let t0 = Instant::now();
             let lsnr = df
                 .process(inframe.view(), outframe.view_mut())
                 .expect("Error during df::process");
             {
-                let mut o_q = outqueue.lock().unwrap();
-                for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
-                    for &o in o_ch.iter() {
-                        o_q_ch.push_back(o)
-                    }
+                for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_prod.iter_mut()) {
+                    o_q_ch.push_slice(o_ch.as_slice_memory_order().unwrap());
                 }
             }
             let td_ms = t0.elapsed().as_secs_f32() * 1000.;
@@ -171,21 +189,22 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         init_df(channels);
         let m = unsafe { MODEL.clone().unwrap() };
         assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
-        let inqueue = Arc::new(Mutex::new(vec![
-            VecDeque::with_capacity(m.hop_size * 4);
-            channels
-        ]));
-        let outqueue = Arc::new(Mutex::new(vec![
-            VecDeque::with_capacity(m.hop_size * 4);
-            channels
-        ]));
+        let i_rbuf: Vec<Arc<HeapRb<f32>>> =
+            (0..channels).map(|_| Arc::new(HeapRb::<f32>::new(m.hop_size * 10))).collect();
+        let o_rbuf: Vec<Arc<HeapRb<f32>>> =
+            (0..channels).map(|_| Arc::new(HeapRb::<f32>::new(m.hop_size * 10))).collect();
+        let i_prod = i_rbuf.iter().map(|rb| unsafe { Producer::new(rb.clone()) }).collect();
+        let i_cons = i_rbuf.iter().map(|rb| unsafe { Consumer::new(rb.clone()) }).collect();
+        let mut o_prod: Prod =
+            o_rbuf.iter().map(|rb| unsafe { Producer::new(rb.clone()) }).collect();
+        let o_cons = o_rbuf.iter().map(|rb| unsafe { Consumer::new(rb.clone()) }).collect();
         let sr = m.sr;
         let frame_size = m.hop_size;
         let proc_delay = m.hop_size;
         // Add a buffer of 1 frame to compensate processing delays causing underruns
-        for o_ch in outqueue.lock().unwrap().iter_mut() {
+        for o_ch in o_prod.iter_mut() {
             for _ in 0..proc_delay {
-                o_ch.push_back(0f32)
+                o_ch.push(0f32).expect("Failed to push to ring buffer")
             }
         }
         let sleep_duration = Duration::from_secs_f32(m.hop_size as f32 / sr as f32 / 5.);
@@ -195,8 +214,8 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
 
         let worker_handle = thread::spawn(get_worker_fn(
             m,
-            Arc::clone(&inqueue),
-            Arc::clone(&outqueue),
+            i_cons,
+            o_prod,
             recv,
             sleep_duration,
             id.clone(),
@@ -208,8 +227,8 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             t0.elapsed().as_secs_f32() * 1000.
         );
         DfPlugin {
-            inqueue,
-            outqueue,
+            i_prod,
+            o_cons,
             controlqueue: controlsender,
             ch: channels,
             sr,
@@ -230,6 +249,7 @@ enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
+    ProcDelay,
 }
 impl DfControl {
     fn from_port_name(name: &str) -> Self {
@@ -265,6 +285,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db,
+            DfControl::ProcDelay => unimplemented!(),
         }
     }
     fn set(&mut self, c: &DfControl, v: f32) {
@@ -273,6 +294,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db = v,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db = v,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db = v,
+            DfControl::ProcDelay => unimplemented!(),
         }
     }
 }
@@ -316,27 +338,20 @@ impl Plugin for DfPlugin {
         }
 
         {
-            let i_q = &mut self.inqueue.lock().unwrap();
-            for (i_ch, i_q_ch) in inputs.iter().zip(i_q.iter_mut()) {
-                for &i in i_ch.iter() {
-                    i_q_ch.push_back(i)
-                }
+            for (&i_ch, i_q_ch) in inputs.iter().zip(self.i_prod.iter_mut()) {
+                i_q_ch.push_slice(i_ch);
             }
         }
 
-        'outer: loop {
-            {
-                let o_q = &mut self.outqueue.lock().unwrap();
-                if o_q[0].len() >= sample_count {
-                    for (o_q_ch, o_ch) in o_q.iter_mut().zip(outputs.iter_mut()) {
-                        for o in o_ch.iter_mut() {
-                            *o = o_q_ch.pop_front().unwrap();
-                        }
-                    }
-                    break 'outer;
+        for (o_q_ch, o_ch) in self.o_cons.iter_mut().zip(outputs.iter_mut()) {
+            let mut count = 0;
+            loop {
+                count += o_q_ch.pop_slice(&mut o_ch[count..]);
+                if count >= sample_count {
+                    break;
                 }
+                sleep(self.sleep_duration);
             }
-            sleep(self.sleep_duration);
         }
 
         let td = t0.elapsed();
@@ -361,36 +376,25 @@ impl Plugin for DfPlugin {
                 self.id,
                 self.proc_delay as f32 * 1000. / self.sr as f32
             );
-            for o_ch in self.outqueue.lock().unwrap().iter_mut() {
-                for _ in 0..self.frame_size {
-                    o_ch.push_back(0f32)
-                }
-            }
+            self.controlqueue
+                .send((DfControl::ProcDelay, 1.))
+                .expect("Failed to send control parameter");
         } else if self.t_proc_change > 10 * self.sr / self.frame_size
             && rtf < 0.5
             && self.proc_delay >= self.frame_size
         {
             // Reduce delay again
-            let dropped_samples = {
-                let o_q = &mut self.outqueue.lock().unwrap();
-                if o_q[0].len() < self.frame_size {
-                    false
-                } else {
-                    for o_q_ch in o_q.iter_mut().take(self.frame_size) {
-                        o_q_ch.pop_front().unwrap();
-                    }
-                    true
-                }
-            };
-            if dropped_samples {
-                self.proc_delay -= self.frame_size;
-                self.t_proc_change = 0;
-                log::info!(
-                    "DF {} | Decreasing processing latency to {:.1}ms",
-                    self.id,
-                    self.proc_delay as f32 * 1000. / self.sr as f32
-                );
-            }
+            self.controlqueue
+                .send((DfControl::ProcDelay, -1.))
+                .expect("Failed to send control parameter");
+            self.t_proc_change = 0;
+            self.proc_delay -= self.frame_size;
+
+            log::info!(
+                "DF {} | Decreasing processing latency to {:.1}ms",
+                self.id,
+                self.proc_delay as f32 * 1000. / self.sr as f32
+            );
         }
         self.t_proc_change += 1;
     }
