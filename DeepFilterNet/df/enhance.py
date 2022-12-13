@@ -4,6 +4,7 @@ import time
 import warnings
 from typing import Optional, Tuple, Union
 
+import numpy as np
 import torch
 from loguru import logger
 from torch import Tensor, nn
@@ -15,7 +16,14 @@ from df.io import load_audio, resample, save_audio
 from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
-from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
+from df.utils import (
+    as_complex,
+    as_real,
+    download_file,
+    get_cache_dir,
+    get_norm_alpha,
+    measure_gpu_mem,
+)
 from libdf import DF, erb, erb_norm, unit_norm
 
 PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2")
@@ -36,13 +44,23 @@ def main(args):
         os.mkdir(args.output_dir)
     df_sr = ModelParams().sr
     n_samples = len(args.noisy_audio_files)
+    measure_mem = args.log_level in ("DEBUG", "TRACE") and get_device().type == "cuda"
+    if measure_mem:
+        mem_watcher, used_q, done_event = measure_gpu_mem(sleep_ms=10)
     for i, file in enumerate(args.noisy_audio_files):
         progress = (i + 1) / n_samples * 100
         audio, meta = load_audio(file, df_sr)
         t0 = time.time()
-        audio = enhance(
-            model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
-        )
+        try:
+            audio = enhance(
+                model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
+            )
+        except RuntimeError as e:
+            if "CUDA" in str(e):
+                logger.error(f"Error running enhance() on audio file with shape {audio.shape}: {e}")
+                break
+            else:
+                raise e
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
@@ -54,6 +72,14 @@ def main(args):
         save_audio(
             file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=False
         )
+    if measure_mem:
+        done_event.set()
+        mem_watcher.join()
+        used = []
+        while not used_q.empty():
+            used.append(used_q.get()/1024**2)
+        ic(len(used))
+        logger.debug(f"Memory usage: Mean: {np.mean(used)} MB, Max: {np.max(used)} MB")
 
 
 def get_model_basedir(m: Optional[str]) -> str:

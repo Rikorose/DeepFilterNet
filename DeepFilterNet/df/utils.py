@@ -1,9 +1,12 @@
 import collections
 import math
 import os
+import queue
 import random
 import subprocess
+import threading
 from socket import gethostname
+from time import sleep
 from typing import Any, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -228,6 +231,23 @@ def download_file(url: str, download_dir: str, extract: bool = False):
         os.remove(local_filename)
 
     return local_filename
+
+
+def measure_gpu_mem(gpu_idx=0, sleep_ms=100) -> threading.Thread:
+    # nvmlInit()
+    # h = nvmlDeviceGetHandleByIndex(gpu_idx)
+    used = queue.SimpleQueue()
+    done_event = threading.Event()
+
+    def target(used: queue.Queue, done_event: threading.Event):
+        while not done_event.is_set():
+            # used.put(nvmlDeviceGetMemoryInfo(h).used)
+            used.put(torch.cuda.memory_reserved(gpu_idx))
+            sleep(sleep_ms / 1000)
+
+    thread = threading.Thread(target=target, args=(used, done_event), daemon=True)
+    thread.start()
+    return thread, used, done_event
 
 
 def get_cache_dir():
