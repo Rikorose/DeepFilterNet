@@ -113,11 +113,9 @@ jobs:
           python -m pip install maturin
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           target: ${{ matrix.target }}
 
       - name: Build wheel unix
