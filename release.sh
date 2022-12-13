@@ -57,7 +57,7 @@ cargo build --all-features
   cargo publish --allow-dirty
 )
 
-fd "(pyproject)|(Cargo)" -I -t f -e toml -X git add {}
+fd "(pyproject)|(Cargo)" -I -t f -e toml -e lock -X git add {}
 
 git commit -m "v$VERSION"
 git push

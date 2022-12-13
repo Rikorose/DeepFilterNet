@@ -29,8 +29,8 @@ echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./
 # cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./libDF deep_filter
 # cargo add --manifest-path ./pyDF-data/Cargo.toml --features dataset --path ./libDF deep_filter
 
-fd "(pyproject)|(Cargo)" -t f -e toml -X git add {}
-fd "(pyproject)|(Cargo)" -t f -e .lock -X git add {}
-git add Cargo.lock
+cargo update
+
+fd "(pyproject)|(Cargo)" -I -t f -e toml -e lock -X git add {}
 
 git commit -m "post-release v$VERSION"
