@@ -22,7 +22,6 @@ impl Agc {
     /// Process a chunk of samples
     pub fn process(&mut self, mut samples: ArrayViewMut2<f32>, snr: Option<f32>) {
         let frozen = snr.unwrap_or_default() < 8.;
-        dbg!(frozen);
         if frozen {
             samples.map_inplace(|s| *s = *s * self.gain);
         } else {
@@ -32,7 +31,6 @@ impl Agc {
                 let z = 1.0 + (self.distortion_factor * (1.0 - y));
                 self.gain *= z;
             }
-            dbg!(self.gain);
         }
     }
 }
