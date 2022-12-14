@@ -411,8 +411,7 @@ impl DfTract {
         };
         #[cfg(feature = "timings")]
         let t2 = Instant::now();
-        let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
-        dbg!(lsnr);
+        let lsnr = enc_emb.pop().unwrap().cast_to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap().into_tensor();
         let emb = enc_emb.pop().unwrap().into_tensor();
         let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
@@ -454,6 +453,8 @@ impl DfTract {
                 .unwrap()
                 .into_tensor()
                 .into_shape(&[self.ch, self.nb_erb])?
+                .cast_to::<f32>()?
+                .into_owned()
                 .into_array()?;
             if self.ch > 1 {
                 m = match self.reduce_mask {
@@ -559,6 +560,7 @@ fn df(
             .into_dimensionality()?;
     // Zero relevant frequency bins of output
     o_f.slice_mut(s![.., ..nb_df]).fill(Complex32::default());
+    let coefs = coefs.cast_to::<f32>()?;
     let coefs_arr: ArrayView3<Complex32> =
         as_arrayview_complex(coefs.to_array_view::<f32>()?, &[ch, nb_df, df_order])
             .into_dimensionality()?;
@@ -615,13 +617,13 @@ fn init_encoder_impl(
     let pulsed = PulsedModel::new(&m, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init encoder with delay: {}", delay);
-    let mut m = pulsed.into_typed()?.into_optimized()?;
+    let mut m = pulsed.into_typed()?;
 
     if half_floats {
         use tract_core::model::translator::Translate;
         m = tract_core::half::HalfTranslator.translate_model(&m)?;
     }
-
+    m = m.into_optimized()?;
     Ok((m, delay))
 }
 fn init_encoder(
@@ -691,12 +693,13 @@ fn init_erb_decoder_impl(
     let pulsed = PulsedModel::new(&m, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init ERB decoder with delay: {}", delay);
-    let mut m = pulsed.into_typed()?.into_optimized()?;
+    let mut m = pulsed.into_typed()?;
 
     if half_floats {
         use tract_core::model::translator::Translate;
         m = tract_core::half::HalfTranslator.translate_model(&m)?;
     }
+    m = m.into_optimized()?;
     Ok((m, delay))
 }
 fn init_erb_decoder(
@@ -757,12 +760,13 @@ fn init_df_decoder_impl(
     let pulsed = PulsedModel::new(&m, 1)?;
     let delay = pulsed.output_fact(0)?.delay;
     log::info!("Init DF decoder with delay: {}", delay);
-    let mut m = pulsed.into_typed()?.into_optimized()?;
+    let mut m = pulsed.into_typed()?;
 
     if half_floats {
         use tract_core::model::translator::Translate;
         m = tract_core::half::HalfTranslator.translate_model(&m)?;
     }
+    m = m.into_optimized()?;
     Ok((m, delay))
 }
 fn init_df_decoder(

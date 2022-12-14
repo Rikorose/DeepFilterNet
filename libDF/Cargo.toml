@@ -95,7 +95,7 @@ thiserror = { version = "1.0", optional = true }
 anyhow = { version = "1.0", optional = true, features = ["backtrace"] }
 ctrlc = { version = "3.2", optional = true }
 hound = { version = "3.4", optional = true }
-hdf5 = { version = "^0.8", optional = true, git = "https://github.com/aldanor/hdf5-rust/", rev="refs/pull/216/head" }
+hdf5 = { version = "^0.8", optional = true, git = "https://github.com/aldanor/hdf5-rust/", rev = "refs/pull/216/head" }
 ndarray = { version = "^0.15", optional = true, features = ["serde"] }
 ndarray-rand = { version = "^0.14", optional = true }
 rayon = { version = "1.5", optional = true }
@@ -108,10 +108,10 @@ claxon = { version = "^0.4", optional = true }
 env_logger = { version = "0.10", optional = true }
 clap = { version = "4.0", optional = true, features = ["derive"] }
 rust-ini = { version = "^0.18", optional = true }
-tract-core = { version = "^0.18.3", optional = true }
-tract-onnx = { version = "^0.18.3", optional = true }
-tract-pulse = { version = "^0.18.3", optional = true }
-tract-hir = { version = "^0.18.3", optional = true }
+tract-core = { version = "^0.18.6-pre", optional = true, git = "https://github.com/sonos/tract/", rev = "refs/pull/907/head" }
+tract-onnx = { version = "^0.18.6-pre", optional = true, git = "https://github.com/sonos/tract/", rev = "refs/pull/907/head" }
+tract-pulse = { version = "^0.18.6-pre", optional = true, git = "https://github.com/sonos/tract/", rev = "refs/pull/907/head" }
+tract-hir = { version = "^0.18.6-pre", optional = true, git = "https://github.com/sonos/tract/", rev = "refs/pull/907/head" }
 flate2 = { version = "1.0.24", optional = true }
 tar = { version = "0.4.38", optional = true }
 
