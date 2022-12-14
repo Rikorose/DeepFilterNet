@@ -8,6 +8,9 @@ license = "MIT/Apache-2.0"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+dbus = ["dep:zbus", "dep:event-listener"]
+
 [dependencies]
 deep_filter = { path = "../libDF", features = ["tract", "use-jemalloc"] }
 ladspa = "0.3.4"
@@ -15,3 +18,5 @@ ndarray = "^0.15"
 env_logger = "0.10"
 uuid = { version = "1.2.1", features = ["v4", "fast-rng"] }
 log = { version = "0.4", features = ["std"] }
+zbus = { version = "3.6", optional = true }
+event-listener = {version = "2.5", optional = true}

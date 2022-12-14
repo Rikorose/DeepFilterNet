@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
+use std::fmt;
 use std::io::{self, Write};
-use std::sync::mpsc::Receiver;
 use std::sync::{
-    mpsc::{channel, Sender},
+    mpsc::{sync_channel, Receiver, SyncSender},
     Arc, Mutex, Once,
 };
 use std::thread::{self, sleep, JoinHandle};
@@ -16,13 +16,18 @@ use uuid::Uuid;
 static INIT_LOGGER: Once = Once::new();
 
 type SampleQueue = Arc<Mutex<Vec<VecDeque<f32>>>>;
-type ControlSender = Sender<(DfControl, f32)>;
-type ControlReceiver = Receiver<(DfControl, f32)>;
+type ControlProd = SyncSender<(DfControl, f32)>;
+type ControlRecv = Receiver<(DfControl, f32)>;
+#[cfg(feature = "dbus")]
+use ::{
+    event_listener::Event,
+    zbus::{blocking::ConnectionBuilder, dbus_interface},
+};
 
 struct DfPlugin {
-    inqueue: SampleQueue,
-    outqueue: SampleQueue,
-    controlqueue: ControlSender,
+    i_tx: SampleQueue,
+    o_rx: SampleQueue,
+    control_tx: ControlProd,
     id: String,
     ch: usize,
     sr: usize,
@@ -31,7 +36,9 @@ struct DfPlugin {
     t_proc_change: usize,
     sleep_duration: Duration,
     control_hist: DfControlHistory,
-    _h: JoinHandle<()>, // Worker handle
+    _h: JoinHandle<()>, // Worker thread handle
+    #[cfg(feature = "dbus")]
+    _dbus: Option<(JoinHandle<()>, Arc<Event>)>, // dbus thread handle
 }
 
 const ID_MONO: u64 = 7843795;
@@ -77,7 +84,7 @@ fn get_worker_fn(
     mut df: DfTract,
     inqueue: SampleQueue,
     outqueue: SampleQueue,
-    controls: ControlReceiver,
+    controls: ControlRecv,
     sleep_duration: Duration,
     id: String,
 ) -> impl FnMut() {
@@ -87,6 +94,7 @@ fn get_worker_fn(
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
             if let Ok((c, v)) = controls.try_recv() {
+                log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
                 match c {
                     DfControl::AttenLim => {
                         df.set_atten_lim(v).expect("Failed to set attenuation limit.")
@@ -171,11 +179,11 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         init_df(channels);
         let m = unsafe { MODEL.clone().unwrap() };
         assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
-        let inqueue = Arc::new(Mutex::new(vec![
+        let i_tx = Arc::new(Mutex::new(vec![
             VecDeque::with_capacity(m.hop_size * 4);
             channels
         ]));
-        let outqueue = Arc::new(Mutex::new(vec![
+        let o_rx = Arc::new(Mutex::new(vec![
             VecDeque::with_capacity(m.hop_size * 4);
             channels
         ]));
@@ -183,7 +191,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         let frame_size = m.hop_size;
         let proc_delay = m.hop_size;
         // Add a buffer of 1 frame to compensate processing delays causing underruns
-        for o_ch in outqueue.lock().unwrap().iter_mut() {
+        for o_ch in o_rx.lock().unwrap().iter_mut() {
             for _ in 0..proc_delay {
                 o_ch.push_back(0f32)
             }
@@ -191,13 +199,13 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         let sleep_duration = Duration::from_secs_f32(m.hop_size as f32 / sr as f32 / 5.);
         let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
 
-        let (controlsender, recv) = channel();
+        let (control_tx, control_rx) = sync_channel(32);
 
         let worker_handle = thread::spawn(get_worker_fn(
             m,
-            Arc::clone(&inqueue),
-            Arc::clone(&outqueue),
-            recv,
+            Arc::clone(&i_tx),
+            Arc::clone(&o_rx),
+            control_rx,
             sleep_duration,
             id.clone(),
         ));
@@ -208,9 +216,9 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             t0.elapsed().as_secs_f32() * 1000.
         );
         DfPlugin {
-            inqueue,
-            outqueue,
-            controlqueue: controlsender,
+            i_tx,
+            o_rx,
+            control_tx,
             ch: channels,
             sr,
             id,
@@ -220,6 +228,8 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             sleep_duration,
             control_hist: hist,
             _h: worker_handle,
+            #[cfg(feature = "dbus")]
+            _dbus: None,
         }
     }
 }
@@ -242,6 +252,17 @@ impl DfControl {
         }
     }
 }
+impl fmt::Display for DfControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DfControl::AttenLim => write!(f, "Attenuation Limit (dB)"),
+            DfControl::MinThreshDb => write!(f, "Min processing threshold (dB)"),
+            DfControl::MaxErbThreshDb => write!(f, "Max ERB processing threshold (dB)"),
+            DfControl::MaxDfThreshDb => write!(f, "Max DF processing threshold (dB)"),
+        }
+    }
+}
+
 struct DfControlHistory {
     atten_lim: f32,
     min_thresh_db: f32,
@@ -280,9 +301,34 @@ impl DfControlHistory {
 impl Plugin for DfPlugin {
     fn activate(&mut self) {
         log::info!("DF {} | activate", self.id);
+        #[cfg(feature = "dbus")]
+        {
+            let done = Arc::new(Event::new());
+            self._dbus = Some((
+                thread::spawn(get_dbus_worker(self.control_tx.clone(), done.clone())),
+                done,
+            ));
+            log::debug!("dbus thread spawned")
+        }
     }
     fn deactivate(&mut self) {
         log::info!("DF {} | deactivate", self.id);
+        #[cfg(feature = "dbus")]
+        {
+            if let Some((handle, done)) = self._dbus.take() {
+                done.notify(1);
+                for _ in 0..20 {
+                    sleep(Duration::from_millis(5));
+                    if handle.is_finished() {
+                        match handle.join() {
+                            Ok(_) => log::debug!("dbus thread joined"),
+                            Err(e) => log::error!("dbus thread error: {:?}", e),
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
     fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
         let t0 = Instant::now();
@@ -309,14 +355,13 @@ impl Plugin for DfPlugin {
                 }
             }
             if v != self.control_hist.get(&c) {
-                log::info!("DF {} | Setting '{}' to {:.1}", self.id, p.port.name, v);
                 self.control_hist.set(&c, v);
-                self.controlqueue.send((c, v)).expect("Failed to send control parameter");
+                self.control_tx.send((c, v)).expect("Failed to send control parameter");
             }
         }
 
         {
-            let i_q = &mut self.inqueue.lock().unwrap();
+            let i_q = &mut self.i_tx.lock().unwrap();
             for (i_ch, i_q_ch) in inputs.iter().zip(i_q.iter_mut()) {
                 for &i in i_ch.iter() {
                     i_q_ch.push_back(i)
@@ -326,7 +371,7 @@ impl Plugin for DfPlugin {
 
         'outer: loop {
             {
-                let o_q = &mut self.outqueue.lock().unwrap();
+                let o_q = &mut self.o_rx.lock().unwrap();
                 if o_q[0].len() >= sample_count {
                     for (o_q_ch, o_ch) in o_q.iter_mut().zip(outputs.iter_mut()) {
                         for o in o_ch.iter_mut() {
@@ -361,7 +406,7 @@ impl Plugin for DfPlugin {
                 self.id,
                 self.proc_delay as f32 * 1000. / self.sr as f32
             );
-            for o_ch in self.outqueue.lock().unwrap().iter_mut() {
+            for o_ch in self.o_rx.lock().unwrap().iter_mut() {
                 for _ in 0..self.frame_size {
                     o_ch.push_back(0f32)
                 }
@@ -372,7 +417,7 @@ impl Plugin for DfPlugin {
         {
             // Reduce delay again
             let dropped_samples = {
-                let o_q = &mut self.outqueue.lock().unwrap();
+                let o_q = &mut self.o_rx.lock().unwrap();
                 if o_q[0].len() < self.frame_size {
                     false
                 } else {
@@ -393,6 +438,40 @@ impl Plugin for DfPlugin {
             }
         }
         self.t_proc_change += 1;
+    }
+}
+
+#[cfg(feature = "dbus")]
+fn get_dbus_worker(tx: ControlProd, done: Arc<Event>) -> impl FnMut() {
+    move || {
+        let done_listener = done.clone().listen();
+        let control = DfDbusControl { tx: tx.clone() };
+        let name = "org.deepfilter.DeepFilterLadspa";
+        let con = ConnectionBuilder::session()
+            .expect("Failed to start dbus session")
+            .name(name)
+            .expect("Failed to register dbus name")
+            .serve_at("/org/deepfilter/DeepFilterLadspa", control)
+            .expect("dbus serving failed")
+            .build()
+            .expect("dbus connection building failed");
+        done_listener.wait();
+        con.release_name(name).expect("Failed to release dbus name");
+    }
+}
+
+#[cfg(feature = "dbus")]
+struct DfDbusControl {
+    tx: ControlProd,
+}
+
+#[cfg(feature = "dbus")]
+#[dbus_interface(name = "org.deepfilter.DeepFilterLadspa")]
+impl DfDbusControl {
+    fn atten_lim(&self, lim: u32) {
+        self.tx
+            .send((DfControl::AttenLim, lim as f32))
+            .expect("Failed to send DfControl");
     }
 }
 
