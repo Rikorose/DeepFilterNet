@@ -218,8 +218,9 @@ impl DfTract {
         let atten_lim = rp.atten_lim_db.abs();
         let atten_lim = if atten_lim >= 100. {
             None
-        } else if atten_lim < 0.1 {
-            bail!("Attenuation limit to strong. No noise reduction will be performed");
+        } else if atten_lim < 0.01 {
+            log::warn!("Attenuation limit too strong. No noise reduction will be performed");
+            Some(1.)
         } else {
             log::info!("Running with an attenuation limit of {:.0} dB", atten_lim);
             Some(10f32.powf(-atten_lim / 20.))
@@ -298,8 +299,9 @@ impl DfTract {
         let lim = db.abs();
         self.atten_lim = if lim >= 100. {
             None
-        } else if lim < 0.1 {
-            bail!("Attenuation limit to strong. No noise reduction will be performed");
+        } else if lim < 0.01 {
+            log::warn!("Attenuation limit too strong. No noise reduction will be performed");
+            Some(1.)
         } else {
             log::debug!("Setting attenuation limit to {:.1} dB", lim);
             Some(10f32.powf(-lim / 20.))
@@ -349,6 +351,10 @@ impl DfTract {
         let max_a = find_max_abs(noisy.iter()).expect("NaN");
         if max_a > 0.9999 {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
+        }
+        if self.atten_lim.unwrap_or_default() == 1. {
+            enh.assign(&noisy);
+            return Ok(35.);
         }
 
         // Signal model: y = f(s + n) = f(x)
