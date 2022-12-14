@@ -32,6 +32,8 @@ mod capi;
 pub mod tract;
 #[cfg(all(feature = "wav-utils", not(feature = "dataset")))]
 pub mod wav_utils;
+#[cfg(feature="agc")]
+pub mod agc;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
     9.265 * (freq_hz / (24.7 * 9.265)).ln_1p()
@@ -459,7 +461,7 @@ pub fn post_filter(gains: &mut [f32]) {
     }
 }
 
-pub(crate) struct NonNan(f32);
+pub struct NonNan(f32);
 
 impl NonNan {
     fn new(val: f32) -> Option<NonNan> {
@@ -474,7 +476,7 @@ impl NonNan {
     }
 }
 
-pub(crate) fn find_max<'a, I>(vals: I) -> Option<f32>
+pub fn find_max<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -487,7 +489,7 @@ where
     })
 }
 
-pub(crate) fn find_max_abs<'a, I>(vals: I) -> Option<f32>
+pub fn find_max_abs<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -500,7 +502,7 @@ where
     })
 }
 
-pub(crate) fn find_min<'a, I>(vals: I) -> Option<f32>
+pub fn find_min<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -513,7 +515,7 @@ where
     })
 }
 
-pub(crate) fn find_min_abs<'a, I>(vals: I) -> Option<f32>
+pub fn find_min_abs<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -526,7 +528,7 @@ where
     })
 }
 
-pub(crate) fn argmax<'a, I>(vals: I) -> Option<usize>
+pub fn argmax<'a, I>(vals: I) -> Option<usize>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -541,7 +543,7 @@ where
     Some(index)
 }
 
-pub(crate) fn argmax_abs<'a, I>(vals: I) -> Option<usize>
+pub fn argmax_abs<'a, I>(vals: I) -> Option<usize>
 where
     I: IntoIterator<Item = &'a f32>,
 {

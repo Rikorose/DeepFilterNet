@@ -91,6 +91,8 @@ fn get_worker_fn(
     move || {
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
+        #[cfg(feature = "agc")]
+        let mut agc = df::agc::Agc::new(0.001, 0.00001);
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
             if let Ok((c, v)) = controls.try_recv() {
@@ -102,6 +104,10 @@ fn get_worker_fn(
                     DfControl::MinThreshDb => df.min_db_thresh = v,
                     DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                    #[cfg(feature = "agc")]
+                    DfControl::AgcRms => agc.desired_output_rms = v,
+                    #[cfg(not(feature = "agc"))]
+                    DfControl::AgcRms => !unimplemented!("Compiled without AGC support."),
                 }
             }
             let got_samples = {
@@ -125,6 +131,8 @@ fn get_worker_fn(
             let lsnr = df
                 .process(inframe.view(), outframe.view_mut())
                 .expect("Error during df::process");
+            #[cfg(feature = "agc")]
+            agc.process(outframe.view_mut(), Some(lsnr));
             {
                 let mut o_q = outqueue.lock().unwrap();
                 for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
@@ -240,6 +248,7 @@ enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
+    AgcRms,
 }
 impl DfControl {
     fn from_port_name(name: &str) -> Self {
@@ -248,6 +257,7 @@ impl DfControl {
             "Min processing threshold (dB)" => Self::MinThreshDb,
             "Max ERB processing threshold (dB)" => Self::MaxErbThreshDb,
             "Max DF processing threshold (dB)" => Self::MaxDfThreshDb,
+            "Automatic Gain Control target RMS" => Self::AgcRms,
             _ => panic!("name not found"),
         }
     }
@@ -268,6 +278,7 @@ struct DfControlHistory {
     min_thresh_db: f32,
     max_erb_thresh_db: f32,
     max_df_thresh_db: f32,
+    agc_rms: Option<f32>,
 }
 impl Default for DfControlHistory {
     fn default() -> Self {
@@ -276,6 +287,7 @@ impl Default for DfControlHistory {
             min_thresh_db: -10.,
             max_erb_thresh_db: 30.,
             max_df_thresh_db: 20.,
+            agc_rms: None,
         }
     }
 }
@@ -286,6 +298,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db,
+            DfControl::AgcRms => self.agc_rms.unwrap_or_default(),
         }
     }
     fn set(&mut self, c: &DfControl, v: f32) {
@@ -294,6 +307,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db = v,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db = v,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db = v,
+            DfControl::AgcRms => self.agc_rms = Some(v),
         }
     }
 }
@@ -597,6 +611,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     default: Some(DefaultValue::High),
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Automatic Gain Control target RMS",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: None,
+                    lower_bound: Some(0.001),
+                    upper_bound: Some(0.1),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(2)(d, sr)),
