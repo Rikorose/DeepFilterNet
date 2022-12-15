@@ -111,7 +111,7 @@ fn get_worker_fn(
                         if let Some(agc) = agc.as_mut() {
                             agc.desired_output_rms = v
                         } else {
-                            agc = Some(Agc::new(v, 0.00001));
+                            agc = Some(Agc::new(v, 0.00001, 0.));
                         }
                     }
                     #[cfg(not(feature = "agc"))]
@@ -142,6 +142,10 @@ fn get_worker_fn(
             #[cfg(feature = "agc")]
             if let Some(agc) = agc.as_mut() {
                 agc.process(outframe.view_mut(), Some(lsnr));
+            }
+            let max_a = df::find_max_abs(outframe.iter()).expect("NaN");
+            if max_a > 0.9999 {
+                log::warn!("Possible clipping detected ({:.3}).", max_a)
             }
             {
                 let mut o_q = outqueue.lock().unwrap();

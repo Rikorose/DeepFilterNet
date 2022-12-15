@@ -348,14 +348,6 @@ impl DfTract {
         debug_assert_eq!(noisy.len_of(Axis(0)), enh.len_of(Axis(0)));
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
         debug_assert_eq!(noisy.len_of(Axis(1)), self.hop_size);
-        let max_a = find_max_abs(noisy.iter()).expect("NaN");
-        if max_a > 0.9999 {
-            log::warn!("Possible clipping detected ({:.3}).", max_a)
-        }
-        if self.atten_lim.unwrap_or_default() == 1. {
-            enh.assign(&noisy);
-            return Ok(35.);
-        }
 
         // Signal model: y = f(s + n) = f(x)
         self.rolling_spec_buf_y.pop_front();
@@ -406,12 +398,6 @@ impl DfTract {
             // Regular noisy signal detected, apply 1st and 2nd stage
             (true, false, true)
         };
-        log::trace!(
-            "Enhancing frame with lsnr {:.1}. Applying stage 1: {} and stage 2: {}.",
-            lsnr,
-            apply_erb,
-            apply_df
-        );
 
         let mut spec = self
             .rolling_spec_buf_y

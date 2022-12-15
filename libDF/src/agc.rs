@@ -8,22 +8,24 @@ pub struct Agc {
     pub desired_output_rms: f32,
     pub distortion_factor: f32,
     pub gain: f32,
+    pub snr_thresh: f32,
 }
 
 impl Agc {
-    pub fn new(desired_output_rms: f32, distortion_factor: f32) -> Self {
+    pub fn new(desired_output_rms: f32, distortion_factor: f32, snr_thresh: f32) -> Self {
         assert!(desired_output_rms > 0.);
         assert!((0f32..1f32).contains(&distortion_factor));
         Self {
             desired_output_rms,
             distortion_factor,
             gain: 1.,
+            snr_thresh,
         }
     }
 
     /// Process a chunk of samples
     pub fn process(&mut self, mut samples: ArrayViewMut2<f32>, snr: Option<f32>) {
-        let frozen = snr.unwrap_or_default() < 8.;
+        let frozen = snr.unwrap_or_default() < self.snr_thresh;
         if frozen {
             samples.map_inplace(|s| *s *= self.gain);
         } else {
