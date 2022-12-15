@@ -98,7 +98,7 @@ fn get_worker_fn(
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
             if let Ok((c, v)) = controls.try_recv() {
-                log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
+                log::info!("DF {} | Setting '{}' to {}", id, c, v);
                 match c {
                     DfControl::AttenLim => {
                         df.set_atten_lim(v).expect("Failed to set attenuation limit.")
@@ -108,14 +108,19 @@ fn get_worker_fn(
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
                     #[cfg(feature = "agc")]
                     DfControl::AgcRms => {
-                        if let Some(agc) = agc.as_mut() {
+                        if v == 0. {
+                            log::info!("DF {} | Disabling AGC", id);
+                            agc = None;
+                        } else if let Some(agc) = agc.as_mut() {
                             agc.desired_output_rms = v
                         } else {
                             agc = Some(Agc::new(v, 0.00001, 0.));
                         }
                     }
                     #[cfg(not(feature = "agc"))]
-                    DfControl::AgcRms => unimplemented!("Compiled without AGC support."),
+                    DfControl::AgcRms => log::warn!(
+                        "Compiled without AGC support. This option will not have any effect. To use it compile with `--feature=agc`."
+                    ),
                 }
             }
             let got_samples = {
@@ -510,6 +515,11 @@ impl DfDbusControl {
             .send((DfControl::AttenLim, lim as f32))
             .expect("Failed to send DfControl");
     }
+
+    #[cfg(feature = "agc")]
+    fn agc_rms(&self, rms: f64) {
+        self.tx.send((DfControl::AgcRms, rms as f32)).expect("Failed to send DfControl");
+    }
 }
 
 #[no_mangle]
@@ -569,8 +579,8 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Automatic Gain Control target RMS",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: None,
-                    lower_bound: Some(0.0001),
+                    default: Some(DefaultValue::Minimum),
+                    lower_bound: Some(0.0),
                     upper_bound: Some(0.1),
                 },
             ],
@@ -640,8 +650,8 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Automatic Gain Control target RMS",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: None,
-                    lower_bound: Some(0.0001),
+                    default: Some(DefaultValue::Minimum),
+                    lower_bound: Some(0.0),
                     upper_bound: Some(0.1),
                 },
             ],
