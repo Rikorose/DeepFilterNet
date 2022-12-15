@@ -303,11 +303,14 @@ impl Plugin for DfPlugin {
         log::info!("DF {} | activate", self.id);
         #[cfg(feature = "dbus")]
         {
+            let init = Arc::new(Event::new());
             let done = Arc::new(Event::new());
+            let init_listen = init.listen();
             self._dbus = Some((
-                thread::spawn(get_dbus_worker(self.control_tx.clone(), done.clone())),
+                thread::spawn(get_dbus_worker(self.control_tx.clone(), init, done.clone())),
                 done,
             ));
+            init_listen.wait(); // Wait for dbus server init
             log::debug!("dbus thread spawned")
         }
     }
@@ -321,11 +324,12 @@ impl Plugin for DfPlugin {
                     sleep(Duration::from_millis(5));
                     if handle.is_finished() {
                         match handle.join() {
-                            Ok(_) => log::debug!("dbus thread joined"),
-                            Err(e) => log::error!("dbus thread error: {:?}", e),
+                            Ok(_) => log::debug!("{} | dbus thread joined", self.id),
+                            Err(e) => log::error!("{} | dbus thread error: {:?}", self.id, e),
                         }
                         break;
                     }
+                    log::error!("{} | Joining dbus thread timed out.", self.id);
                 }
             }
         }
@@ -442,8 +446,9 @@ impl Plugin for DfPlugin {
 }
 
 #[cfg(feature = "dbus")]
-fn get_dbus_worker(tx: ControlProd, done: Arc<Event>) -> impl FnMut() {
+fn get_dbus_worker(tx: ControlProd, init: Arc<Event>, done: Arc<Event>) -> impl FnMut() {
     move || {
+        log::debug!("dbus worker | Initializing dbus server.");
         let done_listener = done.clone().listen();
         let control = DfDbusControl { tx: tx.clone() };
         let name = "org.deepfilter.DeepFilterLadspa";
@@ -455,8 +460,10 @@ fn get_dbus_worker(tx: ControlProd, done: Arc<Event>) -> impl FnMut() {
             .expect("dbus serving failed")
             .build()
             .expect("dbus connection building failed");
+        init.notify(1); // Notify caller that dbus server has been initialized.
         done_listener.wait();
         con.release_name(name).expect("Failed to release dbus name");
+        log::debug!("dbus worker | Got done notification. Releasing dbus name.");
     }
 }
 
