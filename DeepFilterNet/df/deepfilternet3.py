@@ -62,6 +62,9 @@ class ModelParams(DfParams):
             "ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section
         )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
+        self.lsnr_dropout: bool = config(
+            "LSNR_DROPOUT", cast=bool, default=False, section=self.section
+        )
 
 
 def init_model(df_state: Optional[DF] = None, run_df: bool = True, train_mask: bool = True):
@@ -309,6 +312,8 @@ class DfDecoder(nn.Module):
 
 class DfNet(nn.Module):
     run_df: Final[bool]
+    run_erb: Final[bool]
+    lsnr_droput: Final[bool]
 
     def __init__(
         self,
@@ -352,6 +357,7 @@ class DfNet(nn.Module):
         if not run_df:
             logger.warning("Running without DF stage")
         self.train_mask = train_mask
+        self.lsnr_droput = p.lsnr_dropout
         assert p.df_n_iter == 1
 
     def forward(
@@ -377,15 +383,35 @@ class DfNet(nn.Module):
         feat_erb = self.pad_feat(feat_erb)
         feat_spec = self.pad_feat(feat_spec)
         e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
+
+        if self.lsnr_droput:
+            idcs = lsnr.squeeze() > -10.0
+            b, t = (spec.shape[0], spec.shape[2])
+            m = torch.zeros((b, 1, t, self.erb_bins), device=spec.device)
+            df_coefs = torch.zeros((b, t, self.nb_df, self.df_order * 2))
+            spec_m = spec.clone()
+            emb = emb[:, idcs]
+            e0 = e0[:, :, idcs]
+            e1 = e1[:, :, idcs]
+            e2 = e2[:, :, idcs]
+            e3 = e3[:, :, idcs]
+            c0 = c0[:, :, idcs]
+
         if self.run_erb:
-            m = self.erb_dec(emb, e3, e2, e1, e0)
+            if self.lsnr_droput:
+                m[:, :, idcs] = self.erb_dec(emb, e3, e2, e1, e0)
+            else:
+                m = self.erb_dec(emb, e3, e2, e1, e0)
             spec_m = self.mask(spec, m)
         else:
             m = torch.zeros((), device=spec.device)
             spec_m = torch.zeros_like(spec)
 
         if self.run_df:
-            df_coefs, _ = self.df_dec(emb, c0)
+            if self.lsnr_droput:
+                df_coefs[:, idcs] = self.df_dec(emb, c0)[0]
+            else:
+                df_coefs = self.df_dec(emb, c0)[0]
             df_coefs = self.df_out_transform(df_coefs)
             spec = self.df_op(spec, df_coefs)
             spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
