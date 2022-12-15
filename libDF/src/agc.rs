@@ -1,3 +1,5 @@
+#[cfg(feature = "logging")]
+use log;
 /// This module is based on sile/dagc but also supports a simple stereo version
 use ndarray::{ArrayViewMut2, Axis};
 
@@ -31,6 +33,8 @@ impl Agc {
                 let z = 1.0 + (self.distortion_factor * (1.0 - y));
                 self.gain *= z;
             }
+            #[cfg(feature = "logging")]
+            log::trace!("AGC gain set to {:.2}", self.gain);
         }
     }
 }

@@ -8,6 +8,8 @@ use std::sync::{
 use std::thread::{self, sleep, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "agc")]
+use df::agc::Agc;
 use df::tract::*;
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
 use ndarray::prelude::*;
@@ -92,7 +94,7 @@ fn get_worker_fn(
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         #[cfg(feature = "agc")]
-        let mut agc = df::agc::Agc::new(0.001, 0.00001);
+        let mut agc: Option<Agc> = None;
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
             if let Ok((c, v)) = controls.try_recv() {
@@ -105,7 +107,13 @@ fn get_worker_fn(
                     DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
                     #[cfg(feature = "agc")]
-                    DfControl::AgcRms => agc.desired_output_rms = v,
+                    DfControl::AgcRms => {
+                        if let Some(agc) = agc.as_mut() {
+                            agc.desired_output_rms = v
+                        } else {
+                            agc = Some(Agc::new(v, 0.00001));
+                        }
+                    }
                     #[cfg(not(feature = "agc"))]
                     DfControl::AgcRms => !unimplemented!("Compiled without AGC support."),
                 }
@@ -132,7 +140,9 @@ fn get_worker_fn(
                 .process(inframe.view(), outframe.view_mut())
                 .expect("Error during df::process");
             #[cfg(feature = "agc")]
-            agc.process(outframe.view_mut(), Some(lsnr));
+            if let Some(agc) = agc.as_mut() {
+                agc.process(outframe.view_mut(), Some(lsnr));
+            }
             {
                 let mut o_q = outqueue.lock().unwrap();
                 for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
@@ -373,6 +383,7 @@ impl Plugin for DfPlugin {
                 }
             }
             if v != self.control_hist.get(&c) {
+                log::info!("DF {} | Setting '{}' to {}", self.id, p.port.name, v);
                 self.control_hist.set(&c, v);
                 self.control_tx.send((c, v)).expect("Failed to send control parameter");
             }
@@ -549,6 +560,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
                 },
+                Port {
+                    name: "Automatic Gain Control target RMS",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: None,
+                    lower_bound: Some(0.0001),
+                    upper_bound: Some(0.1),
+                },
             ],
             new: |d, sr| Box::new(get_new_df(1)(d, sr)),
         }),
@@ -617,7 +636,7 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     desc: PortDescriptor::ControlInput,
                     hint: None,
                     default: None,
-                    lower_bound: Some(0.001),
+                    lower_bound: Some(0.0001),
                     upper_bound: Some(0.1),
                 },
             ],
