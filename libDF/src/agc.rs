@@ -30,7 +30,7 @@ impl Agc {
             samples.map_inplace(|s| *s *= self.gain);
         } else {
             for mut s in samples.axis_iter_mut(Axis(1)) {
-                s.map_inplace(|s| *s = *s * self.gain);
+                s.map_inplace(|s| *s *= self.gain);
                 let y = s.mean().unwrap().powi(2) / self.desired_output_rms;
                 let z = 1.0 + (self.distortion_factor * (1.0 - y));
                 self.gain *= z;
