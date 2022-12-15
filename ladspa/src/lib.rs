@@ -115,7 +115,7 @@ fn get_worker_fn(
                         }
                     }
                     #[cfg(not(feature = "agc"))]
-                    DfControl::AgcRms => !unimplemented!("Compiled without AGC support."),
+                    DfControl::AgcRms => unimplemented!("Compiled without AGC support."),
                 }
             }
             let got_samples = {
@@ -283,6 +283,7 @@ impl fmt::Display for DfControl {
             DfControl::MinThreshDb => write!(f, "Min processing threshold (dB)"),
             DfControl::MaxErbThreshDb => write!(f, "Max ERB processing threshold (dB)"),
             DfControl::MaxDfThreshDb => write!(f, "Max DF processing threshold (dB)"),
+            DfControl::AgcRms => write!(f, "Automatic Gain Control target RMS"),
         }
     }
 }
