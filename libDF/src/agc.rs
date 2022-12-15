@@ -23,7 +23,7 @@ impl Agc {
     pub fn process(&mut self, mut samples: ArrayViewMut2<f32>, snr: Option<f32>) {
         let frozen = snr.unwrap_or_default() < 8.;
         if frozen {
-            samples.map_inplace(|s| *s = *s * self.gain);
+            samples.map_inplace(|s| *s *= self.gain);
         } else {
             for mut s in samples.axis_iter_mut(Axis(1)) {
                 s.map_inplace(|s| *s = *s * self.gain);
