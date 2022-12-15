@@ -4,6 +4,7 @@ import tkinter as tk
 from math import ceil
 from multiprocessing import Process, Queue
 from tkinter import ttk
+from xml.dom import minidom
 
 import numpy as np
 import pyaudio as pa
@@ -167,50 +168,120 @@ drop_non_df.grid(column=1, row=0, sticky=tk.W, padx=5, pady=5)
 drop_df = tk.OptionMenu(opt_frame, tk_df, *choices_df, command=init_df_pa_stream)
 drop_df.grid(column=1, row=1, sticky=tk.W, padx=5, pady=5)
 
-df_attenlim_value = tk.DoubleVar()
-df_attenlim_value.set(100)
-df_attenlim_label = ttk.Label(opt_frame, text="DeepFilter attenuation limit:")
-df_attenlim_label.grid(column=0, row=2, sticky=tk.W, padx=5, pady=5)
+
+init_non_df_pa_stream()
+init_df_pa_stream()
 
 
-def attenlim_callback(input=None):
-    lim = get_attenlim(input).rstrip(" [dB]")
-    df_cur_attenlim_label.configure(text=lim)
+def get_df_dbus_methods():
     args = [
         "busctl",
         "--user",
-        "call",
+        "introspect",
+        "--xml-interface",
         "org.deepfilter.DeepFilterLadspa",
         "/org/deepfilter/DeepFilterLadspa",
         "org.deepfilter.DeepFilterLadspa",
-        "AttenLim",
-        "u",
-        lim,
     ]
     try:
-        subprocess.run(args, timeout=0.01)
-    except subprocess.TimeoutExpired:
-        print("DBUS timeout")
+        xml = subprocess.check_output(args).strip().decode()
+    except subprocess.CalledProcessError:
+        return []
+    dom = minidom.parseString(xml)
+    methods = [
+        i.getElementsByTagName("method")
+        for i in dom.getElementsByTagName("interface")
+        if "deepfilter" in i.attributes["name"].value
+    ]
+    methods = [item for sublist in methods for item in sublist]
+    methods = [m.attributes["name"].value for m in methods]
+    return methods
 
 
-def get_attenlim(input=None):
-    return str(int(float(input or df_attenlim_value.get()))) + " [dB]"
+df_dbus_methods = get_df_dbus_methods()
 
+next_row = 2
 
-df_cur_attenlim_label = ttk.Label(opt_frame, text=get_attenlim())
-df_cur_attenlim_label.grid(column=1, row=2, sticky=tk.E, padx=5, pady=5)
-df_attenlim_slider = ttk.Scale(
-    opt_frame,
-    from_=0,
-    to=100,
-    orient="horizontal",
-    variable=df_attenlim_value,
-    command=attenlim_callback,
-)
-df_attenlim_slider.grid(column=1, row=2, sticky=tk.W, padx=5, pady=5)
+if "AttenLim" in df_dbus_methods:
+    df_attenlim_value = tk.DoubleVar()
+    df_attenlim_value.set(100)
+    df_attenlim_label = ttk.Label(opt_frame, text="DeepFilter attenuation limit:")
+    df_attenlim_label.grid(column=0, row=next_row, sticky=tk.W, padx=5, pady=5)
+
+    def attenlim_callback(input=None):
+        lim = get_attenlim(input).rstrip(" [dB]")
+        df_cur_attenlim_label.configure(text=lim)
+        args = [
+            "busctl",
+            "--user",
+            "call",
+            "org.deepfilter.DeepFilterLadspa",
+            "/org/deepfilter/DeepFilterLadspa",
+            "org.deepfilter.DeepFilterLadspa",
+            "AttenLim",
+            "u",
+            lim,
+        ]
+        try:
+            subprocess.run(args, timeout=0.01)
+        except subprocess.TimeoutExpired:
+            print("DBUS timeout")
+
+    def get_attenlim(input=None):
+        return str(int(float(input or df_attenlim_value.get()))) + " [dB]"
+
+    df_cur_attenlim_label = ttk.Label(opt_frame, text=get_attenlim())
+    df_cur_attenlim_label.grid(column=1, row=next_row, sticky=tk.E, padx=5, pady=5)
+    df_attenlim_slider = ttk.Scale(
+        opt_frame,
+        from_=0,
+        to=100,
+        orient="horizontal",
+        variable=df_attenlim_value,
+        command=attenlim_callback,
+    )
+    df_attenlim_slider.grid(column=1, row=next_row, sticky=tk.W, padx=5, pady=5)
+    next_row += 1
+
+if "AgcRms" in df_dbus_methods:
+    df_agcrms_value = tk.StringVar()
+    df_agcrms_value.set("0")
+    df_agcrms_label = ttk.Label(opt_frame, text="DeepFilter AGC rms:")
+    df_agcrms_label.grid(column=0, row=next_row, sticky=tk.W, padx=5, pady=5)
+
+    def agcrms_callback(input=None):
+        rms = get_agcrms(input)
+        df_cur_agcrms_label.configure(text=rms)
+        args = [
+            "busctl",
+            "--user",
+            "call",
+            "org.deepfilter.DeepFilterLadspa",
+            "/org/deepfilter/DeepFilterLadspa",
+            "org.deepfilter.DeepFilterLadspa",
+            "AgcRms",
+            "d",
+            rms,
+        ]
+        try:
+            subprocess.run(args, timeout=0.01)
+        except subprocess.TimeoutExpired:
+            print("DBUS timeout")
+
+    def get_agcrms(input=None):
+        return input or df_agcrms_value.get()
+
+    df_cur_agcrms_label = ttk.Label(opt_frame, text=get_agcrms())
+    df_cur_agcrms_label.grid(column=1, row=next_row, sticky=tk.E, padx=5, pady=5)
+    options = ["0", "0.00001", "0.0001", "0.001", "0.01", "0.1"]
+    df_agcrms_drop = tk.OptionMenu(
+        opt_frame, df_agcrms_value, *options, command=agcrms_callback
+    )
+    df_agcrms_drop.grid(column=1, row=next_row, sticky=tk.W, padx=5, pady=5)
+    next_row += 1
 
 button = tk.Button(master=opt_frame, text="Quit", command=root.quit)
-button.grid(column=0, row=3, sticky=tk.SW, padx=5, pady=5)
+button.grid(column=0, row=next_row, sticky=tk.SW, padx=5, pady=5)
 
 ### Animation GUI ###
 fig, (ax_non_df, ax_df) = plt.subplots(2)

@@ -10,9 +10,10 @@ crate-type = ["cdylib"]
 
 [features]
 dbus = ["dep:zbus", "dep:event-listener"]
+agc = ["deep_filter/agc"]
 
 [dependencies]
-deep_filter = { path = "../libDF", features = ["tract", "use-jemalloc"] }
+deep_filter = { path = "../libDF", features = ["tract", "use-jemalloc", "logging"] }
 ladspa = "0.3.4"
 ndarray = "^0.15"
 env_logger = "0.10"

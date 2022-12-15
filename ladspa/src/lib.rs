@@ -8,6 +8,8 @@ use std::sync::{
 use std::thread::{self, sleep, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "agc")]
+use df::agc::Agc;
 use df::tract::*;
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
 use ndarray::prelude::*;
@@ -91,10 +93,12 @@ fn get_worker_fn(
     move || {
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
+        #[cfg(feature = "agc")]
+        let mut agc: Option<Agc> = None;
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
             if let Ok((c, v)) = controls.try_recv() {
-                log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
+                log::info!("DF {} | Setting '{}' to {}", id, c, v);
                 match c {
                     DfControl::AttenLim => {
                         df.set_atten_lim(v).expect("Failed to set attenuation limit.")
@@ -102,6 +106,21 @@ fn get_worker_fn(
                     DfControl::MinThreshDb => df.min_db_thresh = v,
                     DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                    #[cfg(feature = "agc")]
+                    DfControl::AgcRms => {
+                        if v == 0. {
+                            log::info!("DF {} | Disabling AGC", id);
+                            agc = None;
+                        } else if let Some(agc) = agc.as_mut() {
+                            agc.desired_output_rms = v
+                        } else {
+                            agc = Some(Agc::new(v, 0.00001, 0.));
+                        }
+                    }
+                    #[cfg(not(feature = "agc"))]
+                    DfControl::AgcRms => log::warn!(
+                        "Compiled without AGC support. This option will not have any effect. To use it compile with `--feature=agc`."
+                    ),
                 }
             }
             let got_samples = {
@@ -125,6 +144,14 @@ fn get_worker_fn(
             let lsnr = df
                 .process(inframe.view(), outframe.view_mut())
                 .expect("Error during df::process");
+            #[cfg(feature = "agc")]
+            if let Some(agc) = agc.as_mut() {
+                agc.process(outframe.view_mut(), Some(lsnr));
+            }
+            let max_a = df::find_max_abs(outframe.iter()).expect("NaN");
+            if max_a > 0.9999 {
+                log::warn!("Possible clipping detected ({:.3}).", max_a)
+            }
             {
                 let mut o_q = outqueue.lock().unwrap();
                 for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
@@ -240,6 +267,7 @@ enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
+    AgcRms,
 }
 impl DfControl {
     fn from_port_name(name: &str) -> Self {
@@ -248,6 +276,7 @@ impl DfControl {
             "Min processing threshold (dB)" => Self::MinThreshDb,
             "Max ERB processing threshold (dB)" => Self::MaxErbThreshDb,
             "Max DF processing threshold (dB)" => Self::MaxDfThreshDb,
+            "Automatic Gain Control target RMS" => Self::AgcRms,
             _ => panic!("name not found"),
         }
     }
@@ -259,6 +288,7 @@ impl fmt::Display for DfControl {
             DfControl::MinThreshDb => write!(f, "Min processing threshold (dB)"),
             DfControl::MaxErbThreshDb => write!(f, "Max ERB processing threshold (dB)"),
             DfControl::MaxDfThreshDb => write!(f, "Max DF processing threshold (dB)"),
+            DfControl::AgcRms => write!(f, "Automatic Gain Control target RMS"),
         }
     }
 }
@@ -268,6 +298,7 @@ struct DfControlHistory {
     min_thresh_db: f32,
     max_erb_thresh_db: f32,
     max_df_thresh_db: f32,
+    agc_rms: Option<f32>,
 }
 impl Default for DfControlHistory {
     fn default() -> Self {
@@ -276,6 +307,7 @@ impl Default for DfControlHistory {
             min_thresh_db: -10.,
             max_erb_thresh_db: 30.,
             max_df_thresh_db: 20.,
+            agc_rms: None,
         }
     }
 }
@@ -286,6 +318,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db,
+            DfControl::AgcRms => self.agc_rms.unwrap_or_default(),
         }
     }
     fn set(&mut self, c: &DfControl, v: f32) {
@@ -294,6 +327,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db = v,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db = v,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db = v,
+            DfControl::AgcRms => self.agc_rms = Some(v),
         }
     }
 }
@@ -359,6 +393,7 @@ impl Plugin for DfPlugin {
                 }
             }
             if v != self.control_hist.get(&c) {
+                log::info!("DF {} | Setting '{}' to {}", self.id, p.port.name, v);
                 self.control_hist.set(&c, v);
                 self.control_tx.send((c, v)).expect("Failed to send control parameter");
             }
@@ -480,6 +515,11 @@ impl DfDbusControl {
             .send((DfControl::AttenLim, lim as f32))
             .expect("Failed to send DfControl");
     }
+
+    #[cfg(feature = "agc")]
+    fn agc_rms(&self, rms: f64) {
+        self.tx.send((DfControl::AgcRms, rms as f32)).expect("Failed to send DfControl");
+    }
 }
 
 #[no_mangle]
@@ -534,6 +574,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     default: Some(DefaultValue::High),
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Automatic Gain Control target RMS",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Minimum),
+                    lower_bound: Some(0.0),
+                    upper_bound: Some(0.1),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(1)(d, sr)),
@@ -597,6 +645,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     default: Some(DefaultValue::High),
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Automatic Gain Control target RMS",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Minimum),
+                    lower_bound: Some(0.0),
+                    upper_bound: Some(0.1),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(2)(d, sr)),
