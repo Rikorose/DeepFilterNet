@@ -542,7 +542,9 @@ impl Drop for DataLoader {
                     Split::Valid => self.ds_valid.take(),
                     Split::Test => self.ds_test.take(),
                 }
-                .unwrap(),
+                .unwrap_or_else(|| {
+                    panic!("No {split} dataset found. Could not stop dataloader worker.")
+                }),
             ) {
                 Ok(ds) => ds,
                 Err(_) => panic!("Could not regain ownership over dataset"),
