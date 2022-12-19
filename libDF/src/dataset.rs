@@ -621,7 +621,7 @@ impl DatasetBuilder {
                 "Could not found any speech datasets.".to_string(),
             ));
         }
-        if ds_len == 0 {
+        if ns_len == 0 {
             return Err(DfDatasetError::NoDatasetFoundError(
                 "Could not found any noise datasets.".to_string(),
             ));
