@@ -889,6 +889,25 @@ impl RandReverbSim {
         }
         Ok(())
     }
+    pub fn transform_single(&self, sample: &mut Array2<f32>, mut rir: Array2<f32>) -> Result<()> {
+        let orig_len = sample.len_of(Axis(1));
+        let rir_mono = rir.mean_axis(Axis(0)).unwrap();
+        let max_idx = argmax_abs(rir_mono.iter()).unwrap();
+        // Normalize and flip RIR for convolution
+        rir = self.trim(rir, max_idx)?;
+        let rir_e = rir.map(|v| v * v).sum().sqrt();
+        let fft_size = self.good_fft_size(&rir);
+        let cur_len = rir.len_of(Axis(1));
+        let mut rir = rir / rir_e;
+        self.pad(&mut rir, 0, fft_size - cur_len)?;
+        let hop_size = fft_size / 4;
+        let mut state = DFState::new(self.sr, fft_size, hop_size, 1, 1);
+        let pad_back = fft_size / 4 + max_idx;
+        let pad_front = fft_size - pad_back;
+        self.pad(sample, pad_front, pad_back)?; // Pad since STFT will truncate at the end
+        *sample = self.convolve(sample, rir, &mut state, Some(orig_len))?;
+        Ok(())
+    }
     /// Applies random reverberation to either noise or speech or both.
     ///
     /// We have 3 scenarious:

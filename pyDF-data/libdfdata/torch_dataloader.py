@@ -83,6 +83,7 @@ class PytorchDataLoader:
         p_bw_ext: Optional[float] = None,  # Percentage of bandwidth limited signal for extension
         p_clipping: Optional[float] = None,  # Clipping distortion applied to the (noisy) speech
         p_zeroing: Optional[float] = None,  # Zeroing distortion applied to the (noisy) speech
+        p_interfer_sp: Optional[float] = None,  # Add an interfering speaker
         p_air_absorption: Optional[float] = None,  # Distortion applied to the (noisy) speech
         overfit: bool = False,  # Overfit on one epoch
         seed: int = 0,
@@ -116,6 +117,7 @@ class PytorchDataLoader:
             p_bw_ext=p_bw_ext,
             p_clipping=p_clipping,
             p_zeroing=p_zeroing,
+            p_interfer_sp=p_interfer_sp,
             p_air_absorption=p_air_absorption,
             prefetch=prefetch_loader,
             drop_last=drop_last,

@@ -119,6 +119,7 @@ fn main() -> Result<()> {
         .prob_reverberation(distortion_cfg.get("p_reverb").unwrap().parse::<f32>()?)
         .clipping_distortion(distortion_cfg.get("p_clipping").unwrap().parse::<f32>()?)
         .zeroing_distortion(distortion_cfg.get("p_zeroing").unwrap().parse::<f32>()?)
+        .interfer_distortion(distortion_cfg.get("p_interfer_sp").unwrap().parse::<f32>()?)
         .air_absorption_distortion(distortion_cfg.get("p_air_absorption").unwrap().parse::<f32>()?)
         .bandwidth_extension(distortion_cfg.get("p_bandwidth_ext").unwrap().parse::<f32>()?);
     if split == Split::Train {

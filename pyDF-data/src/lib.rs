@@ -92,6 +92,7 @@ impl _FdDataLoader {
         p_bw_ext: Option<f32>,
         p_clipping: Option<f32>,
         p_zeroing: Option<f32>,
+        p_interfer_sp: Option<f32>,
         p_air_absorption: Option<f32>,
         drop_last: Option<bool>,
         overfit: Option<bool>,
@@ -136,6 +137,9 @@ impl _FdDataLoader {
         }
         if let Some(p) = p_zeroing {
             ds_builder = ds_builder.zeroing_distortion(p)
+        }
+        if let Some(p) = p_interfer_sp {
+            ds_builder = ds_builder.interfer_distortion(p)
         }
         if let Some(p) = p_air_absorption {
             ds_builder = ds_builder.air_absorption_distortion(p)
