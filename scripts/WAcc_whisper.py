@@ -16,6 +16,7 @@ MODEL = whisper.load_model("base.en")
 has_cuda = torch.cuda.is_available()
 dt = torch.float16 if has_cuda else torch.float32
 if has_cuda:
+    print("Running with cuda")
     MODEL = MODEL.to("cuda")
 WHISPER_OPT = whisper.DecodingOptions(task="transcribe", language="en", beam_size=20, fp16=has_cuda)
 
@@ -32,11 +33,13 @@ def main(args):
     scores = []
     n_edits = 0
     n = 0
-    wers = []
-    for fpath in audio_clips_list:
+    scores = []
+    for i, fpath in enumerate(audio_clips_list):
+        progress = i / len(audio_clips_list) * 100  # Percent
         idx = transcriptions_df.index[transcriptions_df["filename"] == os.path.basename(fpath)]
         if len(idx) == 0:
             print(f"WARN: file not found {fpath}")
+            continue
         audio = whisper.load_audio(fpath)
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio).to(device=MODEL.device, dtype=dt)
@@ -46,11 +49,13 @@ def main(args):
         pred = result.text
         target, pred = normalize(target), normalize(pred)
         errors = editdistance.eval(pred, target)
-        wers.append(errors / len(target))
+        wer = errors / len(target)
+        scores.append({"file_name": os.path.basename(fpath), "wacc": wer})
         n_edits += errors
         n += len(target)
-        print("Cur WER: {}".format(wers[-1]))
-    print("WER:", np.mean(wers))
+        print("Progress {:2.1f} % | Cur WER: {:.1f} %".format(progress, wer * 100))
+    df = pd.DataFrame(scores)
+    print("WER:", n_edits / n)
 
     df = pd.DataFrame(scores)
     print("Mean WAcc for the files is ", np.mean(df["wacc"]))
