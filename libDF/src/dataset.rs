@@ -37,7 +37,7 @@ type Result<T> = std::result::Result<T, DfDatasetError>;
 
 #[derive(Error, Debug)]
 pub enum DfDatasetError {
-    #[error("No Hdf5 datasets found: {}")]
+    #[error("No Hdf5 datasets found: {0}")]
     NoDatasetFoundError(String),
     #[error("No Hdf5 dataset type found")]
     Hdf5DsTypeNotFoundError,
