@@ -37,8 +37,8 @@ type Result<T> = std::result::Result<T, DfDatasetError>;
 
 #[derive(Error, Debug)]
 pub enum DfDatasetError {
-    #[error("No Hdf5 datasets found")]
-    NoDatasetFoundError,
+    #[error("No Hdf5 datasets found: {}")]
+    NoDatasetFoundError(String),
     #[error("No Hdf5 dataset type found")]
     Hdf5DsTypeNotFoundError,
     #[error("{codec:?} codec not supported in dataset {ds:?}")]
@@ -585,11 +585,14 @@ impl DatasetBuilder {
         let mut ds_keys = Vec::new();
         let mut has_rirs = false;
         let mut ds_len: usize = 0;
+        let mut ns_len: usize = 0;
         while let Some((cfg, ds)) = receiver.try_recv().unwrap() {
             has_rirs = has_rirs || ds.dstype == DsType::RIR;
             let keys = cfg.keys_unchecked().unwrap().keys.clone();
             if ds.dstype == DsType::Speech {
                 ds_len += ((keys.len() as f32 * cfg.sampling_factor()).round() as usize).max(1);
+            } else if ds.dstype == DsType::Noise {
+                ns_len += ((keys.len() as f32 * cfg.sampling_factor()).round() as usize).max(1);
             }
             ds_keys.push((ds.dstype, ds.name(), keys));
             assert!(
@@ -609,7 +612,19 @@ impl DatasetBuilder {
         }
         ds_keys.sort_by(|a, b| a.1.cmp(&b.1));
         if hdf5_handles.is_empty() {
-            return Err(DfDatasetError::NoDatasetFoundError);
+            return Err(DfDatasetError::NoDatasetFoundError(
+                "Please check your dataset folder and configuration.".to_string(),
+            ));
+        }
+        if ds_len == 0 {
+            return Err(DfDatasetError::NoDatasetFoundError(
+                "Could not found any speech datasets.".to_string(),
+            ));
+        }
+        if ds_len == 0 {
+            return Err(DfDatasetError::NoDatasetFoundError(
+                "Could not found any noise datasets.".to_string(),
+            ));
         }
         let snrs = self.snrs.unwrap_or_else(|| vec![-5, 0, 5, 10, 20, 40]);
         let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
