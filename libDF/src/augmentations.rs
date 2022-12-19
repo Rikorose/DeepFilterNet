@@ -983,7 +983,7 @@ impl RandReverbSim {
             //
             // Add 5 ms extra offset since these are releveant for speech intelligibility
             let offset = max_idx + 5 * self.sr / 1000;
-            let mut rir_speech = self.supress_late(rir_noise.clone(), self.sr, offset, 0.2)?;
+            let mut rir_speech = self.supress_late(rir_noise.clone(), self.sr, offset, 0.5)?;
             let rir_e = rir_speech.map(|v| v * v).sum().sqrt();
             rir_speech *= 1. / rir_e;
             // Generate target speech signal containing less reverberation
@@ -1399,7 +1399,7 @@ mod tests {
         noise.slice_axis_inplace(Axis(1), Slice::from(0..len));
         let rir = ReadWav::new("../assets/rir_sim_1001_w11.7_l2.6_h2.5_rt60_0.7919.wav")?
             .samples_arr2()?;
-        let reverb = RandReverbSim::new(1., sr);
+        let reverb = RandReverbSim::new(1., sr).with_drr(0.3);
         write_wav_arr2("../out/speech_noreverb.wav", speech.view(), sr as u32)?;
         write_wav_arr2("../out/noise_noreverb.wav", noise.view(), sr as u32)?;
         let speech_rev = reverb.transform(&mut speech, &mut noise, move || Ok(rir))?.unwrap();
