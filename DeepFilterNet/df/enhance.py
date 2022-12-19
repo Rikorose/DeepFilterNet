@@ -30,6 +30,7 @@ def main(args):
         config_allow_defaults=True,
         epoch=args.epoch,
     )
+    suffix = suffix if args.suffix else None
     if args.output_dir is None:
         args.output_dir = "."
     elif not os.path.isdir(args.output_dir):
@@ -300,6 +301,12 @@ def run():
         type=str,
         nargs="+",
         help="List of noise files to mix with the clean speech file.",
+    )
+    parser.add_argument(
+        "--no-suffix",
+        action="store_false",
+        dest="suffix",
+        help="Don't add the model suffix to the enhanced audio files",
     )
     args = parser.parse_args()
     if args.version:
