@@ -101,7 +101,7 @@ impl Compose {
             {
                 let t1 = Instant::now();
                 let d = (t1 - t0).as_micros();
-                if d > 100 {
+                if d > 10 {
                     timings.push(format!("{}: {} ms", t.name(), d / 1000));
                 }
                 t0 = t1;
@@ -1189,32 +1189,12 @@ impl AirAbsorptionAugmentation {
             "20C_70-90%",
             [0.1, 0.3, 0.6, 1.1, 1.7, 3.5, 10.6, 31.2, 93.8],
         );
-        // The following coefficients are artificial to produce strong absorption
-        Self::insert_coefs(
-            &mut air_absorption,
-            "Strong-High",
-            [0.1, 0.2, 0.8, 1.8, 5.9, 21.1, 76.6, 280.2, 576.1],
-        );
-        Self::insert_coefs(
-            &mut air_absorption,
-            "Strong-Mid1",
-            [0.1, 0.8, 5.9, 76.6, 48.1, 21.1, 5.9, 1.8, 0.8],
-        );
-        Self::insert_coefs(
-            &mut air_absorption,
-            "Strong-Mid2",
-            [0.1, 0.8, 1.8, 5.9, 76.1, 128.1, 38.9, 1.8, 0.8],
-        );
-        Self::insert_coefs(
-            &mut air_absorption,
-            "Strong-Mid3",
-            [0.1, 0.8, 1.8, 5.9, 21.1, 76.1, 128.9, 5.8, 0.8],
-        );
-        Self::insert_coefs(
-            &mut air_absorption,
-            "Strong-Low",
-            [214.7, 60.2, 20.6, 6.5, 1.7, 0.6, 0.3, 1.1, 0.1],
-        );
+        // // The following coefficients are artificial to produce strong absorption
+        // Self::insert_coefs(
+        //     &mut air_absorption,
+        //     "Strong-High",
+        //     [0.1, 0.2, 0.8, 1.8, 5.9, 21.1, 76.6, 280.2, 576.1],
+        // );
         Self {
             center_freqs,
             air_absorption,

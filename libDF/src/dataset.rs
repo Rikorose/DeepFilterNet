@@ -1890,10 +1890,9 @@ impl Hdf5Dataset {
         while let Some(mut p) = pck {
             out.append(&mut p);
             if let Some(pos) = srr.get_last_absgp().map(|p| p as usize) {
-                if pos >= end {
+                if pos >= end && out.len() < len {
                     // We might get some extra samples at the end.
                     out.truncate((out.len() - (pos - end) * ch).max(len * ch));
-                    debug_assert!(out.len() >= len);
                     break;
                 }
             }
