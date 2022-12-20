@@ -1890,7 +1890,7 @@ impl Hdf5Dataset {
         while let Some(mut p) = pck {
             out.append(&mut p);
             if let Some(pos) = srr.get_last_absgp().map(|p| p as usize) {
-                if pos >= end && out.len() < len {
+                if pos >= end && out.len() > len {
                     // We might get some extra samples at the end.
                     out.truncate((out.len() - (pos - end) * ch).max(len * ch));
                     break;
@@ -2275,7 +2275,7 @@ mod tests {
             write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32).unwrap();
         }
         assert_eq!(samples_hdf5.shape(), samples_raw.shape());
-        assert!(dbg!(calc_snr_sx(samples_raw.iter(), samples_hdf5.iter())) > snr);
+        assert!(dbg!(calc_snr_sx(samples_raw.iter(), samples_hdf5.iter())) > dbg!(snr));
     }
     #[test]
     pub fn test_mix_audio_signal() -> Result<()> {
