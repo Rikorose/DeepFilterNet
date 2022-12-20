@@ -402,6 +402,7 @@ class ASRLoss(nn.Module):
     lang = "en"
     task = "transcribe"
     model_n = "base.en"
+    max_ctx = 25
 
     def __init__(
         self,
@@ -419,7 +420,7 @@ class ASRLoss(nn.Module):
         self.model = whisper.load_model(self.model_n)
         self.model.requires_grad_(False)
         self.options = whisper.DecodingOptions(
-            task=self.task, language=self.lang, without_timestamps=True
+            task=self.task, language=self.lang, without_timestamps=True, sample_len=self.max_ctx
         )
         self.mel_filters: Tensor
         self.register_buffer(
@@ -476,6 +477,21 @@ class ASRLoss(nn.Module):
                     )
                     loss += ctc_loss * self.factor_lm
                 else:
+                    missing = log_probs_i.shape[1] - tokens_t.shape[1]
+                    if missing > 0:
+                        tokens_t = torch.cat(
+                            (
+                                tokens_t,
+                                torch.full(
+                                    (tokens_t.shape[0], missing),
+                                    self.eot,
+                                    device=tokens_t.device,
+                                    dtype=tokens_t.dtype,
+                                ),
+                            ),
+                            dim=1,
+                        )
+                    ic(tokens_t.shape, log_probs_i.shape)
                     ce_loss = F.nll_loss(
                         log_probs_i.flatten(0, 1),
                         tokens_t[:, : tokens_i.shape[1]].flatten(0, 1),
