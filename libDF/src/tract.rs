@@ -348,13 +348,19 @@ impl DfTract {
         debug_assert_eq!(noisy.len_of(Axis(0)), enh.len_of(Axis(0)));
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
         debug_assert_eq!(noisy.len_of(Axis(1)), self.hop_size);
-        let max_a = find_max_abs(noisy.iter()).expect("NaN");
-        if max_a > 0.9999 {
-            log::warn!("Possible clipping detected ({:.3}).", max_a)
+        let (max_a, e) =
+            noisy.iter().fold((0f32, 0f32), |acc, x| (acc.0.max(x.abs()), acc.1 + x.powi(2)));
+        let rms = e / noisy.len() as f32;
+        if rms < 1e-7 {
+            enh.assign(&noisy);
+            return Ok(-15.);
         }
         if self.atten_lim.unwrap_or_default() == 1. {
             enh.assign(&noisy);
             return Ok(35.);
+        }
+        if max_a > 0.9999 {
+            log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
 
         // Signal model: y = f(s + n) = f(x)
