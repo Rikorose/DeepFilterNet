@@ -156,7 +156,7 @@ fn init_df(channels: usize) {
     }
     let df_params = DfParams::default();
     let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
-    let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+    let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     unsafe { MODEL = Some(df) }
 }
 
@@ -307,7 +307,12 @@ impl Plugin for DfPlugin {
             let done = Arc::new(Event::new());
             let init_listen = init.listen();
             self._dbus = Some((
-                thread::spawn(get_dbus_worker(self.control_tx.clone(), init, done.clone())),
+                thread::spawn(get_dbus_worker(
+                    self.control_tx.clone(),
+                    init,
+                    done.clone(),
+                    self.id.clone(),
+                )),
                 done,
             ));
             init_listen.wait(); // Wait for dbus server init
@@ -446,9 +451,14 @@ impl Plugin for DfPlugin {
 }
 
 #[cfg(feature = "dbus")]
-fn get_dbus_worker(tx: ControlProd, init: Arc<Event>, done: Arc<Event>) -> impl FnMut() {
+fn get_dbus_worker(
+    tx: ControlProd,
+    init: Arc<Event>,
+    done: Arc<Event>,
+    id: String,
+) -> impl FnMut() {
     move || {
-        log::debug!("dbus worker | Initializing dbus server.");
+        log::debug!("{id} | Initializing dbus server");
         let done_listener = done.clone().listen();
         let control = DfDbusControl { tx: tx.clone() };
         let name = "org.deepfilter.DeepFilterLadspa";
@@ -463,7 +473,7 @@ fn get_dbus_worker(tx: ControlProd, init: Arc<Event>, done: Arc<Event>) -> impl 
         init.notify(1); // Notify caller that dbus server has been initialized.
         done_listener.wait();
         con.release_name(name).expect("Failed to release dbus name");
-        log::debug!("dbus worker | Got done notification. Releasing dbus name.");
+        log::debug!("{id} | Got done notification. Releasing dbus name");
     }
 }
 
