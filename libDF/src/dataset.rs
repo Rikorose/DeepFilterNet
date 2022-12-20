@@ -1305,7 +1305,6 @@ impl Dataset<f32> for TdDataset {
             let interferers =
                 combine_noises(ch, len, &mut interferers, Some(interferer_gains.as_slice()))?;
             let snr_interfer = [30., 20., 15.].choose(&mut rng).unwrap();
-            dbg!(snr_interfer);
             (speech, _, speech_distorted) = mix_audio_signal(
                 speech,
                 Some(speech_distorted),
