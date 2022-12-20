@@ -35,7 +35,8 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ runner.os }}-${{ matrix.command }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ matrix.command }}-${{matrix.rust}}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          cache-on-failure: true
       - name: Install HDF5
         if: matrix.hdf5 == true
         run: sudo apt-get install libhdf5-dev
