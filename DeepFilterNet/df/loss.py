@@ -458,12 +458,12 @@ class ASRLoss(nn.Module):
             if self.factor_lm > 0:
                 if self.loss_lm == "CTC":
                     input_lengths = torch.as_tensor(
-                        [torch.argwhere(t == self.eot)[0] - self.sample_begin for t in tokens_i],
+                        [torch.argwhere(t == self.eot)[0] for t in tokens_i],
                         device=input.device,
                         dtype=torch.long,
                     )
                     target_lengths = torch.as_tensor(
-                        [torch.argwhere(t == self.eot)[0] - self.sample_begin for t in tokens_t],
+                        [torch.argwhere(t == self.eot)[0] for t in tokens_t],
                         device=input.device,
                         dtype=torch.long,
                     )
@@ -491,7 +491,6 @@ class ASRLoss(nn.Module):
                             ),
                             dim=1,
                         )
-                    ic(tokens_t.shape, log_probs_i.shape)
                     ce_loss = F.nll_loss(
                         log_probs_i.flatten(0, 1),
                         tokens_t[:, : tokens_i.shape[1]].flatten(0, 1),
@@ -500,7 +499,7 @@ class ASRLoss(nn.Module):
         return loss
 
     def decode_text(self, tokens: Tensor) -> List[str]:
-        tokens = [t[self.sample_begin : torch.argwhere(t == self.eot)[0]] for t in tokens]
+        tokens = [t[: torch.argwhere(t == self.eot)[0]] for t in tokens]
         return [self.tokenizer.decode(t).strip() for t in tokens]
 
     def decode_tokens(
@@ -523,7 +522,7 @@ class ASRLoss(nn.Module):
             if (i >= min_steps and completed) or tokens.shape[-1] > self.n_ctx:
                 break
         tokens, _ = self.decoder.finalize(tokens, sum_logprobs)
-        return torch.stack(logits, dim=1), tokens
+        return torch.stack(logits, dim=1), tokens[:, self.sample_begin :]
 
     def preprocess(self, audio: Tensor) -> Tensor:
         import whisper
