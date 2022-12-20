@@ -4,7 +4,6 @@ from typing import Dict, Final, Iterable, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from matplotlib.pyplot import magnitude_spectrum
 from torch import Tensor, dtype, nn
 
 from df.config import Csv, config
@@ -261,7 +260,7 @@ class MaskLoss(nn.Module):
         tmp = g_t.sub(g_p).pow(2)
         if self.f_under != 1:
             # Weighting if gains are too low
-            tmp *= torch.where(g_p < g_t, self.f_under, 1.0)
+            tmp = tmp * torch.where(g_p < g_t, self.f_under, 1.0)
         if max_bin is not None:
             m = torch.ones((b, 1, 1, f), device=input.device)
             for i, mb in enumerate(max_bin):
