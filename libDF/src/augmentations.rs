@@ -1139,7 +1139,7 @@ impl BandwidthLimiterAugmentation {
 pub(crate) struct AirAbsorptionAugmentation {
     prob: f32,
     sr: Option<usize>,
-    air_absorption: BTreeMap<String, [f32; 9]>,
+    pub air_absorption: BTreeMap<String, [f32; 9]>,
     center_freqs: [usize; 9],
     distance_low: f32,
     distance_high: f32,
@@ -1189,12 +1189,17 @@ impl AirAbsorptionAugmentation {
             "20C_70-90%",
             [0.1, 0.3, 0.6, 1.1, 1.7, 3.5, 10.6, 31.2, 93.8],
         );
-        // // The following coefficients are artificial to produce strong absorption
-        // Self::insert_coefs(
-        //     &mut air_absorption,
-        //     "Strong-High",
-        //     [0.1, 0.2, 0.8, 1.8, 5.9, 21.1, 76.6, 280.2, 576.1],
-        // );
+        // The following coefficients are artificial to produce strong absorption
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-High-1",
+            [0.1, 0.2, 0.7, 1.5, 3.9, 8.1, 21.6, 80.2, 213.1],
+        );
+        Self::insert_coefs(
+            &mut air_absorption,
+            "Strong-High-2",
+            [0.1, 0.3, 0.9, 3.8, 8.9, 21.1, 44.6, 80.2, 153.1],
+        );
         Self {
             center_freqs,
             air_absorption,
@@ -1520,27 +1525,14 @@ mod tests {
         let hop_size = fft_size / 2;
         let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
         write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
-        let mut x1 = stft(sample.view(), &mut state, false);
-        let mut x2 = x1.clone();
-        let mut x3 = x1.clone();
-        let mut x4 = x1.clone();
-        let mut x5 = x1.clone();
+        let x = stft(sample.view(), &mut state, false);
         let airabs = AirAbsorptionAugmentation::new(sr, 1.0);
-        airabs.apply(&mut x1, airabs.get_coefs("Strong-Low").unwrap(), 20.);
-        let sample = istft(x1.view_mut(), &mut state, false);
-        write_wav_arr2("../out/air_abs_low.wav", sample.view(), sr as u32).unwrap();
-        airabs.apply(&mut x2, airabs.get_coefs("Strong-Mid1").unwrap(), 20.);
-        let sample = istft(x2.view_mut(), &mut state, false);
-        write_wav_arr2("../out/air_abs_mid1.wav", sample.view(), sr as u32).unwrap();
-        airabs.apply(&mut x3, airabs.get_coefs("Strong-Mid2").unwrap(), 20.);
-        let sample = istft(x3.view_mut(), &mut state, false);
-        write_wav_arr2("../out/air_abs_mid2.wav", sample.view(), sr as u32).unwrap();
-        airabs.apply(&mut x4, airabs.get_coefs("Strong-Mid3").unwrap(), 20.);
-        let sample = istft(x4.view_mut(), &mut state, false);
-        write_wav_arr2("../out/air_abs_mid3.wav", sample.view(), sr as u32).unwrap();
-        airabs.apply(&mut x5, airabs.get_coefs("Strong-High").unwrap(), 20.);
-        let sample = istft(x5.view_mut(), &mut state, false);
-        write_wav_arr2("../out/air_abs_high.wav", sample.view(), sr as u32).unwrap();
+        for (n, c) in airabs.air_absorption.iter() {
+            let mut x_aug = x.clone();
+            airabs.apply(&mut x_aug, c, 20.);
+            let sample = istft(x_aug.view_mut(), &mut state, true);
+            write_wav_arr2(&format!("../out/air_abs_{n}.wav"), sample.view(), sr as u32).unwrap();
+        }
         Ok(())
     }
 }
