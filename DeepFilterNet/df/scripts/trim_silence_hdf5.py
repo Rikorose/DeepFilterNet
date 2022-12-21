@@ -14,6 +14,7 @@ from icecream import ic
 from torch import Tensor
 
 from df.io import save_audio
+from df.scripts.prepare_data import encode
 
 
 def windowed_energy(x: Tensor, ws: int, hop) -> Tensor:
@@ -32,28 +33,27 @@ def load_encoded(buffer: np.ndarray, codec: str):
     wav, _ = ta.load(io.BytesIO(buffer[...].tobytes()), format=codec.lower())
     return wav
 
-
-def encode(x: Tensor, sr: int, codec: str, compression: Optional[int] = None) -> np.ndarray:
-    if codec == "vorbis":
-        with NamedTemporaryFile(suffix=".ogg") as tf:
-            ta.save(tf.name, x, sr, format="vorbis", compression=compression)
-            x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
-    elif codec == "flac":
-        with NamedTemporaryFile(suffix=".flac") as tf:
-            ta.save(
-                tf.name,
-                x,
-                sr,
-                format="flac",
-                compression=compression,
-                bits_per_sample=16,
-            )
-            x = np.array(list(tf.read()), dtype=np.uint8)  # Return binary buffer as numpy array
-    elif codec == "pcm":
-        x = x.numpy()
-    else:
-        raise NotImplementedError(f"Codec '{codec}' not supported.")
-    return x
+def trim(audio: Tensor, sr: int)-> (Tensor, bool):
+    ws = sr // 10
+    hop = sr // 20
+    e = windowed_energy(audio, ws, hop)
+    # find first above -100dB
+    start = 0
+    for i in range(e.shape[-1]):
+        if e[i] > -120 and i > 14:
+            start = i - 15
+            break
+    # find last above -100dB
+    end = -1
+    for i in range(e.shape[-1]):
+        if e[-i] > -100 and i > 10:
+            end = -i + 10
+            break
+    if start - end >= e.shape[-1]:
+        return torch.empty(()), True
+    if end < -10:
+        return audio[..., start * hop : end * hop], True
+    return audio, False
 
 
 def main(path: str):
@@ -76,27 +76,10 @@ def main(path: str):
                     audio.unsqueeze_(0)
             else:
                 audio = load_encoded(sample, codec)
-            ws = sr // 10
-            hop = sr // 20
-            e = windowed_energy(audio, ws, hop)
-            # find first above -100dB
-            start = 0
-            for i in range(e.shape[-1]):
-                if e[i] > -120 and i > 14:
-                    start = i - 15
-                    break
-            # find last above -100dB
-            end = -1
-            for i in range(e.shape[-1]):
-                if e[-i] > -100 and i > 10:
-                    end = -i + 10
-                    break
-            assert start - end < e.shape[-1]
-            if end != -1:
-                ic(n, start, end)
-                save_audio("out/orig.wav", audio, sr)
-                audio = audio[..., start * hop : end * hop]
-                save_audio("out/trimmed.wav", audio, sr)
+            audio, got_trimmed = trim(audio, sr)
+            if audio.numel() == 0:
+                continue # Everything got trimmed
+            if got_trimmed:
                 if codec == "pcm":
                     data = audio
                 else:
