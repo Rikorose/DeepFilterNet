@@ -2,18 +2,14 @@
 import io
 import os
 import sys
-from tempfile import NamedTemporaryFile
-from typing import Optional
 
 import h5py
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torchaudio as ta
-from icecream import ic
 from torch import Tensor
 
-from df.io import save_audio
 from df.scripts.prepare_data import encode
 
 
@@ -33,7 +29,8 @@ def load_encoded(buffer: np.ndarray, codec: str):
     wav, _ = ta.load(io.BytesIO(buffer[...].tobytes()), format=codec.lower())
     return wav
 
-def trim(audio: Tensor, sr: int)-> (Tensor, bool):
+
+def trim(audio: Tensor, sr: int) -> (Tensor, bool):
     ws = sr // 10
     hop = sr // 20
     e = windowed_energy(audio, ws, hop)
@@ -52,6 +49,7 @@ def trim(audio: Tensor, sr: int)-> (Tensor, bool):
     if start - end >= e.shape[-1]:
         return torch.empty(()), True
     if end < -10:
+        print(f"start: {start}, end: {end}", end="")
         return audio[..., start * hop : end * hop], True
     return audio, False
 
@@ -68,8 +66,11 @@ def main(path: str):
         for attr in fr.attrs:
             fw.attrs[attr] = fr.attrs[attr]
         codec = fr.attrs.get("codec", "pcm")
+        out_codec = sys.argv[3] if len(sys.argv) > 3 else codec
+        fw.attrs["codec"] = out_codec
         comp_kwargs = {"compression": "gzip"} if codec == "pcm" else {}
         for n, sample in fr[group].items():  # type: ignore
+            print(n, end=" ")
             if codec == "pcm":
                 audio = torch.from_numpy(sample[...])
                 if audio.dim() == 1:
@@ -78,20 +79,21 @@ def main(path: str):
                 audio = load_encoded(sample, codec)
             audio, got_trimmed = trim(audio, sr)
             if audio.numel() == 0:
-                continue # Everything got trimmed
+                continue  # Everything got trimmed
             if got_trimmed:
-                if codec == "pcm":
+                if codec == "pcm" and out_codec == codec:
                     data = audio
                 else:
-                    data = encode(audio, sr, codec).squeeze()
+                    data = encode(audio, sr, out_codec).squeeze()
             else:
-                data = sample
+                if codec == out_codec:
+                    data = sample
+                else:
+                    data = encode(audio, sr, out_codec).squeeze()
 
-            if n in grp:
-                print(f"Found dataset {n}. Replacing.")
-                del grp[n]
             ds = grp.create_dataset(n, data=data, **comp_kwargs)
             ds.attrs["n_samples"] = audio.shape[-1]
+            print()
 
 
 if __name__ == "__main__":
