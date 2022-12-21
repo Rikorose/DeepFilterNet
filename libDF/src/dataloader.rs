@@ -276,6 +276,7 @@ impl DataLoader {
                         // During valid/test, only use sample_idx as seed
                         sample_idx as u64
                     };
+                    log::trace!("Worker: Getting sample {} with seed {}", sample_idx, seed);
                     let sample = match ds.get_sample(sample_idx, Some(seed)) {
                         Ok(s) => Ok(s),
                         Err(e) => {
@@ -318,6 +319,7 @@ impl DataLoader {
                     Err(_) => panic!("Could not regain ownership over dataset"),
                 };
                 ds.generate_keys(Some(epoch_seed as u64))?;
+                log::trace!("Generated dataset keys for {}", split);
                 self.set_ds(split, ds);
             }
         }
@@ -344,6 +346,11 @@ impl DataLoader {
         }
         // Start thread to submit dataset jobs for the pool workers
         self.fill_thread = Some(self.start_idx_worker(split, epoch_seed as u64)?);
+        log::trace!(
+            "Started dataloader worker for split {} with epoch_seed {}",
+            split,
+            epoch_seed
+        );
         self.drained = false;
         Ok(())
     }
@@ -383,6 +390,7 @@ impl DataLoader {
                 // Or check worker threads
                 match reciever.recv_timeout(Duration::from_millis(100)) {
                     Err(_e) => {
+                        log::trace!("Dataloader worker timeount. Retrying ({})", tries);
                         if tries > 1000 {
                             return Err(DfDataloaderError::TimeoutError);
                         }
