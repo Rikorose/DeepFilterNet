@@ -20,13 +20,7 @@ fn main() -> Result<()> {
         Some(k) => k.to_string(),
         None => ds.keys()?.choose(&mut rand::thread_rng()).unwrap().to_string(),
     };
-    let data = match ds.read(&k) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error loading key {}: {:?}", k, e);
-            exit(2);
-        }
-    };
+    let data = ds.read(&k).unwrap();
     let out_dir = args.get(3).cloned().unwrap_or_else(|| "out".to_owned());
     let name = format!("{}/{}", out_dir, k);
     println!("{}", name);

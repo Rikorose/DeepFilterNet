@@ -1380,6 +1380,7 @@ impl Dataset<f32> for TdDataset {
     }
 
     fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()> {
+        log::trace!("Generating dataset keys with seed {:?}", epoch_seed);
         self.sp_keys.clear();
         self.ns_keys.clear();
         self.rir_keys.clear();

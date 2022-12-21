@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "sample-hdf5"
 path = "src/bin/sample-hdf5.rs"
-required-features = ["dataset", "bin", "rand"]
+required-features = ["dataset", "bin"]
 
 [[bin]]
 name = "sample-dataset"

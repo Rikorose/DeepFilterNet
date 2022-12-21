@@ -319,7 +319,6 @@ impl DataLoader {
                     Err(_) => panic!("Could not regain ownership over dataset"),
                 };
                 ds.generate_keys(Some(epoch_seed as u64))?;
-                log::trace!("Generated dataset keys for {}", split);
                 self.set_ds(split, ds);
             }
         }
