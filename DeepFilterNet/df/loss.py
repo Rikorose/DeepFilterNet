@@ -401,7 +401,6 @@ class ASRLoss(nn.Module):
     beam_size = 20
     lang = "en"
     task = "transcribe"
-    model_n = "base.en"
     max_ctx = 25
 
     def __init__(
@@ -410,6 +409,7 @@ class ASRLoss(nn.Module):
         factor: float = 1,
         factor_lm: float = 1,
         loss_lm: Literal["CTC", "CrossEntropy"] = "CrossEntropy",
+        model: str = "base.en",
     ) -> None:
         super().__init__()
         import whisper
@@ -417,7 +417,7 @@ class ASRLoss(nn.Module):
         self.sr = sr
         self.factor = factor
         self.factor_lm = factor_lm
-        self.model = whisper.load_model(self.model_n)
+        self.model = whisper.load_model(model)
         self.model.requires_grad_(False)
         self.options = whisper.DecodingOptions(
             task=self.task, language=self.lang, without_timestamps=True, sample_len=self.max_ctx
@@ -703,9 +703,14 @@ class Loss(nn.Module):
         self.asrl_f = config("factor", 0, float, section="ASRLoss")
         self.asrl_f_lm = config("factor_lm", 0, float, section="ASRLoss")
         self.asrl_loss_lm = config("loss_lm", "CrossEntropy", str, section="ASRLoss")
+        self.asrl_m = config("model", "base:en", str, section="ASRLoss")
         if self.asrl_f > 0:
             self.asrl = ASRLoss(
-                sr=self.sr, factor=self.asrl_f, factor_lm=self.asrl_f_lm, loss_lm=self.asrl_loss_lm
+                sr=self.sr,
+                factor=self.asrl_f,
+                factor_lm=self.asrl_f_lm,
+                loss_lm=self.asrl_loss_lm,
+                model=self.asrl_m,
             )
 
     def forward(
