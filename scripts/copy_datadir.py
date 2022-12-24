@@ -31,14 +31,22 @@ class DsConfig:
 
 def ln(src, tgt):
     """Link a file via ln"""
-    return subprocess.check_call(["ln", "-s", src, tgt])
+    try:
+        return subprocess.check_call(["ln", "-s", src, tgt])
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to link src {src}: {e}")
 
 
 def du(path):
     """disk usage in human readable format (e.g. '2,1')"""
-    return float(
-        subprocess.check_output(["du", "-shD", "--block-size=1G", path]).split()[0].decode("utf-8")
-    )
+    try:
+        return float(
+            subprocess.check_output(["du", "-shD", "--block-size=1G", path])
+            .split()[0]
+            .decode("utf-8")
+        )
+    except subprocess.CalledProcessError:
+        return 0.0
 
 
 def _cp(src, tgt, *rsync_args) -> bool:
@@ -91,6 +99,8 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
         tries = 1
         while True:
             have_write_locks = False
+            if not os.path.isfile(lock_f):
+                break
             for line in open(lock_f):
                 line = line.strip()
                 if lock is not None and line.endswith(".write") and not line.startswith(lock):
