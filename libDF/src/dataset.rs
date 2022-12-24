@@ -559,7 +559,13 @@ impl DatasetBuilder {
                 return Ok(());
             }
             let mut cfg = cfg.clone();
-            let ds = Hdf5Dataset::new(path.to_str().unwrap())?;
+            let ds = match Hdf5Dataset::new(path.to_str().unwrap()) {
+                Err(e) => {
+                    log::error!("Error opening dataset {:?}: {:?}", path, e);
+                    return Ok(());
+                }
+                Ok(ds) => ds,
+            };
             let modified_hash = cfg.hash_from_ds_path(path.to_str().unwrap())?;
             cfg.store_modified_hash(modified_hash);
             let keys = cfg.load_keys(modified_hash)?.cloned();
