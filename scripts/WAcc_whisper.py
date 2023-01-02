@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 import whisper
 
-MODEL = whisper.load_model("base.en")
+MODEL = whisper.load_model("small")
 
 has_cuda = torch.cuda.is_available()
 dt = torch.float16 if has_cuda else torch.float32
@@ -45,14 +45,23 @@ def main(args):
 
         result: whisper.DecodingResult = whisper.decode(MODEL, mel, WHISPER_OPT)
         target = transcriptions_df["transcription"][idx].to_list()[0]
+        if "<UNKNOWN" in target or "unknown" in target:
+            # target may contain <UNKNOWN\>, <UNKNOWN>, or unknown
+            fpath = os.path.basename(fpath)
+            print(f"Target {fpath} contains the '<UNKNOWN>' token. Skipping.")
+            continue
         pred = result.text
         target, pred = normalize(target), normalize(pred)
         errors = editdistance.eval(pred, target)
         wer = errors / len(target)
-        scores.append({"file_name": os.path.basename(fpath), "wacc": wer})
+        scores.append({"file_name": os.path.basename(fpath), "wacc": 1 - wer})
         n_edits += errors
         n += len(target)
         print("Progress {:2.1f} % | Cur WER: {:.1f} %".format(progress, wer * 100))
+        if wer >= 1:
+            print(fpath)
+            print("target: '{}'".format(" ".join(target)))
+            print("prediction: '{}'".format(" ".join(pred)))
     df = pd.DataFrame(scores)
     print("WER:", n_edits / n)
 
