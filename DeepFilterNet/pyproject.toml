@@ -30,7 +30,7 @@ numpy = ">=1.22,<2.0"
 loguru = ">=0.5"
 appdirs = "^1.4"
 requests = "^2.27"
-soundfile = { version = "^0.10", optional = true }
+soundfile = { version = ">=0.10,<0.12", optional = true }
 icecream = { version = ">=2,<3", optional = true }
 pystoi = { version = "^0.3", optional = true }
 pesq = { version = "^0.0.3", optional = true }
