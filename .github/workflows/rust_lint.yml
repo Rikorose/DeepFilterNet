@@ -39,7 +39,9 @@ jobs:
           cache-on-failure: true
       - name: Install HDF5
         if: matrix.hdf5 == true
-        run: sudo apt-get install libhdf5-dev
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install libhdf5-dev
       - name: Run cargo ${{matrix.command}}
         shell: bash
         run: |
