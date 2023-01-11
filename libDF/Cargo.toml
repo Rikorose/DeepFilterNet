@@ -109,7 +109,7 @@ env_logger = { version = "0.10", optional = true }
 clap = { version = "4.0", optional = true, features = ["derive"] }
 rust-ini = { version = "^0.18", optional = true }
 tract-core = { version = "^0.18.3", optional = true }
-tract-onnx = { version = "^0.18.3", optional = true }
+tract-onnx = { version = "^0.19.0", optional = true }
 tract-pulse = { version = "^0.18.3", optional = true }
 tract-hir = { version = "^0.18.3", optional = true }
 flate2 = { version = "1.0.24", optional = true }
