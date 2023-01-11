@@ -445,13 +445,12 @@ class ASRLoss(nn.Module):
         features_i = self.model.embed_audio(self.preprocess(input))
         features_t = self.model.embed_audio(self.preprocess(target))
         # Loss based on the audio encoding:
-        loss = F.mse_loss(features_i[0], features_t[0]) * self.factor
+        loss = 0
+        if self.factor > 0:
+            loss = F.mse_loss(features_i[0], features_t[0]) * self.factor
         if self.factor_lm > 0:
             _, tokens_t = self.decode_tokens(features_t)  # [N, S]
-            logits_i, tokens_i = self.decode_tokens(
-                features_i,
-                min_steps=tokens_t.shape[-1] - 1 if self.loss_lm == "CrossEntropy" else None,
-            )  # [N, T, C]
+            logits_i, tokens_i = self.decode_tokens(features_i)  # [N, T, C]
             log_probs_i = F.log_softmax(logits_i, dim=-1)
 
             # Loss based on the logits:
@@ -477,13 +476,13 @@ class ASRLoss(nn.Module):
                     )
                     loss += ctc_loss * self.factor_lm
                 else:
-                    missing = log_probs_i.shape[1] - tokens_t.shape[1]
-                    if missing > 0:
+                    delta = log_probs_i.shape[1] - tokens_t.shape[1]
+                    if delta > 0:
                         tokens_t = torch.cat(
                             (
                                 tokens_t,
                                 torch.full(
-                                    (tokens_t.shape[0], missing),
+                                    (tokens_t.shape[0], delta),
                                     self.eot,
                                     device=tokens_t.device,
                                     dtype=tokens_t.dtype,
@@ -491,6 +490,11 @@ class ASRLoss(nn.Module):
                             ),
                             dim=1,
                         )
+                    # if tokens_t.shape[1] != log_probs_i.shape[1]:
+                    #     ic(tokens_t.shape, log_probs_i.shape)
+                    #     for i in range(tokens_t.shape[0]):
+                    #         ic(tokens_t[i])
+                    #         ic(log_probs_i[i].argmax(dim=-1))
                     ce_loss = F.nll_loss(
                         log_probs_i.flatten(0, 1),
                         tokens_t[:, : tokens_i.shape[1]].flatten(0, 1),
@@ -506,9 +510,7 @@ class ASRLoss(nn.Module):
         self,
         features: Tensor,
         start_tokens: Optional[Tensor] = None,
-        min_steps: Optional[int] = None,
     ) -> Tuple[Tensor, Tensor]:
-        min_steps = min_steps or 0
         n = features.shape[0]
         sum_logprobs: Tensor = torch.zeros(n, device=features.device)
         tokens: Tensor = start_tokens or torch.tensor(
@@ -519,10 +521,10 @@ class ASRLoss(nn.Module):
             # we don't need no_speech_probs, only use last index (-1)
             logits.append(self.model.logits(tokens, features)[:, -1])
             tokens, completed = self.decoder.update(tokens, logits[-1], sum_logprobs)
-            if (i >= min_steps and completed) or tokens.shape[-1] > self.n_ctx:
+            if completed or tokens.shape[-1] > self.n_ctx:
                 break
         tokens, _ = self.decoder.finalize(tokens, sum_logprobs)
-        return torch.stack(logits, dim=1), tokens[:, self.sample_begin :]
+        return torch.stack(logits, dim=1), tokens[:, self.sample_begin :-1]
 
     def preprocess(self, audio: Tensor) -> Tensor:
         import whisper
@@ -703,8 +705,8 @@ class Loss(nn.Module):
         self.asrl_f = config("factor", 0, float, section="ASRLoss")
         self.asrl_f_lm = config("factor_lm", 0, float, section="ASRLoss")
         self.asrl_loss_lm = config("loss_lm", "CrossEntropy", str, section="ASRLoss")
-        self.asrl_m = config("model", "base:en", str, section="ASRLoss")
-        if self.asrl_f > 0:
+        self.asrl_m = config("model", "base.en", str, section="ASRLoss")
+        if self.asrl_f > 0 or self.asrl_f_lm > 0:
             self.asrl = ASRLoss(
                 sr=self.sr,
                 factor=self.asrl_f,
@@ -774,7 +776,7 @@ class Loss(nn.Module):
                 mrsl = self.mrsl(ms, clean_td.expand_as(ms))
             else:
                 mrsl = self.mrsl(enhanced_td, clean_td)
-        if self.asrl_f > 0:
+        if self.asrl_f > 0 or self.asrl_f_lm > 0:
             asrl = self.asrl(enhanced_td, clean_td)
         if self.lsnr_f != 0:
             lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
