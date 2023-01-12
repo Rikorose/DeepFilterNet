@@ -724,7 +724,6 @@ class Loss(nn.Module):
         lsnr: Tensor,
         snrs: Tensor,
         max_freq: Optional[Tensor] = None,
-        multi_stage_specs: List[Tensor] = [],
     ):
         """Computes all losses.
 
@@ -736,7 +735,6 @@ class Loss(nn.Module):
             lsnr (Tensor): Local SNR estimates of shape [B, T, 1].
             snrs (Tensor): Input SNRs of the noisy mixture of shape [B].
             max_freq (Optional, Tensor): Maximum frequency present in the noisy mixtrue (e.g. due to a lower sampling rate) of shape [B].
-            multi_stage_specs (Optional, Tensor): Enhanced complex spectrums of different intermediate outputs of the DNN.
         """
         max_bin: Optional[Tensor] = None
         if max_freq is not None:
@@ -747,45 +745,25 @@ class Loss(nn.Module):
             ).long()
         enhanced_td = None
         clean_td = None
-        multi_stage = None
-        multi_stage_td = None
-        if multi_stage_specs:
-            # Stack spectrograms in a channel dimension
-            multi_stage = as_complex(torch.stack(multi_stage_specs, dim=1))
         lsnr_gt = self.lsnr(clean, noise=noisy - clean)
         if self.istft is not None:
             if self.store_losses or self.mrsl is not None or self.sdrl is not None:
                 enhanced_td = self.istft(enhanced)
                 clean_td = self.istft(clean)
-                if multi_stage is not None:
-                    # leave out erb enhanced
-                    multi_stage_td = self.istft(multi_stage)
 
         ml, sl, mrsl, cal, sdrl, asrl, lsnrl = [torch.zeros((), device=clean.device)] * 7
         if self.ml_f != 0 and self.ml is not None:
             ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
-            sl = torch.zeros((), device=clean.device)
-            if multi_stage is not None:
-                sl += self.sl(input=multi_stage, target=clean.expand_as(multi_stage))
-            else:
-                sl = self.sl(input=enhanced, target=clean)
+            sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
-            if multi_stage_td is not None:
-                ms = multi_stage_td[:, 1:]
-                mrsl = self.mrsl(ms, clean_td.expand_as(ms))
-            else:
-                mrsl = self.mrsl(enhanced_td, clean_td)
+            mrsl = self.mrsl(enhanced_td, clean_td)
         if self.asrl_f > 0 or self.asrl_f_lm > 0:
             asrl = self.asrl(enhanced_td, clean_td)
         if self.lsnr_f != 0:
             lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
         if self.sdrl_f != 0:
-            if multi_stage_td is not None:
-                ms = multi_stage_td[:, 1:]
-                sdrl = self.sdrl(ms, clean_td.expand_as(ms))
-            else:
-                sdrl = self.sdrl(enhanced_td, clean_td)
+            sdrl = self.sdrl(enhanced_td, clean_td)
         if self.store_losses and enhanced_td is not None:
             assert clean_td is not None
             self.store_summaries(
@@ -799,7 +777,6 @@ class Loss(nn.Module):
                 asrl,
                 lsnrl,
                 cal,
-                multi_stage_td=multi_stage_td,
             )
         return ml + sl + mrsl + sdrl + asrl + lsnrl + cal
 
@@ -825,7 +802,6 @@ class Loss(nn.Module):
         asrl: Tensor,
         lsnrl: Tensor,
         cal: Tensor,
-        multi_stage_td: Optional[Tensor] = None,
     ):
         if ml != 0:
             self.summaries["MaskLoss"].append(ml.detach())
@@ -847,12 +823,6 @@ class Loss(nn.Module):
         sdr_vals: Tensor = sdr(enh_td, target=clean_td)
         stoi_vals: Tensor = stoi(y=enh_td, x=clean_td, fs_source=self.sr)
         sdr_vals_ms, stoi_vals_ms = [], []
-        if multi_stage_td is not None:
-            for i in range(multi_stage_td.shape[1]):
-                sdr_vals_ms.append(sdr(multi_stage_td[:, i].detach(), clean_td))
-                stoi_vals_ms.append(
-                    stoi(y=multi_stage_td[:, i].detach(), x=clean_td, fs_source=self.sr)
-                )
         for snr in torch.unique(snrs, sorted=False):
             self.summaries[f"sdr_snr_{snr.item()}"].extend(
                 sdr_vals.masked_select(snr == snrs).detach().split(1)

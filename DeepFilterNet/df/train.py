@@ -376,9 +376,6 @@ def run_epoch(
                 feat_erb=feat_erb,
                 feat_spec=feat_spec,
             )
-            multi_stage_specs = []
-            if isinstance(other, (list, tuple)):
-                multi_stage_specs = other
             try:
                 err = losses.forward(
                     clean,
@@ -388,7 +385,6 @@ def run_epoch(
                     lsnr,
                     max_freq=batch.max_freq,
                     snrs=snrs,
-                    multi_stage_specs=multi_stage_specs,
                 )
             except Exception as e:
                 if "nan" in str(e).lower() or "finite" in str(e).lower():
