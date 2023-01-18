@@ -94,6 +94,8 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
     lock_f = os.path.join(directory, ".lock")
     have_read_locks = False
     have_write_locks = False
+    if not os.path.isfile(lock_f):
+        return have_read_locks, have_write_locks
     # We can have a write lock allowing exclusive access as well as multiple parallel read locks
     tries = 1
     while True:
