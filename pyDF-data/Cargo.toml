@@ -19,7 +19,7 @@ deep_filter = { features = ["dataset", "vorbis", "flac"], path = "../libDF" }
 pyo3 = { version = "0.17.3", default_features = true, features = [
   "extension-module",
 ] }
-numpy = "0.17.2"
+numpy = "0.18.0"
 log = { version = "0.4", features = ["std"] }
 crossbeam-channel = "^0.5"
 ndarray = "^0.15"
