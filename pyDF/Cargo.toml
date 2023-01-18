@@ -13,5 +13,5 @@ path = "src/lib.rs"
 [dependencies]
 deep_filter = { features = ["transforms", "logging"], path = "../libDF" }
 pyo3 = { version = "0.17.3", features = ["extension-module"]}
-numpy = "0.17.2"
+numpy = "0.18.0"
 ndarray = "^0.15"
