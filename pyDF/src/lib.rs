@@ -42,6 +42,7 @@ impl DF {
         &mut self,
         py: Python<'py>,
         input: PyReadonlyArray2<'py, f32>,
+        reset: Option<bool>,
     ) -> PyResult<&'py PyArray3<Complex32>> {
         let frame_size = self.state.frame_size;
         let freq_size = self.state.freq_size;
@@ -52,7 +53,9 @@ impl DF {
         for (in_ch, mut out_ch) in
             input.as_array().axis_iter(Axis(0)).zip(output.axis_iter_mut(Axis(0)))
         {
-            self.reset();
+            if reset.unwrap_or(true) {
+                self.reset();
+            }
             let in_slice = in_ch.as_slice().ok_or_else(|| {
                 PyErr::new::<PyRuntimeError, _>("[df] Input array empty or not contiguous.")
             })?;
@@ -72,6 +75,7 @@ impl DF {
         &mut self,
         py: Python<'py>,
         input: PyReadonlyArray3<Complex32>,
+        reset: Option<bool>,
     ) -> PyResult<&'py PyArray2<f32>> {
         let frame_size = self.state.frame_size;
         let freq_size = self.state.freq_size;
@@ -84,7 +88,9 @@ impl DF {
         for (mut in_ch, mut out_ch) in
             input.axis_iter_mut(Axis(0)).zip(output.axis_iter_mut(Axis(0)))
         {
-            self.reset();
+            if reset.unwrap_or(true) {
+                self.reset();
+            }
             let in_slice = in_ch.as_slice_mut().ok_or_else(|| {
                 PyErr::new::<PyRuntimeError, _>("[df] Input array empty or not contiguous.")
             })?;

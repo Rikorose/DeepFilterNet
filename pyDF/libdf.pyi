@@ -26,6 +26,7 @@ class DF:
 
         Args:
             input (ndarray): 2D real-valued array of shape [C, T].
+            reset (bool): Reset STFT buffers before processing. Defaults to `true`.
         Output:
             output (ndarray): 3D complex-valued array of shape [C, T', F], where F is the `fft_size`,
                 and T' the original time T divided by `hop_size`.
@@ -36,6 +37,7 @@ class DF:
 
         Args:
             input (ndarray): 3D complex-valued array of shape [C, T, F].
+            reset (bool): Reset STFT buffers before processing. Defaults to `true`.
         Output:
             output (ndarray): 2D real-valued array of shape [C, T].
         """
