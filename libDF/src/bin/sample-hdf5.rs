@@ -22,8 +22,8 @@ fn main() -> Result<()> {
     };
     let data = ds.read(&k).unwrap();
     let out_dir = args.get(3).cloned().unwrap_or_else(|| "out".to_owned());
-    let name = format!("{}/{}", out_dir, k);
-    println!("{}", name);
+    let name = format!("{out_dir}/{k}");
+    println!("{name}");
     write_wav_arr2(&name, data.view(), ds.sr.unwrap_or(24000) as u32).unwrap();
     Ok(())
 }
