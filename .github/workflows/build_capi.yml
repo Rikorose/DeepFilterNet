@@ -68,7 +68,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
           target: ${{ matrix.target }}
 
       - name: Rust cache
