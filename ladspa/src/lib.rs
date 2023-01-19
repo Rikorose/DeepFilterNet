@@ -81,7 +81,6 @@ fn syslog_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> 
 }
 
 fn get_worker_fn(
-    mut df: DfTract,
     inqueue: SampleQueue,
     outqueue: SampleQueue,
     controls: ControlRecv,
@@ -89,6 +88,7 @@ fn get_worker_fn(
     id: String,
 ) -> impl FnMut() {
     move || {
+        let mut df = unsafe { MODEL.clone().unwrap() };
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
@@ -146,18 +146,21 @@ fn get_worker_fn(
     }
 }
 
-fn init_df(channels: usize) {
+/// Initialize DF model and returns sample rate and frame size
+fn init_df(channels: usize) -> (usize, usize) {
     unsafe {
         if let Some(m) = MODEL.as_ref() {
             if m.ch == channels {
-                return;
+                return (m.sr, m.hop_size);
             }
         }
     }
     let df_params = DfParams::default();
     let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
-    unsafe { MODEL = Some(df) }
+    let (sr, frame_size) = (df.sr, df.hop_size);
+    unsafe { MODEL = Some(df) };
+    (sr, frame_size)
 }
 
 fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
@@ -176,33 +179,24 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
                 .init();
         });
 
-        init_df(channels);
-        let m = unsafe { MODEL.clone().unwrap() };
-        assert_eq!(m.sr as u64, sample_rate, "Unsupported sample rate");
-        let i_tx = Arc::new(Mutex::new(vec![
-            VecDeque::with_capacity(m.hop_size * 4);
-            channels
-        ]));
-        let o_rx = Arc::new(Mutex::new(vec![
-            VecDeque::with_capacity(m.hop_size * 4);
-            channels
-        ]));
-        let sr = m.sr;
-        let frame_size = m.hop_size;
-        let proc_delay = m.hop_size;
+        let (m_sr, hop) = init_df(channels);
+        assert_eq!(m_sr as u64, sample_rate, "Unsupported sample rate");
+        let i_tx = Arc::new(Mutex::new(vec![VecDeque::with_capacity(hop * 4); channels]));
+        let o_rx = Arc::new(Mutex::new(vec![VecDeque::with_capacity(hop * 4); channels]));
+        let frame_size = hop;
+        let proc_delay = hop;
         // Add a buffer of 1 frame to compensate processing delays causing underruns
         for o_ch in o_rx.lock().unwrap().iter_mut() {
             for _ in 0..proc_delay {
                 o_ch.push_back(0f32)
             }
         }
-        let sleep_duration = Duration::from_secs_f32(m.hop_size as f32 / sr as f32 / 5.);
+        let sleep_duration = Duration::from_secs_f32(hop as f32 / m_sr as f32 / 5.);
         let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
 
         let (control_tx, control_rx) = sync_channel(32);
 
         let worker_handle = thread::spawn(get_worker_fn(
-            m,
             Arc::clone(&i_tx),
             Arc::clone(&o_rx),
             control_rx,
@@ -220,7 +214,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             o_rx,
             control_tx,
             ch: channels,
-            sr,
+            sr: m_sr,
             id,
             frame_size,
             proc_delay,
