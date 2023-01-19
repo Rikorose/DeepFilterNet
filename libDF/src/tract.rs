@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 #[cfg(feature = "timings")]
 use std::time::Instant;
 
@@ -157,8 +158,8 @@ pub struct DfTract {
     pub atten_lim: Option<f32>,
     df_states: Vec<DFState>,
     spec_buf: Tensor,
-    erb_buf: Tensor,
-    cplx_buf: Tensor,
+    erb_buf: TValue,
+    cplx_buf: TValue,
     m_zeros: Vec<f32>,
     rolling_spec_buf_y: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
@@ -182,10 +183,10 @@ impl DfTract {
         let df_cfg = config.section(Some("df")).unwrap();
         let ch = rp.n_ch;
 
-        let (enc, _enc_delay) = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
-        let (erb_dec, _erb_dec_delay) =
+        let enc = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
+        let erb_dec =
             init_erb_decoder_from_read(&mut Cursor::new(dfp.erb_dec), model_cfg, df_cfg, ch)?;
-        let (df_dec, _df_dec_delay) =
+        let df_dec =
             init_df_decoder_from_read(&mut Cursor::new(dfp.df_dec), model_cfg, df_cfg, ch)?;
         let enc = SimpleState::new(enc.into_runnable()?)?;
         let erb_dec = SimpleState::new(erb_dec.into_runnable()?)?;
@@ -227,9 +228,12 @@ impl DfTract {
         };
         let spec_shape = [1, 1, 1, n_freqs, 2];
         let spec_buf = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &spec_shape)? };
-        let erb_buf = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &[1, 1, 1, nb_erb])? };
-        let cplx_buf = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &[1, 1, nb_df, 2])? };
-        // let mut cplx_buf_t = unsafe { Tensor::uninitialized_dt(f32::datum_type(), &[1, 2, 1, nb_df])? };
+        let erb_buf = TValue::from(unsafe {
+            Tensor::uninitialized_dt(f32::datum_type(), &[1, 1, 1, nb_erb])?
+        });
+        let cplx_buf = TValue::from(unsafe {
+            Tensor::uninitialized_dt(f32::datum_type(), &[1, 1, nb_df, 2])?
+        });
         let m_zeros = vec![0.; nb_erb];
 
         let model_type = config.section(Some("train")).unwrap().get("model").unwrap();
@@ -335,8 +339,8 @@ impl DfTract {
             }
         }
         self.spec_buf = Tensor::zero::<f32>(&spec_shape)?;
-        self.erb_buf = Tensor::zero::<f32>(&[ch, 1, 1, self.nb_erb])?;
-        self.cplx_buf = Tensor::zero::<f32>(&[ch, 1, self.nb_df, 2])?;
+        self.erb_buf = TValue::from(Tensor::zero::<f32>(&[ch, 1, 1, self.nb_erb])?);
+        self.cplx_buf = TValue::from(Tensor::zero::<f32>(&[ch, 1, self.nb_df, 2])?);
 
         Ok(())
     }
@@ -369,8 +373,8 @@ impl DfTract {
         for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in izip!(
             noisy.axis_iter(Axis(0)),
             self.spec_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
-            self.erb_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
-            self.cplx_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
+            tvalue_as_mut(&mut self.erb_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
+            tvalue_as_mut(&mut self.cplx_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.df_states.iter_mut(),
         ) {
             let spec = as_slice_mut_complex(rbuf.as_slice_mut().unwrap());
@@ -392,13 +396,13 @@ impl DfTract {
         // Run encoder
         let mut enc_emb = self.enc.run(tvec!(
             self.erb_buf.clone(),
-            self.cplx_buf.clone().permute_axes(&[0, 3, 1, 2])?
+            TValue::from(self.cplx_buf.clone().into_tensor().permute_axes(&[0, 3, 1, 2])?)
         ))?;
         #[cfg(feature = "timings")]
         let t2 = Instant::now();
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
-        let c0 = enc_emb.pop().unwrap().into_tensor();
-        let emb = enc_emb.pop().unwrap().into_tensor();
+        let c0 = enc_emb.pop().unwrap();
+        let emb = enc_emb.pop().unwrap();
         let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
             // Only noise detected, just apply a zero mask
             (false, true, false)
@@ -427,10 +431,10 @@ impl DfTract {
         let mut m = if apply_erb {
             let dec_input = tvec!(
                 emb.clone(),
-                enc_emb.pop().unwrap().into_tensor(), // e3
-                enc_emb.pop().unwrap().into_tensor(), // e2
-                enc_emb.pop().unwrap().into_tensor(), // e1
-                enc_emb.pop().unwrap().into_tensor(), // e0
+                enc_emb.pop().unwrap(), // e3
+                enc_emb.pop().unwrap(), // e2
+                enc_emb.pop().unwrap(), // e1
+                enc_emb.pop().unwrap(), // e0
             );
             let mut m = self.erb_dec.run(dec_input)?;
             let mut m = m
@@ -466,7 +470,7 @@ impl DfTract {
         let spec = self.rolling_spec_buf_y.get_mut(self.df_order - 1).unwrap();
         self.spec_buf.clone_from(spec);
         if apply_df {
-            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
+            let mut coefs = self.df_dec.run(tvec!(emb.clone(), c0))?.pop().unwrap().into_tensor();
             coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
             df(
                 &self.rolling_spec_buf_x,
@@ -571,9 +575,9 @@ fn init_encoder_impl(
     mut m: InferenceModel,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     log::debug!("Start init encoder.");
-    let s = tract_pulse::fact::stream_dim();
+    let s = m.symbol_table.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
@@ -595,13 +599,12 @@ fn init_encoder_impl(
     let mut m = m.into_typed()?;
 
     m.declutter()?;
-    let pulsed = PulsedModel::new(&m, 1)?;
-    let delay = pulsed.output_fact(0)?.delay;
-    log::info!("Init encoder with delay: {}", delay);
+    let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
+    log::info!("Init encoder");
     let m = pulsed.into_typed()?.into_optimized()?;
-    Ok((m, delay))
+    Ok(m)
 }
-fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<(TypedModel, usize)> {
+fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
     init_encoder_impl(m, df_cfg, n_ch)
 }
@@ -610,7 +613,7 @@ fn init_encoder_from_read(
     m: &mut dyn Read,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
     init_encoder_impl(m, df_cfg, n_ch)
 }
@@ -620,9 +623,9 @@ fn init_erb_decoder_impl(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     log::debug!("Start init ERB decoder.");
-    let s = tract_pulse::fact::stream_dim();
+    let s = m.symbol_table.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
@@ -660,18 +663,17 @@ fn init_erb_decoder_impl(
     let mut m = m.into_typed()?;
 
     m.declutter()?;
-    let pulsed = PulsedModel::new(&m, 1)?;
-    let delay = pulsed.output_fact(0)?.delay;
-    log::info!("Init ERB decoder with delay: {}", delay);
+    let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
+    log::info!("Init ERB decoder");
     let m = pulsed.into_typed()?.into_optimized()?;
-    Ok((m, delay))
+    Ok(m)
 }
 fn init_erb_decoder(
     m: &Path,
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
     init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
@@ -680,7 +682,7 @@ fn init_erb_decoder_from_read(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
     init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
@@ -690,9 +692,9 @@ fn init_df_decoder_impl(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     log::debug!("Start init DF decoder.");
-    let s = tract_pulse::fact::stream_dim();
+    let s = m.symbol_table.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
@@ -720,18 +722,17 @@ fn init_df_decoder_impl(
     let mut m = m.into_typed()?;
 
     m.declutter()?;
-    let pulsed = PulsedModel::new(&m, 1)?;
-    let delay = pulsed.output_fact(0)?.delay;
-    log::info!("Init DF decoder with delay: {}", delay);
+    let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
+    log::info!("Init DF decoder");
     let m = pulsed.into_typed()?.into_optimized()?;
-    Ok((m, delay))
+    Ok(m)
 }
 fn init_df_decoder(
     m: &Path,
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
     init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
@@ -740,7 +741,7 @@ fn init_df_decoder_from_read(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
-) -> Result<(TypedModel, usize)> {
+) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
     init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
@@ -813,5 +814,13 @@ pub fn as_array_mut_complex<'a>(
     unsafe {
         let ptr = buffer.as_ptr() as *mut Complex32;
         ArrayViewMutD::from_shape_ptr(shape, ptr)
+    }
+}
+pub fn tvalue_as_mut<'a>(x: &'a mut TValue) -> &'a mut Tensor {
+    unsafe {
+        match x {
+            TValue::Var(x) => Rc::get_mut_unchecked(x),
+            TValue::Const(x) => Arc::get_mut_unchecked(x),
+        }
     }
 }
