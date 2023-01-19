@@ -475,6 +475,7 @@ pub struct DatasetBuilder {
     p_clipping: Option<f32>,
     p_zeroing: Option<f32>,
     p_air_absorption: Option<f32>,
+    p_interfer_sp: Option<f32>,
 }
 impl DatasetBuilder {
     pub fn new(ds_dir: &str, sr: usize) -> Self {
@@ -500,6 +501,7 @@ impl DatasetBuilder {
             p_clipping: None,
             p_zeroing: None,
             p_air_absorption: None,
+            p_interfer_sp: None,
         }
     }
     pub fn build_fft_dataset(self) -> Result<FftDataset> {
@@ -635,6 +637,7 @@ impl DatasetBuilder {
         let snrs = self.snrs.unwrap_or_else(|| vec![-5, 0, 5, 10, 20, 40]);
         let gains = self.gains.unwrap_or_else(|| vec![-6, 0, 6]);
         let p_fill_speech = self.p_fill_speech.unwrap_or(0.);
+        let p_interfer_sp = self.p_interfer_sp.unwrap_or(0.);
         let ds_split = datasets.split;
         let sp_augmentations = Compose::new(vec![
             Box::new(RandRemoveDc::default_with_prob(
@@ -735,6 +738,7 @@ impl DatasetBuilder {
             snrs,
             gains,
             p_fill_speech,
+            p_interfer_sp,
             sp_augmentations,
             sp_distortions_td,
             sp_distortions_fd,
@@ -817,6 +821,10 @@ impl DatasetBuilder {
     }
     pub fn zeroing_distortion(mut self, p: f32) -> Self {
         self.p_zeroing = Some(p);
+        self
+    }
+    pub fn interfer_distortion(mut self, p: f32) -> Self {
+        self.p_interfer_sp = Some(p);
         self
     }
     pub fn air_absorption_distortion(mut self, p: f32) -> Self {
@@ -934,6 +942,7 @@ pub struct TdDataset {
     snrs: Vec<i8>,                   // in dB; SNR to sample from
     gains: Vec<i8>,                  // in dB; Speech (loudness) to sample from
     p_fill_speech: f32, // Probability to completely fill the speech signal to `max_samples` with a different speech sample
+    p_interfer_sp: f32, // Probability of mixing in 1-3 interfering speakers not included in the target signal
     noise_generator: NoiseGenerator, // Create random noises
     sp_augmentations: Compose, // Transforms to augment speech samples
     sp_distortions_td: Compose, // Transforms to distort speech samples in time domain for used generating the mixture
@@ -1276,6 +1285,40 @@ impl Dataset<f32> for TdDataset {
             speech_distorted = istft(x.view_mut(), &mut state, false);
             speech_distorted.slice_axis_inplace(Axis(1), Slice::from(0..speech.len_of(Axis(1))));
         }
+        if self.p_interfer_sp > 0. && self.p_interfer_sp > rng.uniform(0f32, 1f32) {
+            // Add an interfering speaker to noise
+            let mut interferers = Vec::new();
+            let mut interferer_gains = Vec::new();
+            for _ in 0..rng.uniform(1, 3) {
+                let (sp_name, sp_key) = self
+                    .sp_keys
+                    .choose(&mut rng)
+                    .context("Failed to sample speech signal")?
+                    .clone();
+                let n_read = (self.max_samples as f32 * 1.1) as usize;
+                let mut sample = self.read_max_len(&sp_name, &sp_key, Some(n_read))?;
+                if let Some((rir_name, rir_key)) = self.rir_keys.iter().choose(&mut rng) {
+                    let rir = self.read(rir_name, rir_key)?;
+                    self.reverb.transform_single(&mut speech, rir)?;
+                }
+                if sample.len_of(Axis(1)) > speech.len_of(Axis(1)) {
+                    sample.slice_axis_inplace(Axis(1), Slice::from(0..speech.len_of(Axis(1))));
+                }
+                // mix clean with an interfering speech
+                interferers.push(sample);
+                interferer_gains.push(*self.gains.choose(&mut rng).unwrap() as f32);
+            }
+            let interferers =
+                combine_noises(ch, len, &mut interferers, Some(interferer_gains.as_slice()))?;
+            let snr_interfer = [30., 20., 15.].choose(&mut rng).unwrap();
+            (speech, _, speech_distorted) = mix_audio_signal(
+                speech,
+                Some(speech_distorted),
+                interferers,
+                *snr_interfer,
+                0.,
+            )?;
+        }
         #[cfg(feature = "timings")]
         let t_d = Instant::now(); // distortions
         let (speech, _, noisy) = mix_audio_signal(
@@ -1343,6 +1386,7 @@ impl Dataset<f32> for TdDataset {
     }
 
     fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()> {
+        log::trace!("Generating dataset keys with seed {:?}", epoch_seed);
         self.sp_keys.clear();
         self.ns_keys.clear();
         self.rir_keys.clear();
@@ -1852,10 +1896,9 @@ impl Hdf5Dataset {
         while let Some(mut p) = pck {
             out.append(&mut p);
             if let Some(pos) = srr.get_last_absgp().map(|p| p as usize) {
-                if pos >= end {
+                if pos >= end && out.len() > len {
                     // We might get some extra samples at the end.
                     out.truncate((out.len() - (pos - end) * ch).max(len * ch));
-                    debug_assert!(out.len() >= len);
                     break;
                 }
             }
@@ -1967,6 +2010,12 @@ fn combine_noises(
 ///                     resampling to the noise signal. This may be used to make sure a speech
 ///                     signal with a lower sampling rate will also be mixed with noise having the
 ///                     same sampling rate.
+///
+/// Returns
+///
+/// * `clean` - Clean target after applying snr and gain factors
+/// * `noise` - Noise signal after applying snr and gain factors
+/// * `mixture` - Mixture signal of clean_distorted and noise.
 fn mix_audio_signal(
     clean: Array2<f32>,
     clean_distorted: Option<Array2<f32>>,
@@ -2232,7 +2281,7 @@ mod tests {
             write_wav_arr2(filename, samples_raw.view(), hdf5.sr.unwrap() as u32).unwrap();
         }
         assert_eq!(samples_hdf5.shape(), samples_raw.shape());
-        assert!(dbg!(calc_snr_sx(samples_raw.iter(), samples_hdf5.iter())) > snr);
+        assert!(dbg!(calc_snr_sx(samples_raw.iter(), samples_hdf5.iter())) > dbg!(snr));
     }
     #[test]
     pub fn test_mix_audio_signal() -> Result<()> {
@@ -2333,6 +2382,36 @@ mod tests {
         );
         write_wav_arr2("../out/speech.wav", speech.view(), sr as u32).unwrap();
         write_wav_arr2("../out/noisy.wav", noisy.view(), sr as u32).unwrap();
+        Ok(())
+    }
+    #[test]
+    pub fn test_interfering_spk() -> Result<()> {
+        setup();
+        seed_from_u64(0);
+        let sr = 48_000;
+        let dir = "../assets/";
+        let cfg = DatasetConfigJson::open("../assets/dataset.cfg").unwrap();
+        let mut ds = DatasetBuilder::new(dir, sr)
+            .dataset(cfg.split_config(Split::Train))
+            .interfer_distortion(1.0)
+            .snrs(vec![100])
+            .build_td_dataset()
+            .unwrap();
+        ds.generate_keys(Some(0))?;
+        let mut rng = thread_rng()?;
+        let sample = ds.get_sample(rng.uniform(0, ds.len()), Some(0)).unwrap();
+        write_wav_arr2(
+            "../out/speech.wav",
+            sample.speech.view().into_dimensionality()?,
+            sr as u32,
+        )
+        .unwrap();
+        write_wav_arr2(
+            "../out/noisy.wav",
+            sample.noisy.view().into_dimensionality()?,
+            sr as u32,
+        )
+        .unwrap();
         Ok(())
     }
 }

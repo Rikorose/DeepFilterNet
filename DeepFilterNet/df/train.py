@@ -155,6 +155,7 @@ def main():
         p_clipping=config("p_clipping", 0.0, float, section="distortion"),
         p_zeroing=config("p_zeroing", 0.0, float, section="distortion"),
         p_air_absorption=config("p_air_absorption", 0.0, float, section="distortion"),
+        p_interfer_sp=config("p_interfer_sp", 0.0, float, section="distortion"),
         prefetch=config("NUM_PREFETCH_BATCHES", 32, int, section="train"),
         overfit=overfit,
         seed=seed,
@@ -375,9 +376,6 @@ def run_epoch(
                 feat_erb=feat_erb,
                 feat_spec=feat_spec,
             )
-            multi_stage_specs = []
-            if isinstance(other, (list, tuple)):
-                multi_stage_specs = other
             try:
                 err = losses.forward(
                     clean,
@@ -387,7 +385,6 @@ def run_epoch(
                     lsnr,
                     max_freq=batch.max_freq,
                     snrs=snrs,
-                    multi_stage_specs=multi_stage_specs,
                 )
             except Exception as e:
                 if "nan" in str(e).lower() or "finite" in str(e).lower():

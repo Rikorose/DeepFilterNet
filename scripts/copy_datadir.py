@@ -94,47 +94,48 @@ def has_locks(directory: str, lock: Optional[str] = None, wait_write_lock: bool 
     lock_f = os.path.join(directory, ".lock")
     have_read_locks = False
     have_write_locks = False
+    if not os.path.isfile(lock_f):
+        return have_read_locks, have_write_locks
     # We can have a write lock allowing exclusive access as well as multiple parallel read locks
-    if os.path.isfile(lock_f):
-        tries = 1
-        while True:
-            have_write_locks = False
-            if not os.path.isfile(lock_f):
-                break
-            for line in open(lock_f):
-                line = line.strip()
-                if lock is not None and line.endswith(".write") and not line.startswith(lock):
-                    print("Directory currently locked:", line, file=stderr)
-                    have_write_locks = True
-                    break
-            if not have_write_locks or not wait_write_lock:
-                break
-            # Wait until the current write lock is released
-            print(
-                f"Warning: Could not lock directory {directory}",
-                file=stderr,
-            )
-            if tries > 2**8:  # ~ 5 minutes
-                break
-            print(f"Retrying in {tries} s ...", file=stderr, flush=True)
-            sleep(tries)
-            tries *= 2
-        have_read_locks = False
-        cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+    tries = 1
+    while True:
+        have_write_locks = False
+        if not os.path.isfile(lock_f):
+            break
         for line in open(lock_f):
             line = line.strip()
-            if lock is not None and line.startswith(lock):
-                continue  # Same lock should not be relevant
-            try:
-                lock_timestamp = line.split(".")[1]
-                lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
-            except Exception as e:
-                print(e, file=stderr)
-                continue
-            if cur_timestamp - lock_timestamp < timedelta(days=1):
-                print("Found existing lock", line.strip(), file=stderr)
-                have_read_locks = True
+            if lock is not None and line.endswith(".write") and not line.startswith(lock):
+                print("Directory currently locked:", line, file=stderr)
+                have_write_locks = True
                 break
+        if not have_write_locks or not wait_write_lock:
+            break
+        # Wait until the current write lock is released
+        print(
+            f"Warning: Could not lock directory {directory}",
+            file=stderr,
+        )
+        if tries > 2**8:  # ~ 5 minutes
+            break
+        print(f"Retrying in {tries} s ...", file=stderr, flush=True)
+        sleep(tries)
+        tries *= 2
+    have_read_locks = False
+    cur_timestamp = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+    for line in open(lock_f):
+        line = line.strip()
+        if lock is not None and line.startswith(lock):
+            continue  # Same lock should not be relevant
+        try:
+            lock_timestamp = line.split(".")[1]
+            lock_timestamp = datetime.strptime(lock_timestamp, TIMESTAMP_FORMAT)
+        except Exception as e:
+            print(e, file=stderr)
+            continue
+        if cur_timestamp - lock_timestamp < timedelta(days=1):
+            print("Found existing lock", line.strip(), file=stderr)
+            have_read_locks = True
+            break
     return have_read_locks, have_write_locks
 
 

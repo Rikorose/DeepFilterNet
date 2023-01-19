@@ -1,12 +1,13 @@
 import warnings
 from collections import defaultdict
-from typing import Dict, Final, Iterable, List, Optional, Union
+from typing import Dict, Final, Iterable, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
 from df.config import Csv, config
+from df.io import resample
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
@@ -259,7 +260,7 @@ class MaskLoss(nn.Module):
         tmp = g_t.sub(g_p).pow(2)
         if self.f_under != 1:
             # Weighting if gains are too low
-            tmp *= torch.where(g_p < g_t, self.f_under, 1.0)
+            tmp = tmp * torch.where(g_p < g_t, self.f_under, 1.0)
         if max_bin is not None:
             m = torch.ones((b, 1, 1, f), device=input.device)
             for i, mb in enumerate(max_bin):
@@ -393,6 +394,238 @@ class LocalSnrLoss(nn.Module):
         return F.mse_loss(input, target_lsnr) * self.factor
 
 
+class ASRLoss(nn.Module):
+    target_sr = 16000
+    n_fft = 400
+    hop = 160
+    beam_size = 20
+    lang = "en"
+    task = "transcribe"
+    max_ctx = 25
+
+    def __init__(
+        self,
+        sr: int,
+        factor: float = 1,
+        factor_lm: float = 1,
+        loss_lm: Literal["CTC", "CrossEntropy"] = "CrossEntropy",
+        model: str = "base.en",
+    ) -> None:
+        super().__init__()
+        import whisper
+
+        self.sr = sr
+        self.factor = factor
+        self.factor_lm = factor_lm
+        self.model = whisper.load_model(model)
+        self.model.requires_grad_(False)
+        self.options = whisper.DecodingOptions(
+            task=self.task, language=self.lang, without_timestamps=True, sample_len=self.max_ctx
+        )
+        self.mel_filters: Tensor
+        self.register_buffer(
+            "mel_filters", torch.from_numpy(self.get_mel_filters(self.target_sr, 400, 80))
+        )
+        self.tokenizer = whisper.tokenizer.get_tokenizer(
+            self.model.is_multilingual, language=self.lang, task=self.options.task
+        )
+        self.decoder = whisper.decoding.GreedyDecoder(0.0, self.tokenizer.eot)
+        # self.decoder = whisper.decoding.BeamSearchDecoder(self.beam_size, self.tokenizer.eot, , 1.)
+        self.sot_sequence = self.tokenizer.sot_sequence_including_notimestamps
+        self.n_ctx: int = self.model.dims.n_text_ctx
+        self.initial_tokens = self._get_initial_tokens()
+        self.sot_index: int = self.initial_tokens.index(self.tokenizer.sot)
+        self.sample_begin: int = len(self.initial_tokens)
+        self.sample_len: int = self.options.sample_len or self.model.dims.n_text_ctx // 2
+        self.blank = self.tokenizer.encode(" ")[0]
+        self.eot = self.tokenizer.eot
+        self.loss_lm = loss_lm
+
+    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+        features_i = self.model.embed_audio(self.preprocess(input))
+        features_t = self.model.embed_audio(self.preprocess(target))
+        # Loss based on the audio encoding:
+        loss = 0
+        if self.factor > 0:
+            loss = F.mse_loss(features_i[0], features_t[0]) * self.factor
+        if self.factor_lm > 0:
+            _, tokens_t = self.decode_tokens(features_t)  # [N, S]
+            logits_i, tokens_i = self.decode_tokens(features_i)  # [N, T, C]
+            log_probs_i = F.log_softmax(logits_i, dim=-1)
+
+            # Loss based on the logits:
+            if self.factor_lm > 0:
+                if self.loss_lm == "CTC":
+                    input_lengths = torch.as_tensor(
+                        [torch.argwhere(t == self.eot)[0] for t in tokens_i],
+                        device=input.device,
+                        dtype=torch.long,
+                    )
+                    target_lengths = torch.as_tensor(
+                        [torch.argwhere(t == self.eot)[0] for t in tokens_t],
+                        device=input.device,
+                        dtype=torch.long,
+                    )
+                    ctc_loss = F.ctc_loss(
+                        log_probs=log_probs_i[:, : input_lengths.max()].transpose(0, 1),
+                        targets=tokens_t[:, : target_lengths.max()].to(torch.long),
+                        input_lengths=input_lengths,
+                        target_lengths=target_lengths,
+                        blank=self.blank,
+                        zero_infinity=True,
+                    )
+                    loss += ctc_loss * self.factor_lm
+                else:
+                    delta = log_probs_i.shape[1] - tokens_t.shape[1]
+                    if delta > 0:
+                        tokens_t = torch.cat(
+                            (
+                                tokens_t,
+                                torch.full(
+                                    (tokens_t.shape[0], delta),
+                                    self.eot,
+                                    device=tokens_t.device,
+                                    dtype=tokens_t.dtype,
+                                ),
+                            ),
+                            dim=1,
+                        )
+                    # if tokens_t.shape[1] != log_probs_i.shape[1]:
+                    #     ic(tokens_t.shape, log_probs_i.shape)
+                    #     for i in range(tokens_t.shape[0]):
+                    #         ic(tokens_t[i])
+                    #         ic(log_probs_i[i].argmax(dim=-1))
+                    ce_loss = F.nll_loss(
+                        log_probs_i.flatten(0, 1),
+                        tokens_t[:, : tokens_i.shape[1]].flatten(0, 1),
+                    )
+                    loss += ce_loss * self.factor_lm
+        return loss
+
+    def decode_text(self, tokens: Tensor) -> List[str]:
+        tokens = [t[: torch.argwhere(t == self.eot)[0]] for t in tokens]
+        return [self.tokenizer.decode(t).strip() for t in tokens]
+
+    def decode_tokens(
+        self,
+        features: Tensor,
+        start_tokens: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor]:
+        n = features.shape[0]
+        sum_logprobs: Tensor = torch.zeros(n, device=features.device)
+        tokens: Tensor = start_tokens or torch.tensor(
+            [self.initial_tokens], device=features.device
+        ).repeat(n, 1)
+        logits: List[Tensor] = []
+        for i in range(self.sample_len):
+            # we don't need no_speech_probs, only use last index (-1)
+            logits.append(self.model.logits(tokens, features)[:, -1])
+            tokens, completed = self.decoder.update(tokens, logits[-1], sum_logprobs)
+            if completed or tokens.shape[-1] > self.n_ctx:
+                break
+        tokens, _ = self.decoder.finalize(tokens, sum_logprobs)
+        return torch.stack(logits, dim=1), tokens[:, self.sample_begin : -1]
+
+    def preprocess(self, audio: Tensor) -> Tensor:
+        import whisper
+
+        audio = resample(audio, self.sr, self.target_sr)
+        audio = whisper.pad_or_trim(audio.squeeze(1))
+        mel = self.log_mel_spectrogram(audio, self.mel_filters.to(audio.device))
+        return mel
+
+    def log_mel_spectrogram(self, audio: Tensor, mel_fb: Tensor):
+        """From openai/whisper"""
+        window = torch.hann_window(self.n_fft).to(audio.device)
+        stft = torch.stft(audio, self.n_fft, self.hop, window=window, return_complex=True)
+        assert stft.isfinite().all()
+        magnitudes = stft[..., :-1].abs() ** 2
+        assert magnitudes.isfinite().all()
+        assert mel_fb.isfinite().all()
+
+        mel_spec = mel_fb @ magnitudes
+
+        log_spec = torch.clamp(mel_spec, min=1e-10).log10()
+        log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
+        log_spec = (log_spec + 4.0) / 4.0
+        return log_spec
+
+    def get_mel_filters(self, sr, n_fft, n_mels=128, dtype=None):
+        """From transformers/models/whisper/feature_extraction"""
+        import numpy as np
+
+        dtype = dtype or np.float32
+        # Initialize the weights
+        n_mels = int(n_mels)
+        weights = np.zeros((n_mels, int(1 + n_fft // 2)), dtype=dtype)
+
+        # Center freqs of each FFT bin
+        fftfreqs = np.fft.rfftfreq(n=n_fft, d=1.0 / sr)
+
+        # 'Center freqs' of mel bands - uniformly spaced between limits
+        min_mel = 0.0
+        max_mel = 45.245640471924965
+
+        mels = np.linspace(min_mel, max_mel, n_mels + 2)
+
+        mels = np.asanyarray(mels)
+
+        # Fill in the linear scale
+        f_min = 0.0
+        f_sp = 200.0 / 3
+        freqs = f_min + f_sp * mels
+
+        # And now the nonlinear scale
+        min_log_hz = 1000.0  # beginning of log region (Hz)
+        min_log_mel = (min_log_hz - f_min) / f_sp  # same (Mels)
+        logstep = np.log(6.4) / 27.0  # step size for log region
+
+        # If we have vector data, vectorize
+        log_t = mels >= min_log_mel
+        freqs[log_t] = min_log_hz * np.exp(logstep * (mels[log_t] - min_log_mel))
+
+        mel_f = freqs
+
+        fdiff = np.diff(mel_f)
+        ramps = np.subtract.outer(mel_f, fftfreqs)
+
+        for i in range(n_mels):
+            # lower and upper slopes for all bins
+            lower = -ramps[i] / fdiff[i]
+            upper = ramps[i + 2] / fdiff[i + 1]
+
+            # .. then intersect them with each other and zero
+            weights[i] = np.maximum(0, np.minimum(lower, upper))
+
+        # Slaney-style mel is scaled to be approx constant energy per channel
+        enorm = 2.0 / (mel_f[2 : n_mels + 2] - mel_f[:n_mels])
+        weights *= enorm[:, np.newaxis]
+
+        return weights
+
+    def _get_initial_tokens(self) -> Tuple[int]:
+        tokens = list(self.sot_sequence)
+        prefix = self.options.prefix
+        prompt = self.options.prompt
+
+        if prefix:
+            prefix_tokens = (
+                self.tokenizer.encode(" " + prefix.strip()) if isinstance(prefix, str) else prefix
+            )
+            if self.sample_len is not None:
+                max_prefix_len = self.n_ctx // 2 - self.sample_len
+                prefix_tokens = prefix_tokens[-max_prefix_len:]
+            tokens = tokens + prefix_tokens
+
+        if prompt:
+            prompt_tokens = (
+                self.tokenizer.encode(" " + prompt.strip()) if isinstance(prompt, str) else prompt
+            )
+            tokens = [self.tokenizer.sot_prev] + prompt_tokens[-(self.n_ctx // 2 - 1) :] + tokens
+
+        return tuple(tokens)
+
+
 class Loss(nn.Module):
     """Loss wrapper containing several different loss functions within this file.
 
@@ -468,6 +701,20 @@ class Loss(nn.Module):
         self.lsnrl = LocalSnrLoss(self.lsnr_f) if self.lsnr_f > 0 else None
         self.dev_str = get_device().type
 
+        self.asrl = None
+        self.asrl_f = config("factor", 0, float, section="ASRLoss")
+        self.asrl_f_lm = config("factor_lm", 0, float, section="ASRLoss")
+        self.asrl_loss_lm = config("loss_lm", "CrossEntropy", str, section="ASRLoss")
+        self.asrl_m = config("model", "base.en", str, section="ASRLoss")
+        if self.asrl_f > 0 or self.asrl_f_lm > 0:
+            self.asrl = ASRLoss(
+                sr=self.sr,
+                factor=self.asrl_f,
+                factor_lm=self.asrl_f_lm,
+                loss_lm=self.asrl_loss_lm,
+                model=self.asrl_m,
+            )
+
     def forward(
         self,
         clean: Tensor,
@@ -477,7 +724,6 @@ class Loss(nn.Module):
         lsnr: Tensor,
         snrs: Tensor,
         max_freq: Optional[Tensor] = None,
-        multi_stage_specs: List[Tensor] = [],
     ):
         """Computes all losses.
 
@@ -489,7 +735,6 @@ class Loss(nn.Module):
             lsnr (Tensor): Local SNR estimates of shape [B, T, 1].
             snrs (Tensor): Input SNRs of the noisy mixture of shape [B].
             max_freq (Optional, Tensor): Maximum frequency present in the noisy mixtrue (e.g. due to a lower sampling rate) of shape [B].
-            multi_stage_specs (Optional, Tensor): Enhanced complex spectrums of different intermediate outputs of the DNN.
         """
         max_bin: Optional[Tensor] = None
         if max_freq is not None:
@@ -500,43 +745,25 @@ class Loss(nn.Module):
             ).long()
         enhanced_td = None
         clean_td = None
-        multi_stage = None
-        multi_stage_td = None
-        if multi_stage_specs:
-            # Stack spectrograms in a channel dimension
-            multi_stage = as_complex(torch.stack(multi_stage_specs, dim=1))
         lsnr_gt = self.lsnr(clean, noise=noisy - clean)
         if self.istft is not None:
             if self.store_losses or self.mrsl is not None or self.sdrl is not None:
                 enhanced_td = self.istft(enhanced)
                 clean_td = self.istft(clean)
-                if multi_stage is not None:
-                    # leave out erb enhanced
-                    multi_stage_td = self.istft(multi_stage)
 
-        ml, sl, mrsl, cal, sdrl, lsnrl = [torch.zeros((), device=clean.device)] * 6
+        ml, sl, mrsl, cal, sdrl, asrl, lsnrl = [torch.zeros((), device=clean.device)] * 7
         if self.ml_f != 0 and self.ml is not None:
             ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
-            sl = torch.zeros((), device=clean.device)
-            if multi_stage is not None:
-                sl += self.sl(input=multi_stage, target=clean.expand_as(multi_stage))
-            else:
-                sl = self.sl(input=enhanced, target=clean)
+            sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
-            if multi_stage_td is not None:
-                ms = multi_stage_td[:, 1:]
-                mrsl = self.mrsl(ms, clean_td.expand_as(ms))
-            else:
-                mrsl = self.mrsl(enhanced_td, clean_td)
+            mrsl = self.mrsl(enhanced_td, clean_td)
+        if self.asrl_f > 0 or self.asrl_f_lm > 0:
+            asrl = self.asrl(enhanced_td, clean_td)
         if self.lsnr_f != 0:
             lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
         if self.sdrl_f != 0:
-            if multi_stage_td is not None:
-                ms = multi_stage_td[:, 1:]
-                sdrl = self.sdrl(ms, clean_td.expand_as(ms))
-            else:
-                sdrl = self.sdrl(enhanced_td, clean_td)
+            sdrl = self.sdrl(enhanced_td, clean_td)
         if self.store_losses and enhanced_td is not None:
             assert clean_td is not None
             self.store_summaries(
@@ -547,11 +774,11 @@ class Loss(nn.Module):
                 sl,
                 mrsl,
                 sdrl,
+                asrl,
                 lsnrl,
                 cal,
-                multi_stage_td=multi_stage_td,
             )
-        return ml + sl + mrsl + sdrl + lsnrl + cal
+        return ml + sl + mrsl + sdrl + asrl + lsnrl + cal
 
     def reset_summaries(self):
         self.summaries = defaultdict(list)
@@ -572,9 +799,9 @@ class Loss(nn.Module):
         sl: Tensor,
         mrsl: Tensor,
         sdrl: Tensor,
+        asrl: Tensor,
         lsnrl: Tensor,
         cal: Tensor,
-        multi_stage_td: Optional[Tensor] = None,
     ):
         if ml != 0:
             self.summaries["MaskLoss"].append(ml.detach())
@@ -586,6 +813,8 @@ class Loss(nn.Module):
             self.summaries["SdrLoss"].append(sdrl.detach())
         if cal != 0:
             self.summaries["DfAlphaLoss"].append(cal.detach())
+        if asrl != 0:
+            self.summaries["ASRLoss"].append(asrl.detach())
         if lsnrl != 0:
             self.summaries["LocalSnrLoss"].append(lsnrl.detach())
         sdr = SiSdr()
@@ -594,12 +823,6 @@ class Loss(nn.Module):
         sdr_vals: Tensor = sdr(enh_td, target=clean_td)
         stoi_vals: Tensor = stoi(y=enh_td, x=clean_td, fs_source=self.sr)
         sdr_vals_ms, stoi_vals_ms = [], []
-        if multi_stage_td is not None:
-            for i in range(multi_stage_td.shape[1]):
-                sdr_vals_ms.append(sdr(multi_stage_td[:, i].detach(), clean_td))
-                stoi_vals_ms.append(
-                    stoi(y=multi_stage_td[:, i].detach(), x=clean_td, fs_source=self.sr)
-                )
         for snr in torch.unique(snrs, sorted=False):
             self.summaries[f"sdr_snr_{snr.item()}"].extend(
                 sdr_vals.masked_select(snr == snrs).detach().split(1)

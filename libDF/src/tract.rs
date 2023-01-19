@@ -353,7 +353,6 @@ impl DfTract {
         });
         let rms = e / noisy.len() as f32;
         if rms < 1e-7 {
-            enh.assign(&noisy);
             return Ok(-15.);
         }
         if self.atten_lim.unwrap_or_default() == 1. {
