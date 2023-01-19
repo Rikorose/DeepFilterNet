@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import torch
 import whisper
-from icecream import ic
 
 MODEL = whisper.load_model("base.en")
 

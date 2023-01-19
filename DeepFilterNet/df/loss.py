@@ -4,10 +4,10 @@ from typing import Dict, Final, Iterable, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from torch import Tensor, dtype, nn
+from torch import Tensor, nn
 
 from df.config import Csv, config
-from df.io import resample, save_audio
+from df.io import resample
 from df.model import ModelParams
 from df.modules import LocalSnrTarget, erb_fb
 from df.stoi import stoi
@@ -524,7 +524,7 @@ class ASRLoss(nn.Module):
             if completed or tokens.shape[-1] > self.n_ctx:
                 break
         tokens, _ = self.decoder.finalize(tokens, sum_logprobs)
-        return torch.stack(logits, dim=1), tokens[:, self.sample_begin :-1]
+        return torch.stack(logits, dim=1), tokens[:, self.sample_begin : -1]
 
     def preprocess(self, audio: Tensor) -> Tensor:
         import whisper
