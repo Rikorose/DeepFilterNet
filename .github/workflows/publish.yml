@@ -24,7 +24,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
           target: ${{ matrix.target }}
       - name: Get the release version from the tag
         shell: bash
@@ -115,7 +115,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
           target: ${{ matrix.target }}
 
       - name: Build wheel unix
@@ -205,7 +205,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        rust: [stable]
+        rust: [nightly]
         manylinux: [2014]
         python:
           # CPython
@@ -299,7 +299,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
           target: ${{ matrix.target }}
 
       - name: Use Cross
@@ -404,7 +404,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
           target: ${{ matrix.target }}
 
       - name: Use Cross
