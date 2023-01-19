@@ -470,7 +470,7 @@ impl DfTract {
         let spec = self.rolling_spec_buf_y.get_mut(self.df_order - 1).unwrap();
         self.spec_buf.clone_from(spec);
         if apply_df {
-            let mut coefs = self.df_dec.run(tvec!(emb.clone(), c0))?.pop().unwrap().into_tensor();
+            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
             coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
             df(
                 &self.rolling_spec_buf_x,
@@ -816,7 +816,7 @@ pub fn as_array_mut_complex<'a>(
         ArrayViewMutD::from_shape_ptr(shape, ptr)
     }
 }
-pub fn tvalue_as_mut<'a>(x: &'a mut TValue) -> &'a mut Tensor {
+pub fn tvalue_as_mut(x: &mut TValue) -> &mut Tensor {
     unsafe {
         match x {
             TValue::Var(x) => Rc::get_mut_unchecked(x),
