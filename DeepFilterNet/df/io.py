@@ -13,7 +13,7 @@ from df.utils import download_file, get_cache_dir, get_git_root
 
 
 def load_audio(
-    file: str, sr: Optional[int], verbose=True, **kwargs
+    file: str, sr: Optional[int] = None, verbose=True, **kwargs
 ) -> Tuple[Tensor, AudioMetaData]:
     """Loads an audio file using torchaudio.
 
