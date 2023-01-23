@@ -240,6 +240,15 @@ def parse_epoch_type(value: str) -> Union[int, str]:
         return value
 
 
+class PrintVersion(argparse.Action):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, *args):
+        print("DeepFilterNet", __version__)
+        exit(0)
+
+
 def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -277,7 +286,7 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
         type=parse_epoch_type,
         help="Epoch for checkpoint loading. Can be one of ['best', 'latest', <int>].",
     )
-    parser.add_argument("--version", action="store_true")
+    parser.add_argument("--version", action=PrintVersion, nargs="?")
     return parser
 
 
@@ -309,9 +318,6 @@ def run():
         help="Don't add the model suffix to the enhanced audio files",
     )
     args = parser.parse_args()
-    if args.version:
-        print("DeepFilterNet", __version__)
-        exit(0)
     main(args)
 
 
