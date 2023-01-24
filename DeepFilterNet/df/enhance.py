@@ -241,8 +241,14 @@ def parse_epoch_type(value: str) -> Union[int, str]:
 
 
 class PrintVersion(argparse.Action):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, option_strings, dest):
+        super().__init__(
+            option_strings=option_strings,
+            dest=dest,
+            nargs=0,
+            required=False,
+            help="Print DeepFilterNet version information"
+        )
 
     def __call__(self, *args):
         print("DeepFilterNet", __version__)
@@ -286,7 +292,7 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
         type=parse_epoch_type,
         help="Epoch for checkpoint loading. Can be one of ['best', 'latest', <int>].",
     )
-    parser.add_argument("--version", action=PrintVersion, nargs="?")
+    parser.add_argument("-v", "--version", action=PrintVersion)
     return parser
 
 
