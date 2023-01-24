@@ -247,7 +247,7 @@ class PrintVersion(argparse.Action):
             dest=dest,
             nargs=0,
             required=False,
-            help="Print DeepFilterNet version information"
+            help="Print DeepFilterNet version information",
         )
 
     def __call__(self, *args):
