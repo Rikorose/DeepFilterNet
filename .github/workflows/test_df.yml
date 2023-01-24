@@ -128,6 +128,7 @@ jobs:
           DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
         run: |
           mkdir ../out
+          poetry run deepFilter --version
           poetry run deepFilter ../assets/noisy_snr0.wav -o ../out
           poetry run python df/scripts/dnsmos.py ../assets/noisy_snr0.wav -t 4.320409320319172 2.53722799232174 3.209282577524924
           poetry run python df/scripts/dnsmos.py ../out/noisy_snr0_DeepFilterNet2.wav -t 4.12677460716050 4.45606916030286 3.62059268038164
