@@ -32,7 +32,7 @@ def main(args):
             with open(fpath, "rb") as f:
                 resp = requests.post(WACC_SERVICE_URL, files={"audiodata": f})
             wacc = resp.json()
-        except:
+        except:  # noqa: E722
             print("Error occured during scoring")
             print("response is ", resp)
         sf.write(fpath, original_audio, fs)
