@@ -1,7 +1,7 @@
 #!/bin/env/python
 
-import sys
 import os
+import sys
 
 import numpy as np
 import pandas as pd
