@@ -10,7 +10,6 @@ import librosa
 import numpy as np
 import pandas as pd
 import soundfile as sf
-from icecream import ic
 from tqdm import tqdm
 
 from df.scripts.dnsmos import get_ort_session
