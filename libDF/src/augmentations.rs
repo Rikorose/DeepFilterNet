@@ -813,6 +813,7 @@ pub(crate) struct RandReverbSim {
     prob_resample: f32,
     prob_decay: f32,
     sr: usize,
+    rt60: f32,
     drr_f: Option<f32>, // Direct-to-Reverberant-Ratio
 }
 impl RandReverbSim {
@@ -1002,7 +1003,8 @@ impl RandReverbSim {
             //
             // Add 5 ms extra offset since these are releveant for speech intelligibility
             let offset = max_idx + 5 * self.sr / 1000;
-            let mut rir_speech = self.supress_late(rir_noise.clone(), self.sr, offset, 0.5)?;
+            let mut rir_speech =
+                self.supress_late(rir_noise.clone(), self.sr, offset, self.rt60)?;
             let rir_e = rir_speech.map(|v| v * v).sum().sqrt();
             rir_speech *= 1. / rir_e;
             // Generate target speech signal containing less reverberation
@@ -1081,6 +1083,7 @@ impl RandReverbSim {
             prob_resample: p,
             prob_decay: p.max(0.5),
             sr,
+            rt60: 0.5,
             drr_f: None,
         }
     }
@@ -1089,6 +1092,11 @@ impl RandReverbSim {
     pub fn with_drr(mut self, f: f32) -> Self {
         assert!((0.0..=1.0).contains(&f));
         self.drr_f = Some(f);
+        self
+    }
+    pub fn with_rt60(mut self, rt60: f32) -> Self {
+        assert!(rt60 > 0.);
+        self.rt60 = rt60;
         self
     }
 }
@@ -1403,7 +1411,7 @@ mod tests {
         noise.slice_axis_inplace(Axis(1), Slice::from(0..len));
         let rir = ReadWav::new("../assets/rir_sim_1001_w11.7_l2.6_h2.5_rt60_0.7919.wav")?
             .samples_arr2()?;
-        let reverb = RandReverbSim::new(1., sr).with_drr(0.3);
+        let reverb = RandReverbSim::new(1., sr).with_drr(0.2).with_rt60(0.1);
         write_wav_arr2("../out/speech_noreverb.wav", speech.view(), sr as u32)?;
         write_wav_arr2("../out/noise_noreverb.wav", noise.view(), sr as u32)?;
         let speech_rev = reverb.transform(&mut speech, &mut noise, move || Ok(rir))?.unwrap();
