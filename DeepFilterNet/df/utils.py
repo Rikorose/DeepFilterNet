@@ -214,7 +214,7 @@ def download_file(url: str, download_dir: str, extract: bool = False):
     local_filename = os.path.join(download_dir, local_filename)
     with requests.get(url, stream=True) as r:
         if r.status_code >= 400:
-            logger.error(f"Error downloading file ({r.status_code}): {r.reason}")
+            logger.error(f"Error downloading file {url} ({r.status_code}): {r.reason}")
             exit(1)
         with open(local_filename, "wb") as f:
             shutil.copyfileobj(r.raw, f)
