@@ -97,8 +97,8 @@ setup_env() {
   if [ "$INSTALL_LIBDF" -eq 1 ]; then
     echo "Installing DeepFilterLib"
     cd "$PROJECT_HOME"/ || exit 10
-    rustup default stable
-    rustup update stable
+    rustup default nightly
+    # rustup update stable
     pip install -U maturin
     maturin develop --profile=release-lto -m "$PROJECT_HOME"/pyDF/Cargo.toml
     maturin develop --profile=release-lto -m "$PROJECT_HOME"/pyDF-data/Cargo.toml
