@@ -51,11 +51,12 @@ __a_tol = 1e-4
 __r_tol = 1e-4
 
 
-def get_ort_session(onnx: str):
+def get_ort_session(onnx: str, providers="gpu"):
     global ORT_SESS
 
     import onnxruntime as ort
 
+    providers = ORT_PROVIDERS_ALL if providers == "gpu" else ORT_PROVIDERS_CPU
     if onnx not in ORT_SESS:
         try:
             with warnings.catch_warnings():

@@ -53,7 +53,6 @@ class ComputeScore:
         return sig_poly, bak_poly, ovr_poly
 
     def __call__(self, fpath, sampling_rate, is_personalized_MOS):
-        ic(fpath)
         aud, input_fs = sf.read(fpath)
         fs = sampling_rate
         if input_fs != fs:
@@ -114,7 +113,7 @@ class ComputeScore:
 
 
 def download_onnx_models():
-    cache_dir = get_cache_dir()
+    cache_dir = os.path.join(get_cache_dir(), "DNS5")
     if not os.path.isdir(cache_dir):
         os.makedirs(cache_dir)
     sig_bak_ovr = os.path.join(cache_dir, "bak_ovr.onnx")
@@ -159,10 +158,9 @@ def main(args):
             clip = future_to_url[future]
             try:
                 data = future.result()
-                ic(data)
-                exit()
             except Exception as exc:
                 print("%r generated an exception: %s" % (clip, exc))
+                raise exc
             else:
                 rows.append(data)
 
