@@ -161,6 +161,15 @@ class PytorchDataLoader:
                         _ = self.data_queue.get(timeout=2)
                     except queue.Empty:
                         break
+                if hasattr(self.data_queue, "task_done"):
+                    while True:
+                        # self.data_queue.get() without a subsequent task_done()
+                        # will cause self.data_queue.join() to wait indefinitely.
+                        try:
+                            self.data_queue.task_done()
+                        except ValueError:
+                            break
+
                 self.pin_memory_thread.join()
                 self.data_queue.join()
                 print("Pinmemory cleanup done")
@@ -231,6 +240,8 @@ class PytorchDataLoader:
         if self.log_timings:
             t0 = time.time()
         _, batch = self.data_queue.get()
+        if hasattr(self.data_queue, "task_done"):
+            self.data_queue.task_done()
         if isinstance(batch, ExceptionWrapper):
             batch.reraise()
         if self.log_timings:
