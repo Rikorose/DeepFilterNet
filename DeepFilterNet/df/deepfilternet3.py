@@ -37,6 +37,9 @@ class ModelParams(DfParams):
         self.conv_kernel: List[int] = config(
             "CONV_KERNEL", cast=Csv(int), default=(1, 3), section=self.section  # type: ignore
         )
+        self.convt_kernel: List[int] = config(
+            "CONVT_KERNEL", cast=Csv(int), default=(1, 3), section=self.section  # type: ignore
+        )
         self.conv_kernel_inp: List[int] = config(
             "CONV_KERNEL_INP", cast=Csv(int), default=(3, 3), section=self.section  # type: ignore
         )
@@ -195,11 +198,9 @@ class ErbDecoder(nn.Module):
             linear_groups=p.lin_groups,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
-        t_conv_kernel = list(p.conv_kernel)
-        t_conv_kernel[0] = 1
         tconv_layer = partial(
             ConvTranspose2dNormAct,
-            kernel_size=t_conv_kernel,
+            kernel_size=p.convt_kernel,
             bias=False,
             separable=True,
         )
