@@ -9,7 +9,8 @@ from loguru import logger
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from df import __version__, config
+from df.version import version
+from df.config import config
 from df.checkpoint import load_model as load_model_cp
 from df.io import load_audio, resample, save_audio
 from df.logger import init_logger
@@ -251,7 +252,7 @@ class PrintVersion(argparse.Action):
         )
 
     def __call__(self, *args):
-        print("DeepFilterNet", __version__)
+        print("DeepFilterNet", version)
         exit(0)
 
 
