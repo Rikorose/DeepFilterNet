@@ -223,9 +223,9 @@ class MaskLoss(nn.Module):
         return s
 
     @torch.jit.export
-    def erb_mask_compr(self, clean: Tensor, noisy: Tensor, compressed: bool = True) -> Tensor:
+    def erb_mask_compr(self, target: Tensor, noisy: Tensor, compressed: bool = True) -> Tensor:
         mask_fn = self.mask_fn or iam
-        mask = mask_fn(clean, noisy)
+        mask = mask_fn(target, noisy)
         mask = self.erb(mask)
         if compressed:
             mask = mask.pow(self.gamma)
@@ -243,7 +243,7 @@ class MaskLoss(nn.Module):
         return torch.matmul(x, self.erb_inv_fb)
 
     def forward(
-        self, input: Tensor, clean: Tensor, noisy: Tensor, max_bin: Optional[Tensor] = None
+        self, input: Tensor, target: Tensor, noisy: Tensor, max_bin: Optional[Tensor] = None
     ) -> Tensor:
         # Input mask shape: [B, C, T, F]
         b, _, _, f = input.shape
@@ -251,10 +251,10 @@ class MaskLoss(nn.Module):
             raise ValueError("Input is NaN")
         assert input.min() >= 0
         if self.mask_fn is not None:
-            g_t = self.erb_mask_compr(clean, noisy, compressed=True)
+            g_t = self.erb_mask_compr(target, noisy, compressed=True)
             g_p = input.clamp_min(self.eps).pow(self.gamma_pred)
         else:
-            g_t = self.erb(clean.abs()).pow(self.gamma)  # We use directly the clean spectrum
+            g_t = self.erb(target.abs()).pow(self.gamma)  # We use directly the target spectrum
             g_p = (self.erb(noisy.abs()) * input).pow(self.gamma_pred)
         loss = torch.zeros((), device=input.device)
         tmp = g_t.sub(g_p).pow(2)
@@ -641,6 +641,9 @@ class Loss(nn.Module):
         """
         super().__init__()
         p = ModelParams()
+        # Whether to predict noise or speech
+        self.target = config("target", "clean", str, save=False, section="df").lower()
+
         self.lsnr = LocalSnrTarget(ws=20, target_snr_range=[p.lsnr_min - 5, p.lsnr_max + 5])
         self.istft = istft  # Could also be used for sdr loss
         self.sr = p.sr
@@ -743,29 +746,41 @@ class Loss(nn.Module):
                 .mul(self.fft_size)
                 .div(self.sr, rounding_mode="trunc")
             ).long()
+
+        noise = noisy - clean
+        if self.target == "clean":
+            target = clean
+        elif self.target == "noise":
+            target = noise
+        else:
+            raise ValueError()
         enhanced_td = None
-        clean_td = None
-        lsnr_gt = self.lsnr(clean, noise=noisy - clean)
+        target_td = None
+        lsnr_gt = self.lsnr(clean, noise=noise)
         if self.istft is not None:
             if self.store_losses or self.mrsl is not None or self.sdrl is not None:
                 enhanced_td = self.istft(enhanced)
-                clean_td = self.istft(clean)
+                target_td = self.istft(target)
 
         ml, sl, mrsl, cal, sdrl, asrl, lsnrl = [torch.zeros((), device=clean.device)] * 7
         if self.ml_f != 0 and self.ml is not None:
-            ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
+            ml = self.ml(input=mask, target=target, noisy=noisy, max_bin=max_bin)
         if self.sl_f != 0 and self.sl is not None:
-            sl = self.sl(input=enhanced, target=clean)
+            sl = self.sl(input=enhanced, target=target)
         if self.mrsl_f > 0 and self.mrsl is not None:
-            mrsl = self.mrsl(enhanced_td, clean_td)
+            mrsl = self.mrsl(enhanced_td, target_td)
         if self.asrl_f > 0 or self.asrl_f_lm > 0:
-            asrl = self.asrl(enhanced_td, clean_td)
+            asrl = self.asrl(enhanced_td, target_td)
         if self.lsnr_f != 0:
             lsnrl = self.lsnrl(input=lsnr, target_lsnr=lsnr_gt)
         if self.sdrl_f != 0:
-            sdrl = self.sdrl(enhanced_td, clean_td)
+            sdrl = self.sdrl(enhanced_td, target_td)
         if self.store_losses and enhanced_td is not None:
-            assert clean_td is not None
+            if self.target == "clean":
+                clean_td = target_td
+            else:  # we predicted noise
+                clean_td = self.istft(clean)
+                enhanced_td = self.istft(noisy - enhanced)
             self.store_summaries(
                 enhanced_td,
                 clean_td,
