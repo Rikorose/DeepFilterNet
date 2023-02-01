@@ -149,7 +149,7 @@ model, df_state, _ = init_df()  # Load default model
 enhanced_audio = enhance(model, df_state, noisy_audio)
 ```
 
-See [here](https://github.com/Rikorose/DeepFilterNet/scripts/external_usage.py) for a full example.
+See [here](https://github.com/Rikorose/DeepFilterNet/blob/main/scripts/external_usage.py) for a full example.
 
 ### Training
 
