@@ -112,7 +112,7 @@ def export_impl(
     input_dict = {k: v for (k, v) in zip(input_names, inputs)}
     if check:
         onnx_outputs = onnx_check(path, input_dict, tuple(output_names))
-        for (name, out, onnx_out) in zip(output_names, outputs, onnx_outputs):
+        for name, out, onnx_out in zip(output_names, outputs, onnx_outputs):
             try:
                 np.testing.assert_allclose(
                     out.numpy().squeeze(), onnx_out.squeeze(), rtol=1e-6, atol=1e-5

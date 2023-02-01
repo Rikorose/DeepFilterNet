@@ -242,7 +242,7 @@ class PytorchDataLoader:
     def log_dataloader_msgs(self):
         """Fetches log messages generated in the rust backend and converts to loguru."""
         # message has type (level: str, message: str, module: Optional[str], lineno: Optional[int])
-        for (level, msg, module, lineno) in self.loader.get_log_messages():
+        for level, msg, module, lineno in self.loader.get_log_messages():
             # with logger.contextualize(module: "Dataloader", file=file, lineno=lineno):
             def patch(r):
                 r["file"] = {"file": os.path.basename(module) + ".rs", "path": "pyDF-data/src/"}
