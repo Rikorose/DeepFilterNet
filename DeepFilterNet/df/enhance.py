@@ -9,14 +9,14 @@ from loguru import logger
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from df.version import version
-from df.config import config
 from df.checkpoint import load_model as load_model_cp
+from df.config import config
 from df.io import load_audio, resample, save_audio
 from df.logger import init_logger
 from df.model import ModelParams
 from df.modules import get_device
 from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
+from df.version import version
 from libdf import DF, erb, erb_norm, unit_norm
 
 PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2")
