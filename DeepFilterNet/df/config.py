@@ -121,15 +121,15 @@ class Config:
             if save:
                 self.parser.set(section, option, self.tostr(value, cast))
         elif self.parser.has_option(section, option):
-            value = self.read_from_section(section, option, default, cast=cast, save=save)
+            value = self.parser.get(section, option)
         elif self.parser.has_option(section.lower(), option):
-            value = self.read_from_section(section.lower(), option, default, cast=cast, save=save)
+            value = self.parser.get(section.lower(), option)
         elif self.parser.has_option(self.DEFAULT_SECTION, option):
             logger.warning(
                 f"Couldn't find option {option} in section {section}. "
                 "Falling back to default settings section."
             )
-            value = self.read_from_section(self.DEFAULT_SECTION, option, cast=cast, save=save)
+            value = self.parser.get(self.DEFAULT_SECTION, option)
         elif default is None:
             raise ValueError("Value {} not found.".format(option))
         elif not self.allow_defaults and save:
@@ -158,24 +158,6 @@ class Config:
         if not self.parser.has_option(section, option):
             raise KeyError(option)
         return self.cast(self.parser.get(section, option), cast)
-
-    def read_from_section(
-        self, section: str, option: str, default: Any = None, cast: Type = str, save: bool = True
-    ) -> str:
-        value = self.parser.get(section, option)
-        if not save:
-            # Set to default or remove to not read it at trainig start again
-            if default is None:
-                self.parser.remove_option(section, option)
-            elif not self.allow_defaults:
-                raise ValueError(f"Value '{option}' not found in config (defaults not allowed).")
-            else:
-                self.parser.set(section, option, self.tostr(default, cast))
-        elif section.lower() != section:
-            self.parser.set(section.lower(), option, self.tostr(value, cast))
-            self.parser.remove_option(section, option)
-            self.modified = True
-        return value
 
     def overwrite(self, section: str, option: str, value: Any):
         if not self.parser.has_section(section):
