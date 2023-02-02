@@ -32,15 +32,20 @@ N_FRAMES = 4
 plt.rcParams["figure.figsize"] = [7.00, 7.50]
 plt.rcParams["figure.autolayout"] = True
 
+
 root = tk.Tk()
 root.wm_title("DeepFilterNet Demo")
 
+ttk.Style().configure("TButton", padding=6, relief="flat", background="#ccc")
+ttk.Style().configure("TScale", padding=6, relief="flat", background="#ccc")
+ttk.Style().configure("TOptionMenu", padding=6, relief="flat", background="#ccc")
+
 root.columnconfigure(0, weight=1)
 root.columnconfigure(1, weight=3)
-opt_frame = tk.Frame()
-fig_frame = tk.Frame()
+opt_frame = ttk.Frame()
+fig_frame = ttk.Frame()
 opt_frame.grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
-fig_frame.grid(column=1, row=0, sticky=tk.W, padx=5, pady=5)
+fig_frame.grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
 
 opt_frame.columnconfigure(0, weight=1)
 opt_frame.columnconfigure(1, weight=2)
@@ -120,6 +125,7 @@ def init_non_df_pa_stream(input=None):
         frames_per_buffer=CHUNK,
         stream_callback=callback_non_df,
     )
+    ic()
 
 
 def init_df_pa_stream(input=None):
@@ -139,6 +145,7 @@ def init_df_pa_stream(input=None):
         frames_per_buffer=CHUNK,
         stream_callback=callback_df,
     )
+    ic()
 
 
 # Select Device
@@ -149,10 +156,13 @@ for i in range(0, p.get_device_count()):
     devices[info["index"]] = f"{info['index']}: {info['name']} ({s})"
 
 ### Configuration GUI ###
+button = ttk.Button(master=opt_frame, text="Quit", command=root.quit)
+button.grid(column=1, row=0, sticky=tk.E, padx=5, pady=5)
+
 df_i_label = ttk.Label(opt_frame, text="DeepFilter input:")
 df_o_label = ttk.Label(opt_frame, text="DeepFilter ouptut:")
-df_i_label.grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
-df_o_label.grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+df_i_label.grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+df_o_label.grid(column=0, row=2, sticky=tk.W, padx=5, pady=5)
 choices_non_df = [v for v in devices.values() if "deepfilter" not in v.lower()]
 choices_df = [v for v in devices.values() if "deepfilter" in v.lower()]
 if len(choices_df) == 0:
@@ -162,20 +172,21 @@ tk_non_df_default = [i for (i, v) in enumerate(choices_non_df) if "built-in" in 
 tk_non_df.set(choices_non_df[tk_non_df_default[0] if len(tk_non_df_default) > 0 else 0])
 tk_df = tk.StringVar(opt_frame)
 tk_df.set(choices_df[0])
-drop_non_df = tk.OptionMenu(opt_frame, tk_non_df, *choices_non_df, command=init_non_df_pa_stream)
-drop_non_df.grid(column=1, row=0, sticky=tk.W, padx=5, pady=5)
+drop_non_df = ttk.OptionMenu(opt_frame, tk_non_df, *choices_non_df, command=init_non_df_pa_stream)
+drop_non_df.grid(column=1, row=1, sticky=tk.W, padx=5, pady=5)
 drop_df = tk.OptionMenu(opt_frame, tk_df, *choices_df, command=init_df_pa_stream)
-drop_df.grid(column=1, row=1, sticky=tk.W, padx=5, pady=5)
+drop_df.grid(column=1, row=2, sticky=tk.W, padx=5, pady=5)
 
 df_attenlim_value = tk.DoubleVar()
 df_attenlim_value.set(100)
 df_attenlim_label = ttk.Label(opt_frame, text="DeepFilter attenuation limit:")
-df_attenlim_label.grid(column=0, row=2, sticky=tk.W, padx=5, pady=5)
+df_attenlim_label.grid(column=0, row=3, sticky=tk.W, padx=5, pady=5)
 
 
 def attenlim_callback(input=None):
-    lim = get_attenlim(input).rstrip(" [dB]")
+    lim = get_attenlim(input)
     df_cur_attenlim_label.configure(text=lim)
+    lim = lim.rstrip(" [dB]")
     args = [
         "busctl",
         "--user",
@@ -197,20 +208,21 @@ def get_attenlim(input=None):
     return str(int(float(input or df_attenlim_value.get()))) + " [dB]"
 
 
+ic()
+
+
 df_cur_attenlim_label = ttk.Label(opt_frame, text=get_attenlim())
-df_cur_attenlim_label.grid(column=1, row=2, sticky=tk.E, padx=5, pady=5)
+df_cur_attenlim_label.grid(column=1, row=3, sticky=tk.E, padx=5, pady=5)
 df_attenlim_slider = ttk.Scale(
     opt_frame,
     from_=0,
     to=100,
+    length=200,
     orient="horizontal",
     variable=df_attenlim_value,
     command=attenlim_callback,
 )
-df_attenlim_slider.grid(column=1, row=2, sticky=tk.W, padx=5, pady=5)
-
-button = tk.Button(master=opt_frame, text="Quit", command=root.quit)
-button.grid(column=0, row=3, sticky=tk.SW, padx=5, pady=5)
+df_attenlim_slider.grid(column=1, row=3, sticky=tk.W, padx=5, pady=5)
 
 ### Animation GUI ###
 fig, (ax_non_df, ax_df) = plt.subplots(2)
@@ -225,20 +237,22 @@ im_non_df = ax_non_df.pcolormesh(
 im_df = ax_df.pcolormesh(
     t, f, spec_df, rasterized=True, shading="auto", cmap="inferno", vmin=-100, vmax=0
 )
+ax_non_df.set_title("Input")
+ax_df.set_title("DeepFilterNet Output")
 ax_non_df.set_ylim(0, MAX_FREQ)
 ax_df.set_ylim(0, MAX_FREQ)
 ax_non_df.set_xlim = (0, N_SECS)
 ax_df.set_xlim = (0, N_SECS)
+ax_non_df.set_ylabel("Frequency [Hz]")
+ax_df.set_ylabel("Frequency [Hz]")
+ax_df.set_xlabel("Time [s]")
 device_id_non_df = None
 device_id_df = None
-
-# TODO
-# ax_non_df.set_title(devices[device_id])
 
 canvas = FigureCanvasTkAgg(fig, master=fig_frame)
 canvas.draw()
 
-canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
 
 def init():
