@@ -12,6 +12,7 @@ use ndarray::{prelude::*, Axis};
 use tar::Archive;
 use tract_core::internal::tract_itertools::izip;
 use tract_core::internal::tract_smallvec::alloc::collections::VecDeque;
+use tract_core::ops;
 use tract_core::prelude::*;
 use tract_onnx::{prelude::*, tract_hir::shapefactoid};
 use tract_pulse::{internal::ToDim, model::*};
@@ -157,10 +158,10 @@ pub struct DfTract {
     pub reduce_mask: ReduceMask,
     pub atten_lim: Option<f32>,
     df_states: Vec<DFState>,
-    spec_buf: Tensor,
-    erb_buf: TValue,
-    cplx_buf: TValue,
-    m_zeros: Vec<f32>,
+    spec_buf: Tensor, // Real-valued spectrogram buffer of shape [n_ch, 1, 1, n_freqs, 2]
+    erb_buf: TValue,  // Real-valued ERB feature buffer of shape [n_ch, 1, 1, n_erb]
+    cplx_buf: TValue, // Real-valued complex epectrum shape for DF of shape [n_ch, 1, nb_df, 2]
+    m_zeros: Vec<f32>, // Preallocated buffer for applying a zero mask
     rolling_spec_buf_y: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
 }
@@ -184,8 +185,13 @@ impl DfTract {
         let ch = rp.n_ch;
 
         let enc = init_encoder_from_read(&mut Cursor::new(dfp.enc), df_cfg, ch)?;
-        let erb_dec =
-            init_erb_decoder_from_read(&mut Cursor::new(dfp.erb_dec), model_cfg, df_cfg, ch)?;
+        let erb_dec = init_erb_decoder_from_read(
+            &mut Cursor::new(dfp.erb_dec),
+            model_cfg,
+            df_cfg,
+            ch,
+            Some(rp.reduce_mask.clone()),
+        )?;
         let df_dec =
             init_df_decoder_from_read(&mut Cursor::new(dfp.df_dec), model_cfg, df_cfg, ch)?;
         let enc = SimpleState::new(enc.into_runnable()?)?;
@@ -345,10 +351,86 @@ impl DfTract {
         Ok(())
     }
 
-    pub fn process(&mut self, noisy: ArrayView2<f32>, mut enh: ArrayViewMut2<f32>) -> Result<f32> {
+    /// Process a FD sample and return the raw gains and DF coefs.
+    ///
+    /// Warning:
+    ///     `self.spec_buf` needs to be initialized correctly before calling this method!
+    ///
+    /// Returns:
+    ///     - lsnr: Local SNR estiamte.
+    ///     - gains: Gain estimates of shape `[n_ch, 1, 1, n_erb]`.
+    ///     - coefs: Real-valued DF coefficients estimates of shape `[n_ch, 1, 1, n_erb, 2]`.
+    fn process_raw(&mut self) -> Result<(f32, Option<Tensor>, Option<Tensor>)> {
         #[cfg(feature = "timings")]
         let t0 = Instant::now();
-        let ch = noisy.len_of(Axis(0));
+        let spec = self.spec_buf.to_array_view()?;
+        let ch = spec.len_of(Axis(0));
+
+        for (nsy_ch, mut erb_ch, mut cplx_ch, state) in izip!(
+            spec.axis_iter(Axis(0)),
+            tvalue_as_mut(&mut self.erb_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
+            tvalue_as_mut(&mut self.cplx_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
+            self.df_states.iter_mut()
+        ) {
+            let nsy_ch = as_slice_complex(nsy_ch.as_slice().unwrap());
+            state.feat_erb(nsy_ch, self.alpha, erb_ch.as_slice_mut().unwrap());
+            state.feat_cplx(
+                &nsy_ch[..self.nb_df],
+                self.alpha,
+                as_slice_mut_complex(cplx_ch.as_slice_mut().unwrap()),
+            );
+        }
+        #[cfg(feature = "timings")]
+        let t1 = Instant::now();
+        // Run encoder
+        let mut enc_emb = self.enc.run(tvec!(
+            self.erb_buf.clone(),
+            TValue::from(self.cplx_buf.clone().into_tensor().permute_axes(&[0, 3, 1, 2])?)
+        ))?;
+
+        #[cfg(feature = "timings")]
+        let t2 = Instant::now();
+        let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
+        let c0 = enc_emb.pop().unwrap();
+        let emb = enc_emb.pop().unwrap();
+
+        let (apply_gains, _, apply_df) = self.apply_stages(lsnr);
+
+        log::trace!(
+            "Enhancing frame with lsnr {:.1}. Applying stage 1: {} and stage 2: {}.",
+            lsnr,
+            apply_gains,
+            apply_df
+        );
+
+        let m = if apply_gains {
+            let dec_input = tvec!(
+                emb.clone(),
+                enc_emb.pop().unwrap(), // e3
+                enc_emb.pop().unwrap(), // e2
+                enc_emb.pop().unwrap(), // e1
+                enc_emb.pop().unwrap(), // e0
+            );
+            let mut m = self.erb_dec.run(dec_input)?;
+            let m = m.pop().unwrap().into_tensor().into_shape(&[self.ch, self.nb_erb])?;
+            Some(m)
+        } else {
+            None
+        };
+
+        let coefs = if apply_df {
+            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
+            coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
+            Some(coefs)
+        } else {
+            None
+        };
+
+        Ok((lsnr, m, coefs))
+    }
+
+    /// Process a noisy time domain sample and return the enhanced sample via mutable argument.
+    pub fn process(&mut self, noisy: ArrayView2<f32>, mut enh: ArrayViewMut2<f32>) -> Result<f32> {
         debug_assert_eq!(noisy.len_of(Axis(0)), enh.len_of(Axis(0)));
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
         debug_assert_eq!(noisy.len_of(Axis(1)), self.hop_size);
@@ -371,97 +453,38 @@ impl DfTract {
         // Signal model: y = f(s + n) = f(x)
         self.rolling_spec_buf_y.pop_front();
         self.rolling_spec_buf_x.pop_front();
-        for (ns_ch, mut rbuf, mut erb_ch, mut cplx_ch, state) in izip!(
+        for (ns_ch, mut rbuf, state) in izip!(
             noisy.axis_iter(Axis(0)),
             self.spec_buf.to_array_view_mut()?.axis_iter_mut(Axis(0)),
-            tvalue_as_mut(&mut self.erb_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
-            tvalue_as_mut(&mut self.cplx_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
             self.df_states.iter_mut(),
         ) {
             let spec = as_slice_mut_complex(rbuf.as_slice_mut().unwrap());
             state.analysis(ns_ch.as_slice().unwrap(), spec);
-            state.feat_erb(spec, self.alpha, erb_ch.as_slice_mut().unwrap());
-            // TODO: Workaround transpose by directly computing transposed complex features:
-            // state.feat_cplx_t(&spec[..nb_df], alpha, cplx_buf_t.as_slice_mut()?);
-            state.feat_cplx(
-                &spec[..self.nb_df],
-                self.alpha,
-                as_slice_mut_complex(cplx_ch.as_slice_mut().unwrap()),
-            );
         }
         self.rolling_spec_buf_y.push_back(self.spec_buf.clone());
         self.rolling_spec_buf_x.push_back(self.spec_buf.clone());
 
-        #[cfg(feature = "timings")]
-        let t1 = Instant::now();
-        // Run encoder
-        let mut enc_emb = self.enc.run(tvec!(
-            self.erb_buf.clone(),
-            TValue::from(self.cplx_buf.clone().into_tensor().permute_axes(&[0, 3, 1, 2])?)
-        ))?;
-        #[cfg(feature = "timings")]
-        let t2 = Instant::now();
-        let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
-        let c0 = enc_emb.pop().unwrap();
-        let emb = enc_emb.pop().unwrap();
-        let (apply_erb, apply_erb_zeros, apply_df) = if lsnr < self.min_db_thresh {
-            // Only noise detected, just apply a zero mask
-            (false, true, false)
-        } else if lsnr > self.max_db_erb_thresh {
-            // Clean speech signal detected, don't apply any processing
-            (false, false, false)
-        } else if lsnr > self.max_db_df_thresh {
-            // Only little noisy signal detected, just apply 1st stage, skip DF stage
-            (true, false, false)
-        } else {
-            // Regular noisy signal detected, apply 1st and 2nd stage
-            (true, false, true)
-        };
-        log::trace!(
-            "Enhancing frame with lsnr {:.1}. Applying stage 1: {} and stage 2: {}.",
-            lsnr,
-            apply_erb,
-            apply_df
-        );
+        let (lsnr, gains, coefs) = self.process_raw()?;
 
+        let (apply_erb, apply_erb_zeros, _) = self.apply_stages(lsnr);
         let mut spec = self
             .rolling_spec_buf_y
             .get_mut(self.df_order - 1)
             .unwrap()
             .to_array_view_mut()?;
-        let mut m = if apply_erb {
-            let dec_input = tvec!(
-                emb.clone(),
-                enc_emb.pop().unwrap(), // e3
-                enc_emb.pop().unwrap(), // e2
-                enc_emb.pop().unwrap(), // e1
-                enc_emb.pop().unwrap(), // e0
-            );
-            let mut m = self.erb_dec.run(dec_input)?;
-            let mut m = m
-                .pop()
-                .unwrap()
-                .into_tensor()
-                .into_shape(&[self.ch, self.nb_erb])?
-                .into_array()?;
-            if self.ch > 1 {
-                m = match self.reduce_mask {
-                    ReduceMask::MAX => m.fold_axis(Axis(0), 0., |&acc, &x| f32::max(x, acc)),
-                    ReduceMask::MEAN => m.mean_axis(Axis(0)).unwrap(),
-                };
-            }
-            Some(m)
-        } else {
-            None
-        };
         if apply_erb || apply_erb_zeros {
             let pf = apply_erb && self.post_filter;
-            let m = m
+            let mut gains = gains.map(|x| x.into_array().unwrap());
+            let gains = gains
                 .as_mut()
                 .map(|x| x.as_slice_mut().unwrap())
                 .unwrap_or(self.m_zeros.as_mut_slice());
             for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
-                state.apply_mask(as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()), m, pf);
+                state.apply_mask(
+                    as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
+                    gains,
+                    pf,
+                );
             }
         }
         #[cfg(feature = "timings")]
@@ -470,9 +493,7 @@ impl DfTract {
         // This spectrum will only be used for the upper frequecies
         let spec = self.rolling_spec_buf_y.get_mut(self.df_order - 1).unwrap();
         self.spec_buf.clone_from(spec);
-        if apply_df {
-            let mut coefs = self.df_dec.run(tvec!(emb, c0))?.pop().unwrap().into_tensor();
-            coefs.set_shape(&[ch, self.nb_df, self.df_order, 2])?;
+        if let Some(coefs) = coefs {
             df(
                 &self.rolling_spec_buf_x,
                 coefs,
@@ -515,6 +536,36 @@ impl DfTract {
             t4.elapsed().as_secs_f32() * 1000.,
         );
         Ok(lsnr)
+    }
+
+    /// For some frames, processing may be skipped based on the current local snr and the defined
+    /// thresholds. This methods indiciated whether stage 1 (gains) and stage 2 (DF) can be
+    /// skipped.
+    ///
+    /// Args:
+    ///     - lsnr: Current local SNR estimate
+    ///
+    /// Returns:
+    ///     - apply_gains: Local SNR is above `min_dfb_erb_thresh`, gains are estimated and should be
+    ///         applied
+    ///     - apply_gain_zeros: Local SNR is less than `min_db_thresh`, no speech is detected.
+    ///         Zeros should be applied instead of the gain estimates.
+    ///     - apply_df: Local SNR is greater than `max_db_df_thresh` and the estimated DF coefs
+    ///         should be applied
+    pub fn apply_stages(&self, lsnr: f32) -> (bool, bool, bool) {
+        if lsnr < self.min_db_thresh {
+            // Only noise detected, just apply a zero mask
+            (false, true, false)
+        } else if lsnr > self.max_db_erb_thresh {
+            // Clean speech signal detected, don't apply any processing
+            (false, false, false)
+        } else if lsnr > self.max_db_df_thresh {
+            // Only little noisy signal detected, just apply 1st stage, skip DF stage
+            (true, false, false)
+        } else {
+            // Regular noisy signal detected, apply 1st and 2nd stage
+            (true, false, true)
+        }
     }
 }
 
@@ -624,6 +675,7 @@ fn init_erb_decoder_impl(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
+    mask_reduction: Option<ReduceMask>,
 ) -> Result<TypedModel> {
     log::debug!("Start init ERB decoder.");
     let s = m.symbol_table.sym("S");
@@ -650,6 +702,7 @@ fn init_erb_decoder_impl(
         e1.shape,
         e0.shape
     );
+    let mut output_name = "m".to_string();
 
     m = m
         .with_input_fact(0, emb)?
@@ -658,15 +711,52 @@ fn init_erb_decoder_impl(
         .with_input_fact(3, e1)?
         .with_input_fact(4, e0)?
         .with_input_names(["emb", "e3", "e2", "e1", "e0"])?
-        .with_output_names(["m"])?;
+        .with_output_names([output_name])?;
 
     m.analyse(true)?;
+
     let mut m = m.into_typed()?;
 
     m.declutter()?;
     let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
+    let mut m = pulsed.into_typed()?;
     log::info!("Init ERB decoder");
-    let m = pulsed.into_typed()?.into_optimized()?;
+
+    if let Some(r) = mask_reduction {
+        let outlets = m.output_outlets()?;
+        dbg!(outlets);
+        let mask_outlet = outlets[0];
+        dbg!(m.outlet_label(mask_outlet));
+        let f = m.outlet_fact(mask_outlet)?;
+        dbg!(f);
+        let ch_axis = 0;
+        match r {
+            ReduceMask::MAX => {
+                output_name = "reduce_mask_max".to_string();
+                m.wire_node(
+                    output_name,
+                    ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Max),
+                    &[mask_outlet],
+                )?;
+            }
+            ReduceMask::MEAN => {
+                let sum = m.wire_node(
+                    "reduce_mask_sum".to_string(),
+                    ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Sum),
+                    &[mask_outlet],
+                )?[0];
+                let ch_i = m.add_const("ch".to_string(), tensor1(&[1. / n_ch as f32])).unwrap();
+                m.wire_node(
+                    "reduce_mask_div_ch",
+                    tract_core::ops::math::mul(),
+                    &[sum, ch_i],
+                )?;
+            }
+        }
+    }
+
+    let m = m.into_optimized()?;
+
     Ok(m)
 }
 fn init_erb_decoder(
@@ -674,18 +764,20 @@ fn init_erb_decoder(
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
+    mask_reduction: Option<ReduceMask>,
 ) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
-    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
+    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch, mask_reduction)
 }
 fn init_erb_decoder_from_read(
     m: &mut dyn Read,
     net_cfg: &ini::Properties,
     df_cfg: &ini::Properties,
     n_ch: usize,
+    mask_reduction: Option<ReduceMask>,
 ) -> Result<TypedModel> {
     let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_read(m)?;
-    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch)
+    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch, mask_reduction)
 }
 
 fn init_df_decoder_impl(
@@ -757,6 +849,14 @@ fn calc_norm_alpha(sr: usize, hop_size: usize, tau: f32) -> f32 {
         precision += 1;
     }
     a
+}
+
+pub fn as_slice_complex(buffer: &[f32]) -> &[Complex32] {
+    unsafe {
+        let ptr = buffer.as_ptr() as *const Complex32;
+        let len = buffer.len();
+        std::slice::from_raw_parts(ptr, len / 2)
+    }
 }
 
 pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {

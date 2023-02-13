@@ -83,6 +83,29 @@ pub unsafe extern "C" fn df_process_frame(
     state.0.process(input, output).expect("Failed to process DF frame")
 }
 
+/// Processes a filter bank sample and return raw gains and DF coefs.
+///
+/// Args:
+///     - df_state: Created via df_create()
+///     - input: Input buffer of complex filter bank representation.
+///     - out_gains: Output buffer of real-valued bark gains.
+///     - out_coefs: Output buffer of complex-valued DF coefs.
+///
+/// Returns:
+///     - Local SNR of the current frame.
+#[no_mangle]
+pub unsafe extern "C" fn df_process_frame_raw(
+    st: *mut DFState,
+    input: *mut c_float,
+    out_gains: *mut c_float,
+    out_coefs: *mut c_float,
+) -> c_float {
+    let state = st.as_mut().expect("Invalid pointer");
+    let input = ArrayView2::from_shape_ptr((1, state.0.hop_size), input);
+    let output = ArrayViewMut2::from_shape_ptr((1, state.0.hop_size), output);
+    state.0.process(input, output).expect("Failed to process DF frame")
+}
+
 /// Free a DeepFilterNet Model
 #[no_mangle]
 pub unsafe extern "C" fn df_free(model: *mut DFState) {
