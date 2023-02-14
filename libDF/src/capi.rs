@@ -1,6 +1,5 @@
 use std::boxed::Box;
-use std::ffi::CStr;
-use std::os::raw::{c_char, c_float};
+use std::ffi::{c_char, c_float, c_uint, CStr};
 use std::path::PathBuf;
 
 use ndarray::prelude::*;
@@ -87,9 +86,9 @@ pub unsafe extern "C" fn df_process_frame(
 ///
 /// Args:
 ///     - df_state: Created via df_create()
-///     - input: Input buffer of complex filter bank representation.
-///     - out_gains: Output buffer of real-valued bark gains.
-///     - out_coefs: Output buffer of complex-valued DF coefs.
+///     - input: Spectrum of shape `[n_freqs, 2]`.
+///     - out_gains: Output buffer of real-valued ERB gains of shape `[nb_erb]`.
+///     - out_coefs: Output buffer of complex-valued DF coefs of shape `[df_order, nb_df_freqs, 2]`.
 ///
 /// Returns:
 ///     - Local SNR of the current frame.
@@ -101,9 +100,52 @@ pub unsafe extern "C" fn df_process_frame_raw(
     out_coefs: *mut c_float,
 ) -> c_float {
     let state = st.as_mut().expect("Invalid pointer");
-    let input = ArrayView2::from_shape_ptr((1, state.0.hop_size), input);
-    let output = ArrayViewMut2::from_shape_ptr((1, state.0.hop_size), output);
-    state.0.process(input, output).expect("Failed to process DF frame")
+    let input = ArrayView2::from_shape_ptr((1, state.0.n_freqs), input);
+    state.0.set_spec_buffer(input).expect("Failed to set input spectrum");
+    let (lsnr, gains, coefs) = state.0.process_raw().expect("Failed to process DF spectral frame");
+    let mut out_gains = ArrayViewMut2::from_shape_ptr((1, state.0.nb_erb), out_gains);
+    let mut out_coefs =
+        ArrayViewMut4::from_shape_ptr((1, state.0.df_order, state.0.nb_df, 2), out_coefs);
+    if let Some(gains) = gains {
+        out_gains.assign(&gains.to_array_view().unwrap());
+    }
+    if let Some(coefs) = coefs {
+        out_coefs.assign(&coefs.to_array_view().unwrap());
+    }
+    lsnr
+}
+
+// file.rs
+#[repr(C)]
+pub struct DynArray {
+    array: *mut c_uint,
+    length: c_uint,
+}
+
+pub unsafe extern "C" fn df_coef_size(st: *const DFState) -> DynArray {
+    let state = st.as_ref().expect("Invalid pointer");
+    let mut shape = vec![
+        state.0.ch as u32,
+        state.0.df_order as u32,
+        state.0.n_freqs as u32,
+        2,
+    ];
+    let ret = DynArray {
+        array: shape.as_mut_ptr(),
+        length: shape.len() as u32,
+    };
+    std::mem::forget(shape);
+    ret
+}
+pub unsafe extern "C" fn df_gain_size(st: *const DFState) -> DynArray {
+    let state = st.as_ref().expect("Invalid pointer");
+    let mut shape = vec![state.0.ch as u32, state.0.nb_erb as u32];
+    let ret = DynArray {
+        array: shape.as_mut_ptr(),
+        length: shape.len() as u32,
+    };
+    std::mem::forget(shape);
+    ret
 }
 
 /// Free a DeepFilterNet Model
