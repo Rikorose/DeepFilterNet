@@ -125,6 +125,7 @@ fn main() -> Result<()> {
         if sr != sample_sr {
             noisy = resample(noisy.view(), sample_sr, sr, None).expect("Error during resample()");
         }
+        let noisy = noisy.as_standard_layout();
         let mut enh: Array2<f32> = ArrayD::default(noisy.shape()).into_dimensionality()?;
         let t0 = Instant::now();
         for (ns_f, enh_f) in noisy
