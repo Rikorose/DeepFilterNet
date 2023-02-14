@@ -360,9 +360,7 @@ impl DfTract {
     ///     - lsnr: Local SNR estiamte.
     ///     - gains: Gain estimates of shape `[n_ch, 1, 1, n_erb]`.
     ///     - coefs: Real-valued DF coefficients estimates of shape `[n_ch, 1, 1, n_erb, 2]`.
-    fn process_raw(&mut self) -> Result<(f32, Option<Tensor>, Option<Tensor>)> {
-        #[cfg(feature = "timings")]
-        let t0 = Instant::now();
+    pub fn process_raw(&mut self) -> Result<(f32, Option<Tensor>, Option<Tensor>)> {
         let spec = self.spec_buf.to_array_view()?;
         let ch = spec.len_of(Axis(0));
 
@@ -380,16 +378,12 @@ impl DfTract {
                 as_slice_mut_complex(cplx_ch.as_slice_mut().unwrap()),
             );
         }
-        #[cfg(feature = "timings")]
-        let t1 = Instant::now();
         // Run encoder
         let mut enc_emb = self.enc.run(tvec!(
             self.erb_buf.clone(),
             TValue::from(self.cplx_buf.clone().into_tensor().permute_axes(&[0, 3, 1, 2])?)
         ))?;
 
-        #[cfg(feature = "timings")]
-        let t2 = Instant::now();
         let &lsnr = enc_emb.pop().unwrap().to_scalar::<f32>()?;
         let c0 = enc_emb.pop().unwrap();
         let emb = enc_emb.pop().unwrap();
@@ -487,8 +481,6 @@ impl DfTract {
                 );
             }
         }
-        #[cfg(feature = "timings")]
-        let t3 = Instant::now();
 
         // This spectrum will only be used for the upper frequecies
         let spec = self.rolling_spec_buf_y.get_mut(self.df_order - 1).unwrap();
@@ -513,8 +505,6 @@ impl DfTract {
             spec_enh.scaled_add(lim, &spec_noisy);
         }
 
-        #[cfg(feature = "timings")]
-        let t4 = Instant::now();
         for (state, spec_ch, mut enh_out_ch) in izip!(
             self.df_states.iter_mut(),
             spec_enh.axis_iter(Axis(0)),
@@ -525,16 +515,6 @@ impl DfTract {
                 enh_out_ch.as_slice_mut().unwrap(),
             );
         }
-        #[cfg(feature = "timings")]
-        log::info!(
-            "Processed frame in {:.2}ms (analysis: {:.2}ms, encoder: {:.2}ms, erb_decoder: {:.2}ms, df_decoder: {:.2}ms, synthesis: {:.2}ms)",
-            t0.elapsed().as_secs_f32() * 1000.,
-            (t1 - t0).as_secs_f32() * 1000.,
-            (t2 - t1).as_secs_f32() * 1000.,
-            (t3 - t2).as_secs_f32() * 1000.,
-            (t4 - t3).as_secs_f32() * 1000.,
-            t4.elapsed().as_secs_f32() * 1000.,
-        );
         Ok(lsnr)
     }
 
@@ -566,6 +546,17 @@ impl DfTract {
             // Regular noisy signal detected, apply 1st and 2nd stage
             (true, false, true)
         }
+    }
+
+    pub fn set_spec_buffer(&mut self, spec: ArrayView2<f32>) -> Result<()> {
+        debug_assert_eq!(self.spec_buf.shape(), spec.shape());
+        let mut buf = self.spec_buf.to_array_view_mut()?.into_shape([self.ch, self.n_freqs])?;
+        for (i_ch, mut b_ch) in spec.outer_iter().zip(buf.outer_iter_mut()) {
+            for (&i, b) in i_ch.iter().zip(b_ch.iter_mut()) {
+                *b = i
+            }
+        }
+        Ok(())
     }
 }
 
