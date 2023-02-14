@@ -78,14 +78,21 @@ impl Default for DfParams {
 
 #[derive(Clone)]
 pub enum ReduceMask {
+    NONE = 0,
     MAX = 1,
     MEAN = 2,
+}
+impl Default for ReduceMask {
+    fn default() -> Self {
+        ReduceMask::NONE
+    }
 }
 impl TryFrom<i32> for ReduceMask {
     type Error = ();
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         match v {
+            x if x == ReduceMask::NONE as i32 => Ok(ReduceMask::NONE),
             x if x == ReduceMask::MAX as i32 => Ok(ReduceMask::MAX),
             x if x == ReduceMask::MEAN as i32 => Ok(ReduceMask::MEAN),
             _ => Err(()),
@@ -406,7 +413,9 @@ impl DfTract {
                 enc_emb.pop().unwrap(), // e0
             );
             let mut m = self.erb_dec.run(dec_input)?;
-            let m = m.pop().unwrap().into_tensor().into_shape(&[self.ch, self.nb_erb])?;
+            let mut m = m.pop().unwrap().into_tensor();
+            m.remove_axis(1)?;
+            m.remove_axis(1)?;
             Some(m)
         } else if apply_gain_zeros {
             Some(Tensor::zero::<f32>(&[self.ch, self.nb_erb])?)
@@ -469,15 +478,31 @@ impl DfTract {
             .unwrap()
             .to_array_view_mut()?;
         if let Some(gains) = gains {
+            dbg!(noisy.shape(), gains.shape());
             let pf = apply_erb && self.post_filter;
             let mut gains = gains.into_array()?;
-            let gains = gains.as_slice_mut().unwrap();
-            for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
-                state.apply_mask(
-                    as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
-                    gains,
-                    pf,
-                );
+            if gains.shape()[0] < noisy.shape()[0] {
+                // Mask was reduced to single channel
+                let gain_slc = gains.as_slice_mut().unwrap();
+                for mut spec_ch in spec.axis_iter_mut(Axis(0)) {
+                    self.df_states[0].apply_mask(
+                        as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
+                        gain_slc,
+                        pf,
+                    );
+                }
+            } else {
+                // Multi channel gains
+                for (mut gains_ch, mut spec_ch) in
+                    gains.axis_iter_mut(Axis(0)).zip(spec.axis_iter_mut(Axis(0)))
+                {
+                    let gain_slc = gains_ch.as_slice_mut().unwrap();
+                    self.df_states[0].apply_mask(
+                        as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
+                        gain_slc,
+                        pf,
+                    );
+                }
             }
         }
 
@@ -700,8 +725,8 @@ fn init_erb_decoder_impl(
         .with_input_fact(2, e2)?
         .with_input_fact(3, e1)?
         .with_input_fact(4, e0)?
-        .with_input_names(["emb", "e3", "e2", "e1", "e0"])?
-        .with_output_names([output_name])?;
+        .with_input_names(["emb", "e3", "e2", "e1", "e0"])?;
+    // .with_output_names([output_name])?;
 
     m.analyse(true)?;
 
@@ -715,13 +740,12 @@ fn init_erb_decoder_impl(
     if let Some(r) = mask_reduction {
         let outlets = m.output_outlets()?;
         let mask_outlet = outlets[0];
-        let f = m.outlet_fact(mask_outlet)?;
         let ch_axis = 0;
         match r {
             ReduceMask::MAX => {
                 output_name = "reduce_mask_max".to_string();
                 m.wire_node(
-                    output_name,
+                    "reduce_mask_max",
                     ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Max),
                     &[mask_outlet],
                 )?;
@@ -738,14 +762,17 @@ fn init_erb_decoder_impl(
                         Tensor::from_shape(&[1, 1, 1, 1], &[1. / n_ch as f32])?,
                     )
                     .unwrap();
+                output_name = "reduce_mask_div_ch".to_string();
                 m.wire_node(
                     "reduce_mask_div_ch",
                     tract_core::ops::math::mul(),
                     &[sum, ch_i],
                 )?;
             }
+            _ => (),
         }
     }
+    m = m.with_output_names(&[output_name])?;
 
     let m = m.into_optimized()?;
 

@@ -11,7 +11,7 @@ pub struct DFState(crate::tract::DfTract);
 impl DFState {
     fn new(model_path: &str, channels: usize, atten_lim: f32) -> Self {
         let r_params =
-            RuntimeParams::new(channels, false, atten_lim, -10., 30., 20., ReduceMask::MEAN);
+            RuntimeParams::new(channels, false, atten_lim, -10., 30., 20., ReduceMask::NONE);
         let df_params =
             DfParams::new(PathBuf::from(model_path)).expect("Could not load model from path");
         let m =
