@@ -87,8 +87,12 @@ pub unsafe extern "C" fn df_process_frame(
 /// Args:
 ///     - df_state: Created via df_create()
 ///     - input: Spectrum of shape `[n_freqs, 2]`.
-///     - out_gains: Output buffer of real-valued ERB gains of shape `[nb_erb]`.
-///     - out_coefs: Output buffer of complex-valued DF coefs of shape `[df_order, nb_df_freqs, 2]`.
+///     - out_gains_p: Output buffer of real-valued ERB gains of shape `[nb_erb]`. This function
+///         may set this pointer to NULL if the local SNR is greater 30 dB. No gains need to be
+///         applied then.
+///     - out_coefs_p: Output buffer of complex-valued DF coefs of shape `[df_order, nb_df_freqs, 2]`.
+///         This function may set this pointer to NULL if the local SNR is greater 20 dB. No DF
+///         coefficients need to be applied.
 ///
 /// Returns:
 ///     - Local SNR of the current frame.
@@ -96,25 +100,25 @@ pub unsafe extern "C" fn df_process_frame(
 pub unsafe extern "C" fn df_process_frame_raw(
     st: *mut DFState,
     input: *mut c_float,
-    out_gains_p: *mut c_float,
-    out_coefs_p: *mut c_float,
+    out_gains_p: *mut *mut c_float,
+    out_coefs_p: *mut *mut c_float,
 ) -> c_float {
     let state = st.as_mut().expect("Invalid pointer");
     let input = ArrayView2::from_shape_ptr((1, state.0.n_freqs), input);
     state.0.set_spec_buffer(input).expect("Failed to set input spectrum");
     let (lsnr, gains, coefs) = state.0.process_raw().expect("Failed to process DF spectral frame");
-    let mut out_gains = ArrayViewMut2::from_shape_ptr((1, state.0.nb_erb), out_gains_p);
+    let mut out_gains = ArrayViewMut2::from_shape_ptr((1, state.0.nb_erb), *out_gains_p);
     let mut out_coefs =
-        ArrayViewMut4::from_shape_ptr((1, state.0.df_order, state.0.nb_df, 2), out_coefs_p);
+        ArrayViewMut4::from_shape_ptr((1, state.0.df_order, state.0.nb_df, 2), *out_coefs_p);
     if let Some(gains) = gains {
         out_gains.assign(&gains.to_array_view().unwrap());
     } else {
-        *out_gains_p = *std::ptr::null_mut();
+        *out_gains_p = std::ptr::null_mut();
     }
     if let Some(coefs) = coefs {
         out_coefs.assign(&coefs.to_array_view().unwrap());
     } else {
-        *out_coefs_p = *std::ptr::null_mut();
+        *out_coefs_p = std::ptr::null_mut();
     }
     lsnr
 }
