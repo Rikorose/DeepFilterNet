@@ -714,11 +714,8 @@ fn init_erb_decoder_impl(
 
     if let Some(r) = mask_reduction {
         let outlets = m.output_outlets()?;
-        dbg!(outlets);
         let mask_outlet = outlets[0];
-        dbg!(m.outlet_label(mask_outlet));
         let f = m.outlet_fact(mask_outlet)?;
-        dbg!(f);
         let ch_axis = 0;
         match r {
             ReduceMask::MAX => {
@@ -735,7 +732,12 @@ fn init_erb_decoder_impl(
                     ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Sum),
                     &[mask_outlet],
                 )?[0];
-                let ch_i = m.add_const("ch".to_string(), tensor1(&[1. / n_ch as f32])).unwrap();
+                let ch_i = m
+                    .add_const(
+                        "ch".to_string(),
+                        Tensor::from_shape(&[1, 1, 1, 1], &[1. / n_ch as f32])?,
+                    )
+                    .unwrap();
                 m.wire_node(
                     "reduce_mask_div_ch",
                     tract_core::ops::math::mul(),
