@@ -478,7 +478,6 @@ impl DfTract {
             .unwrap()
             .to_array_view_mut()?;
         if let Some(gains) = gains {
-            dbg!(noisy.shape(), gains.shape());
             let pf = apply_erb && self.post_filter;
             let mut gains = gains.into_array()?;
             if gains.shape()[0] < noisy.shape()[0] {
