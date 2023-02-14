@@ -388,7 +388,7 @@ impl DfTract {
         let c0 = enc_emb.pop().unwrap();
         let emb = enc_emb.pop().unwrap();
 
-        let (apply_gains, _, apply_df) = self.apply_stages(lsnr);
+        let (apply_gains, apply_gain_zeros, apply_df) = self.apply_stages(lsnr);
 
         log::trace!(
             "Enhancing frame with lsnr {:.1}. Applying stage 1: {} and stage 2: {}.",
@@ -408,6 +408,8 @@ impl DfTract {
             let mut m = self.erb_dec.run(dec_input)?;
             let m = m.pop().unwrap().into_tensor().into_shape(&[self.ch, self.nb_erb])?;
             Some(m)
+        } else if apply_gain_zeros {
+            Some(Tensor::zero::<f32>(&[self.ch, self.nb_erb])?)
         } else {
             None
         };
@@ -460,19 +462,16 @@ impl DfTract {
 
         let (lsnr, gains, coefs) = self.process_raw()?;
 
-        let (apply_erb, apply_erb_zeros, _) = self.apply_stages(lsnr);
+        let (apply_erb, _, _) = self.apply_stages(lsnr);
         let mut spec = self
             .rolling_spec_buf_y
             .get_mut(self.df_order - 1)
             .unwrap()
             .to_array_view_mut()?;
-        if apply_erb || apply_erb_zeros {
+        if let Some(gains) = gains {
             let pf = apply_erb && self.post_filter;
-            let mut gains = gains.map(|x| x.into_array().unwrap());
-            let gains = gains
-                .as_mut()
-                .map(|x| x.as_slice_mut().unwrap())
-                .unwrap_or(self.m_zeros.as_mut_slice());
+            let mut gains = gains.into_array()?;
+            let gains = gains.as_slice_mut().unwrap();
             for (state, mut spec_ch) in self.df_states.iter().zip(spec.axis_iter_mut(Axis(0))) {
                 state.apply_mask(
                     as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
