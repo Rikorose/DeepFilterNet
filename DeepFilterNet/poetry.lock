@@ -418,13 +418,13 @@ files = [
 
 [[package]]
 name = "pesq"
-version = "0.0.3"
+version = "0.0.4"
 description = "Python Wrapper for PESQ Score (narrow band and wide band)"
 category = "main"
 optional = true
 python-versions = "*"
 files = [
-    {file = "pesq-0.0.3.tar.gz", hash = "sha256:93d3a6cc1de88f3c8b57f0c1bb3cbec80e7b25423cf8451dab816853bf86fde7"},
+    {file = "pesq-0.0.4.tar.gz", hash = "sha256:b724b28f73fb638522982bd68e8c3c0957e2f45210639a460233b17aa7fc890b"},
 ]
 
 [[package]]
@@ -688,4 +688,4 @@ train = ["deepfilterdataloader", "icecream"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<4.0"
-content-hash = "accab1d99c3f5805977697bcb469deeaaf65e08db31e218db66884c5830736ea"
+content-hash = "b2d3f940fc2fbbc4f2d7b15c507e6d769832252f16248db52c58ac94264d0aa5"
