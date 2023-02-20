@@ -345,43 +345,41 @@ files = [
 
 [[package]]
 name = "onnxruntime"
-version = "1.13.1"
+version = "1.14.0"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
 category = "main"
 optional = true
 python-versions = "*"
 files = [
-    {file = "onnxruntime-1.13.1-cp310-cp310-macosx_10_15_x86_64.whl", hash = "sha256:3b4e8f2b915fe505ffdc99c80324130ff9da2c52d8d1326c0bce19948523bb6c"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:0f1087bc219e293194b5e3b2ea8b50bf3e9e1343a49ef51c5b06987e6269c042"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0df1240878f13204246453bcb645ffa759e7dd93e06d210b7fe0defe88942fd3"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:083ef4448790a7c1fa4efebf4c1b15db95c4e2dbd3c3984018f57fe982c30276"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-manylinux_2_27_aarch64.whl", hash = "sha256:b488fe1a0c3afce90d22040d898862fb24d3b331644f5e1aec8cfd6a807fc987"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-manylinux_2_27_x86_64.whl", hash = "sha256:f060f7883c27eaf4ed7490f90cd72cdf96c80e4d74133525c6db5ba06f71623d"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-win32.whl", hash = "sha256:68074af35c1a79c9ee856ef8192a72099d2b17ad240b45764e95e65f58ed71c9"},
-    {file = "onnxruntime-1.13.1-cp310-cp310-win_amd64.whl", hash = "sha256:f9011384e792befdcde20860ab57294b3b9de5504a85b85818a8b242600052d7"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-macosx_10_15_x86_64.whl", hash = "sha256:97e9e38bfa168f541c3996a4c4fd57f886d02958e7de97ac167fd27118334a33"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bc491fc9a3474cbb40f3e04ea28687791d43a5eb3f55b62a803f88826aa512b3"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6941cd11e514b4bbc7408de13d041430ac283f2e55446d9ae85a6cc133ab002b"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-manylinux_2_27_aarch64.whl", hash = "sha256:343d4205631daf3d18a251212d5a04daf1f1ea1c34323042e7fc8deae0a358da"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-manylinux_2_27_x86_64.whl", hash = "sha256:d85e6c5a12c1055fec9e24023dd22506d1243417bed0ac26caa9b6123c10c242"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-win32.whl", hash = "sha256:ad589c249efcba104f3147df00fbab828855783aa3748f49ee3e04ff69ddf65d"},
-    {file = "onnxruntime-1.13.1-cp37-cp37m-win_amd64.whl", hash = "sha256:aaa33c79cfe2ac145d27166c59a216783951090a679d19c5b49f40f71606cf2d"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-macosx_10_15_x86_64.whl", hash = "sha256:f19697f9846e5518ea4f6c8b78c0f3fbd7f1b9b2fdef8dfc6eb7751b8e7e1edc"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:f523192616479b7f8a50bd02aa775e1256c90a7bc4c034bdeed9bd78a55a6e7a"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:852d7f26da6bb060cbaedb1f92cbe3b0b6e874b3169c20f9a55e656ff2d62742"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a436eb49c488ef01b4bd42ecad0a363ebf32ea7af3daa3a9e1cc35fdb8a8ad01"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-manylinux_2_27_aarch64.whl", hash = "sha256:93d803c5e01f24a3c65434d2238093c2d10993fd96a6cfb34d67f1ccd4224dc8"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-manylinux_2_27_x86_64.whl", hash = "sha256:7973bb9d3dd886d6f36b6d97f434c052531cf0ec4b5c05fd5c4c90d0061f02cf"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-win32.whl", hash = "sha256:c19cf50f51c8e73b7c4c2978916d298b969c871bb8ea74c74c3f92c4f9811225"},
-    {file = "onnxruntime-1.13.1-cp38-cp38-win_amd64.whl", hash = "sha256:d541174f3d1d4371c09242faa2d6c84a2de861f1aee771d2248cfc7f67ffb708"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-macosx_10_15_x86_64.whl", hash = "sha256:5336f5b9f5ba2bfb2586eb23b7346b50bb102dd8a15d0ce21b20d098da8984b0"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:b2b833c0acee7790f553a70ffa94999278886efe55f6f6bcaf57996e54a6724b"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:af07e43158a24c7ce6056dcd58cfa5c990193889e7bb2bea8300ce93e9c0584b"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4dbec4f7c9aa5b09e4c5d3e4d2231820d23660d70939136215562e3ea9d9e629"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-manylinux_2_27_aarch64.whl", hash = "sha256:d31681cf8e3570631ce7305e5a09babcf6362112da1f0b88031f74d46efbe18c"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-manylinux_2_27_x86_64.whl", hash = "sha256:67785843d393c59c4183cfd3eabbddd23620d0b56472dff679b68c8b94dd4a07"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-win32.whl", hash = "sha256:5f9b4533bd8d879f4cfd015a17af021825a9a0ec68e2229971605dac5f4430d3"},
-    {file = "onnxruntime-1.13.1-cp39-cp39-win_amd64.whl", hash = "sha256:76fda2c7c797f799b679be043612de0da51ee91319581310b65f35658d6f0c0c"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-macosx_11_0_x86_64.whl", hash = "sha256:8951b9c8ad180cb8099cab4965126ff24bee4ac70b660682bcaf739b17ec634c"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7e065b6d58833e8b822f5163839bced7b9288b9f6195ca3096170aa7d5256598"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d92aa2cf4f8afc019adaac9bde443bb91d252d8065ae9f0334e64214055c050a"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-manylinux_2_27_aarch64.whl", hash = "sha256:001e95fa1df9e855e565de47e535a4310930fb80e36499b643ba4b703b133daa"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-manylinux_2_27_x86_64.whl", hash = "sha256:6d7652dd803bbff4d5f3dc0d162c17da880114f9cc1d1fb293d7006ccab77b9e"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-win32.whl", hash = "sha256:386066c35ffe5fea2e494b0af253244c08e14d40a485b0327c4918e0715c8ab3"},
+    {file = "onnxruntime-1.14.0-cp310-cp310-win_amd64.whl", hash = "sha256:a43e8558be3084f9dc95a2eb9f7f248cc7b87be1dcb9b899db68f24d63bc0d6f"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-macosx_10_15_x86_64.whl", hash = "sha256:6c5df10a5863b106f5e2fda3eec851e867c753f5e32ea6de94cd9a565d644c4c"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5d4aae776dfcddef0a3faeb235bc15ecbede0881579abae761c9e063249d70cb"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:37e4f6f676ab8a6d22370f02fc34f3b7e232bcb37dc319ffc5b5822162ad8852"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-manylinux_2_27_aarch64.whl", hash = "sha256:0f77c0e5a9e48afc4e7447cbf38ca51587099bf11bba3a07d6818557ea8f6ef3"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-manylinux_2_27_x86_64.whl", hash = "sha256:d87dd7532d2a927e7ec040e0f6869530cb5cdb5b27ee94559d97e6a7d6f178f1"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-win32.whl", hash = "sha256:5d400dd1f4c8649b45d2734bcb8481a8b791d157ab7c584adf51132133401507"},
+    {file = "onnxruntime-1.14.0-cp37-cp37m-win_amd64.whl", hash = "sha256:7b3beac39282bda3617faef8d631fb891f3e1017370a66ee1d7a37a6b9b594d1"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-macosx_10_15_x86_64.whl", hash = "sha256:cd5852f4d222a981b6c9da6d26f8dffff584353bb40ac702e1e6ab7320a0a16d"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-macosx_11_0_x86_64.whl", hash = "sha256:2b9fc633391787d7286d947a32e28e7388a528cff038af0e44ba8e5c05426726"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ade64278c4d843d18e0f1a101f1a198e7861e04a82d37b229b975e64d6df976d"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8f060f48c1ae469f0ef13daee911b1fc991ab4e212102a4aa6c2523c1dc48a28"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-manylinux_2_27_aarch64.whl", hash = "sha256:abc7bdd52189c938b318ab353f09d241e2ecb717a0ac78ab7ee9c9fc6dac3496"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-manylinux_2_27_x86_64.whl", hash = "sha256:c0cc4b00b4bd7c3b2cb797ab0a786cd95307e762b4621209ffce1b65ded944ec"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-win32.whl", hash = "sha256:6f0e447205a18edd9a523de4e52def7e8b6c258e3b6a802b806653d74a1d816e"},
+    {file = "onnxruntime-1.14.0-cp38-cp38-win_amd64.whl", hash = "sha256:775e39720684bed634dbfe6de7a6aab91b0c88c11f653ba3aa63f87712b90b72"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-macosx_11_0_x86_64.whl", hash = "sha256:f7d6f6308cd2b0397ce13c1abc65fc60fada9f9bf5cf48d65147720020c98237"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9f71c7ad1bf52cadb4ce705dda954c8e6d024eaaad9fd187d55c0be080ddc85f"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8ff9d4b34255721c47aecbe734e40e442069f78a48e9b2a6bc521bba8c392755"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-manylinux_2_27_aarch64.whl", hash = "sha256:0e62bfe6bb7c3a73eca17f42e49a8dc4ffd0890f93a3b5a9058e3b955620ae4f"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-manylinux_2_27_x86_64.whl", hash = "sha256:65d2de7edbaacf09733d9564e901d5bb848f28a2a6e1bcb6acd1e3d4f634eeec"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-win32.whl", hash = "sha256:62cc72f9cf8f8dad84d976c73da3faf912859db829e41596a42782e7ad97f0f4"},
+    {file = "onnxruntime-1.14.0-cp39-cp39-win_amd64.whl", hash = "sha256:c12c2814c9a3f886939113508805a53c0a2c8661a2834b31b5c23a7a327500bf"},
 ]
 
 [package.dependencies]
