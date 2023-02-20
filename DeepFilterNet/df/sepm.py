@@ -297,7 +297,6 @@ def findLocPeaks(slope, energy):
 
 
 def wss(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
-
     Kmax = 20  # value suggested by Klatt, pg 1280
     Klocmax = 1  # value suggested by Klatt, pg 1280
     alpha = 0.95

@@ -45,7 +45,7 @@ def main(args):
         print(f"Opened datatset {args.hdf5_input}")
 
         # Copy attributes
-        for (k, v) in h5_read.attrs.items():
+        for k, v in h5_read.attrs.items():
             h5_write.attrs[k] = v
 
         sr: int = h5_read.attrs["sr"]
@@ -55,7 +55,7 @@ def main(args):
         codec = h5_read.attrs.get("codec", "pcm")
         codec_write = args.codec or codec
         h5_write.attrs["codec"] = codec_write
-        for (grp_name, group_read) in h5_read.items():
+        for grp_name, group_read in h5_read.items():
             if grp_name not in h5_write:
                 group_write = h5_write.create_group(grp_name)
             else:
@@ -94,7 +94,7 @@ def main(args):
                     ds_write = group_write.create_dataset(
                         key, data=data, compression=None if codec_write != "pcm" else ds.compression
                     )
-                    for (k, v) in ds.attrs.items():
+                    for k, v in ds.attrs.items():
                         ds_write.attrs[k] = v
                     ds_write.attrs["n_samples"] = audio.shape[-1]
                 else:

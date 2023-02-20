@@ -232,7 +232,7 @@ def main():
     for epoch in range(epoch, max_epochs):
         if len(batch_size_scheduling) > 0:
             # Get current batch size
-            for (e, b) in batch_size_scheduling:
+            for e, b in batch_size_scheduling:
                 if e <= epoch:
                     # Update bs, but don't go higher than the batch size specified in the config
                     scheduling_bs = min(b, bs)

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-#![feature(get_mut_unchecked)]
+#![cfg_attr(feature = "tract", feature(get_mut_unchecked))]
 
 use std::ops::MulAssign;
 use std::sync::Arc;

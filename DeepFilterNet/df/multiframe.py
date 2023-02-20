@@ -565,7 +565,6 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=
     p.hop_size = 24
     p.sr = 24000
     n_freqs = p.fft_size // 2 + 1
-    n_freqs = p.fft_size // 2 + 1
 
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
     s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(

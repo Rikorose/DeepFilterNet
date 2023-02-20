@@ -108,6 +108,8 @@ poetry install -E train -E eval --no-root
 export PYTHONPATH=$PWD
 ```
 
+### Use DeepFilterNet from command line
+
 To enhance noisy audio files using DeepFilterNet run
 ```bash
 $ python DeepFilterNet/df/enhance.py --help
@@ -137,6 +139,17 @@ python DeepFilterNet/df/enhance.py -m DeepFilterNet path/to/noisy_audio.wav
 # Enhance audio with DeepFilterNet2
 python DeepFilterNet/df/enhance.py -m DeepFilterNet2 path/to/noisy_audio.wav
 ```
+
+### Use DeepFilterNet within your Python script
+
+```py
+from df import enhance, init_df
+
+model, df_state, _ = init_df()  # Load default model
+enhanced_audio = enhance(model, df_state, noisy_audio)
+```
+
+See [here](https://github.com/Rikorose/DeepFilterNet/blob/main/scripts/external_usage.py) for a full example.
 
 ### Training
 
