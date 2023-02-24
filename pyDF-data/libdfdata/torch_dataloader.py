@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 import warnings
+from packaging import version
 from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
@@ -177,7 +178,7 @@ class PytorchDataLoader:
                 torch.cuda.current_device(),
                 self.pin_memory_thread_done_event,
             )
-            if torch.__version__ >= "1.12.0":
+            if version.parse(torch.__version__) >= version.parse("1.12.0"):
                 args = args + (None,)
             pin_memory_thread = threading.Thread(
                 target=_pin_memory_loop,
