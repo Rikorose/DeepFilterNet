@@ -4,15 +4,15 @@ import queue
 import threading
 import time
 import warnings
-from packaging import version
 from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
 from loguru import logger
+
 from torch._utils import ExceptionWrapper
 from torch.utils.data._utils.pin_memory import _pin_memory_loop
-
+from packaging import version
 from libdfdata import _FdDataLoader
 
 
