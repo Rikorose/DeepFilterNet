@@ -2,6 +2,7 @@ import os
 import shutil
 import tarfile
 from copy import deepcopy
+from pathlib import Path
 from typing import Dict, Iterable, List, Tuple, Union
 
 import numpy as np
@@ -308,11 +309,12 @@ def main(args):
         save_audio("out/enhanced.wav", enhanced, df_state.sr())
     except RuntimeError:
         pass
-    if not os.path.isdir(args.export_dir):
-        os.makedirs(args.export_dir)
+    export_dir = Path(args.export_dir)
+    if not export_dir.is_dir():
+        export_dir.mkdir(parents=True, exist_ok=True)
     export(
         model,
-        args.export_dir,
+        export_dir,
         df_state=df_state,
         opset=args.opset,
         check=args.check,
@@ -324,7 +326,7 @@ def main(args):
             os.path.join(model_base_dir, "config.ini"),
             os.path.join(args.export_dir, "config.ini"),
         )
-    tar_name = os.path.join(args.export_dir, os.path.basename(model_base_dir) + "_onnx.tar.gz")
+    tar_name = export_dir / (Path(model_base_dir).name + "_onnx.tar.gz")
     with tarfile.open(tar_name, mode="w:gz") as f:
         f.add(os.path.join(args.export_dir, "enc.onnx"))
         f.add(os.path.join(args.export_dir, "erb_dec.onnx"))
