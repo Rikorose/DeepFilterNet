@@ -304,14 +304,12 @@ def main(args):
     )
     sample = get_test_sample(df_state.sr())
     enhanced = enhance(model, df_state, sample, True)
-    try:
+    out_dir = Path("out")
+    if out_dir.is_dir():
         # attempt saving enhanced audio
-        save_audio("out/enhanced.wav", enhanced, df_state.sr())
-    except RuntimeError:
-        pass
+        save_audio(out_dir / "enhanced.wav", enhanced, df_state.sr())
     export_dir = Path(args.export_dir)
-    if not export_dir.is_dir():
-        export_dir.mkdir(parents=True, exist_ok=True)
+    export_dir.mkdir(parents=True, exist_ok=True)
     export(
         model,
         export_dir,
