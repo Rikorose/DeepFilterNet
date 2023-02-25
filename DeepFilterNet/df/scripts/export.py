@@ -63,7 +63,7 @@ def onnx_check(path: str, input_dict: Dict[str, Tensor], output_names: Tuple[str
     model = onnx.load(path)
     logger.debug(os.path.basename(path) + ": " + onnx.helper.printable_graph(model.graph))
     onnx.checker.check_model(model, full_check=True)
-    sess = ort.InferenceSession(path)
+    sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
     return sess.run(output_names, {k: v.numpy() for (k, v) in input_dict.items()})
 
 
@@ -303,7 +303,11 @@ def main(args):
     )
     sample = get_test_sample(df_state.sr())
     enhanced = enhance(model, df_state, sample, True)
-    save_audio("out/enhanced.wav", enhanced, df_state.sr())
+    try:
+        # attempt saving enhanced audio
+        save_audio("out/enhanced.wav", enhanced, df_state.sr())
+    except RuntimeError:
+        pass
     if not os.path.isdir(args.export_dir):
         os.makedirs(args.export_dir)
     export(
