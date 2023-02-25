@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import glob
 import warnings
 from typing import Optional, Tuple, Union
 
@@ -37,8 +38,19 @@ def main(args):
     elif not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
     df_sr = ModelParams().sr
-    n_samples = len(args.noisy_audio_files)
-    for i, file in enumerate(args.noisy_audio_files):
+    if args.noisy_dir is not None:
+        if len(args.noisy_audio_files) > 0:
+            logger.error("Only one of `noisy_audio_files` or `noisy_dir` arguments are supported.")
+            exit(1)
+        input_files = glob.glob(args.noisy_dir + "/*")
+    else:
+        assert len(args.noisy_audio_files) > 0, "No audio files provided"
+        input_files = args.noisy_audio_files
+    n_samples = len(input_files)
+    for i, file in enumerate(input_files):
+        if not os.path.isfile(file):
+            logger.warning(f"File not found: {file}. Skipping...")
+            continue
         progress = (i + 1) / n_samples * 100
         audio, meta = load_audio(file, df_sr)
         t0 = time.time()
@@ -315,8 +327,15 @@ def run():
     parser.add_argument(
         "noisy_audio_files",
         type=str,
-        nargs="+",
+        nargs="*",
         help="List of noise files to mix with the clean speech file.",
+    )
+    parser.add_argument(
+        "--noisy-dir",
+        "-i",
+        type=str,
+        default=None,
+        help="Input directory containing noisy audio files. Use instead of `noisy_audio_files`.",
     )
     parser.add_argument(
         "--no-suffix",
