@@ -9,6 +9,7 @@ from typing import Iterator, List, Optional, Tuple
 import numpy as np
 import torch
 from loguru import logger
+from packaging import version
 from torch._utils import ExceptionWrapper
 from torch.utils.data._utils.pin_memory import _pin_memory_loop
 
@@ -182,7 +183,7 @@ class PytorchDataLoader:
                 torch.cuda.current_device(),
                 self.pin_memory_thread_done_event,
             )
-            if torch.__version__ >= "1.12.0":
+            if version.parse(torch.__version__) >= version.parse("1.12.0"):
                 args = args + (None,)
             pin_memory_thread = threading.Thread(
                 target=_pin_memory_loop,
