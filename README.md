@@ -66,7 +66,7 @@ This framework supports Linux, MacOS and Windows. Training is only tested under 
 
 Install the DeepFilterNet Python wheel via pip:
 ```bash
-# Install cpu/cuda pytorch (>=1.8) dependency from pytorch.org, e.g.:
+# Install cpu/cuda pytorch (>=1.9) dependency from pytorch.org, e.g.:
 pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
 # Install DeepFilterNet
 pip install deepfilternet
