@@ -1,7 +1,7 @@
 import argparse
+import glob
 import os
 import time
-import glob
 import warnings
 from typing import Optional, Tuple, Union
 
