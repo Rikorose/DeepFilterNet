@@ -66,7 +66,7 @@ jobs:
 
       # Rust installation
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
