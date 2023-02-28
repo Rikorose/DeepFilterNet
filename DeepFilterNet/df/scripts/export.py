@@ -2,6 +2,7 @@ import os
 import shutil
 import tarfile
 from copy import deepcopy
+from pathlib import Path
 from typing import Dict, Iterable, List, Tuple, Union
 
 import numpy as np
@@ -63,7 +64,7 @@ def onnx_check(path: str, input_dict: Dict[str, Tensor], output_names: Tuple[str
     model = onnx.load(path)
     logger.debug(os.path.basename(path) + ": " + onnx.helper.printable_graph(model.graph))
     onnx.checker.check_model(model, full_check=True)
-    sess = ort.InferenceSession(path)
+    sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
     return sess.run(output_names, {k: v.numpy() for (k, v) in input_dict.items()})
 
 
@@ -303,12 +304,15 @@ def main(args):
     )
     sample = get_test_sample(df_state.sr())
     enhanced = enhance(model, df_state, sample, True)
-    save_audio("out/enhanced.wav", enhanced, df_state.sr())
-    if not os.path.isdir(args.export_dir):
-        os.makedirs(args.export_dir)
+    out_dir = Path("out")
+    if out_dir.is_dir():
+        # attempt saving enhanced audio
+        save_audio(out_dir / "enhanced.wav", enhanced, df_state.sr())
+    export_dir = Path(args.export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
     export(
         model,
-        args.export_dir,
+        export_dir,
         df_state=df_state,
         opset=args.opset,
         check=args.check,
@@ -320,7 +324,7 @@ def main(args):
             os.path.join(model_base_dir, "config.ini"),
             os.path.join(args.export_dir, "config.ini"),
         )
-    tar_name = os.path.join(args.export_dir, os.path.basename(model_base_dir) + "_onnx.tar.gz")
+    tar_name = export_dir / (Path(model_base_dir).name + "_onnx.tar.gz")
     with tarfile.open(tar_name, mode="w:gz") as f:
         f.add(os.path.join(args.export_dir, "enc.onnx"))
         f.add(os.path.join(args.export_dir, "erb_dec.onnx"))
