@@ -2,7 +2,7 @@ import argparse
 import glob
 import os
 import string
-from typing import List
+from typing import List, Union
 
 import editdistance
 import numpy as np
@@ -10,21 +10,34 @@ import pandas as pd
 import torch
 import whisper
 
-MODEL = whisper.load_model("small")
+MODEL = None
+WHISPER_OPT = None
+DT = torch.float32
 
-has_cuda = torch.cuda.is_available()
-dt = torch.float16 if has_cuda else torch.float32
-if has_cuda:
-    print("Running with cuda")
-    MODEL = MODEL.to("cuda")
-WHISPER_OPT = whisper.DecodingOptions(task="transcribe", language="en", beam_size=20, fp16=has_cuda)
+
+def load_model():
+    global MODEL, WHISPER_OPT, DT
+
+    MODEL = whisper.load_model("small")
+
+    has_cuda = torch.cuda.is_available()
+    DT = torch.float16 if has_cuda else torch.float32
+    if has_cuda:
+        print("Running with cuda")
+        MODEL = MODEL.to("cuda")
+    WHISPER_OPT = whisper.DecodingOptions(
+        task="transcribe", language="en", beam_size=20, fp16=has_cuda
+    )
 
 
 def normalize(input: str) -> List[str]:
     return input.translate(str.maketrans("", "", string.punctuation)).lower().split(" ")
 
 
-def main(args):
+def eval_wacc(args):
+    global MODEL, WHISPER_OPT, DT
+
+    load_model()
     audio_clips_list = glob.glob(os.path.join(args.testset_dir, "*.wav"))
     transcriptions_df = pd.read_csv(
         args.transcription_file, sep="\t", names=["filename", "transcription"]
@@ -41,7 +54,7 @@ def main(args):
             continue
         audio = whisper.load_audio(fpath)
         audio = whisper.pad_or_trim(audio)
-        mel = whisper.log_mel_spectrogram(audio).to(device=MODEL.device, dtype=dt)
+        mel = whisper.log_mel_spectrogram(audio).to(device=MODEL.device, dtype=DT)
 
         result: whisper.DecodingResult = whisper.decode(MODEL, mel, WHISPER_OPT)
         target = transcriptions_df["transcription"][idx].to_list()[0]
@@ -68,21 +81,35 @@ def main(args):
     df = pd.DataFrame(scores)
     print("Mean WAcc for the files is ", np.mean(df["wacc"]))
 
-    if args.score_file:
-        df.to_csv(args.score_file)
+    if args.csv_file:
+        df.to_csv(args.csv_file)
+
+
+def print_csv(df: Union[pd.DataFrame, str]):
+    if isinstance(df, str):
+        df = pd.read_csv(df)
+    print(df.describe())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--testset-dir",
-        required=True,
-        help="Path to the dir containing audio clips to be evaluated",
+    subparsers = parser.add_subparsers(dest="subparser_name")
+    mn_parser = subparsers.add_parser("mean", aliases=["m"])
+    mn_parser.add_argument("csv_file", type=str)
+    eval_parser = subparsers.add_parser("eval", aliases=["e"])
+    eval_parser.add_argument(
+        "testset_dir", help="Path to the dir containing audio clips to be evaluated"
     )
-    parser.add_argument(
-        "--score-file", help="If you want the scores in a CSV file provide the full path"
+    eval_parser.add_argument("transcription_file", help="Path to transcription tsv file")
+    eval_parser.add_argument(
+        "-o", "--csv-file", help="If you want the scores in a CSV file provide the full path"
     )
-    parser.add_argument("--transcription-file", help="Path to transcription tsv file")
 
     args = parser.parse_args()
-    main(args)
+    if args.subparser_name is None:
+        parser.print_help()
+        exit(1)
+    if args.subparser_name in ("m", "mean"):
+        print_csv(args.csv_file)
+    else:
+        eval_wacc(args)

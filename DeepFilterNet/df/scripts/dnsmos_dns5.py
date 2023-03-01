@@ -5,6 +5,7 @@ import argparse
 import concurrent.futures
 import glob
 import os
+from typing import Union
 
 import librosa
 import numpy as np
@@ -124,7 +125,7 @@ def download_onnx_models():
     return sig_bak_ovr, p808
 
 
-def main(args):
+def eval_dnsmos(args):
     models = glob.glob(os.path.join(args.testset_dir, "*"))
     audio_clips_list = []
     if args.personalized_MOS:
@@ -164,32 +165,43 @@ def main(args):
                 rows.append(data)
 
     df = pd.DataFrame(rows)
-    if args.csv_path:
-        csv_path = args.csv_path
-        df.to_csv(csv_path)
-    else:
-        print(df.describe())
+    if args.csv_file:
+        csv_file = args.csv_file
+        df.to_csv(csv_file)
+    print_csv(df)
+
+
+def print_csv(df: Union[pd.DataFrame, str]):
+    if isinstance(df, str):
+        df = pd.read_csv(df)
+    print(df.describe())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-t",
-        "--testset_dir",
-        default=".",
-        help="Path to the dir containing audio clips in .wav to be evaluated",
+    subparsers = parser.add_subparsers(dest="subparser_name")
+    mn_parser = subparsers.add_parser("mean", aliases=["m"])
+    mn_parser.add_argument("csv_file", type=str)
+    eval_parser = subparsers.add_parser("eval", aliases=["e"])
+    eval_parser.add_argument(
+        "testset_dir", help="Path to the dir containing audio clips in .wav to be evaluated"
     )
-    parser.add_argument(
-        "-o", "--csv_path", default=None, help="Dir to the csv that saves the results"
+    eval_parser.add_argument(
+        "-o", "--csv-file", help="If you want the scores in a CSV file provide the full path"
     )
-    parser.add_argument(
+    eval_parser.add_argument(
         "-p",
         "--personalized_MOS",
         action="store_true",
         help="Flag to indicate if personalized MOS score is needed or regular",
     )
-    parser.add_argument("--num-workers", type=int, default=1)
+    eval_parser.add_argument("--num-workers", type=int, default=1)
 
     args = parser.parse_args()
-
-    main(args)
+    if args.subparser_name is None:
+        parser.print_help()
+        exit(1)
+    if args.subparser_name in ("m", "mean"):
+        print_csv(args.csv_file)
+    else:
+        eval_dnsmos(args)
