@@ -95,6 +95,7 @@ def evaluation_loop(
     log_percent: int = 25,
     csv_path_enh: Optional[str] = None,
     csv_path_noisy: Optional[str] = None,
+    noisy_metric: bool = False,
     sleep_ms=0,
 ) -> Dict[str, float]:
     sr = df_state.sr()
@@ -114,7 +115,10 @@ def evaluation_loop(
             logger.debug(f"Processing {os.path.basename(noisyfn)}, {os.path.basename(cleanfn)}")
             enh = enhance(model, df_state, noisy)[0]
             clean = df_state.synthesis(df_state.analysis(clean.numpy()))[0]
-            noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
+            if noisy_metric:
+                noisy = df_state.synthesis(df_state.analysis(noisy.numpy()))[0]
+            else:
+                noisy = None
             for m in metrics:
                 m.add(clean=clean, enhanced=enh, noisy=noisy, fn=os.path.basename(noisyfn))
             if save_audio_callback is not None:
@@ -310,7 +314,7 @@ class Metric(ABC):
             x = self.resampler.forward(torch.as_tensor(x).clone())
         return x
 
-    def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
+    def add(self, clean, enhanced, noisy=None, fn: Optional[str] = None):
         assert clean.shape == enhanced.shape, f"{clean.shape}, {enhanced.shape}, {fn}"
         clean = self.maybe_resample(clean).squeeze(0)
         enhanced = self.maybe_resample(enhanced).squeeze(0)
@@ -360,7 +364,7 @@ class MPMetric(Metric):
         self.worker_results = deque()
         self.is_joined = False
 
-    def add(self, clean, enhanced, noisy, fn: Optional[str] = None):
+    def add(self, clean, enhanced, noisy=None, fn: Optional[str] = None):
         assert clean.shape == enhanced.shape, f"{clean.shape}, {enhanced.shape}, {fn}"
         if noisy is not None:
             assert clean.shape == noisy.shape, f"{clean.shape}, {noisy.shape}, {fn}"
