@@ -3,12 +3,13 @@ import glob
 import os
 import time
 import warnings
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from loguru import logger
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torch.utils.data import DataLoader, Dataset
 
 from df.checkpoint import load_model as load_model_cp
 from df.config import config
@@ -22,6 +23,25 @@ from libdf import DF, erb, erb_norm, unit_norm
 
 PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2")
 DEFAULT_MODEL = "DeepFilterNet2"
+
+
+class AudioDataset(Dataset):
+    def __init__(self, files: List[str], sr: int) -> None:
+        super().__init__()
+        self.files = []
+        for file in files:
+            if not os.path.isfile(file):
+                logger.warning(f"File not found: {file}. Skipping...")
+            self.files.append(file)
+        self.sr = sr
+
+    def __getitem__(self, index) -> Tuple[str, Tensor, int]:
+        fn = self.files[index]
+        audio, meta = load_audio(fn, self.sr, "cpu")
+        return fn, audio, meta.sample_rate
+
+    def __len__(self):
+        return len(self.files)
 
 
 def main(args):
@@ -46,13 +66,11 @@ def main(args):
     else:
         assert len(args.noisy_audio_files) > 0, "No audio files provided"
         input_files = args.noisy_audio_files
-    n_samples = len(input_files)
-    for i, file in enumerate(input_files):
-        if not os.path.isfile(file):
-            logger.warning(f"File not found: {file}. Skipping...")
-            continue
+    ds = AudioDataset(input_files, df_sr)
+    loader = DataLoader(ds, num_workers=2, pin_memory=True)
+    n_samples = len(ds)
+    for i, (file, audio, audio_sr) in enumerate(loader):
         progress = (i + 1) / n_samples * 100
-        audio, meta = load_audio(file, df_sr)
         t0 = time.time()
         audio = enhance(
             model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
@@ -64,10 +82,8 @@ def main(args):
         fn = os.path.basename(file)
         p_str = f"{progress:2.0f}% | " if n_samples > 1 else ""
         logger.info(f"{p_str}Enhanced noisy audio file '{fn}' in {t:.1f}s (RT factor: {rtf:.3f})")
-        audio = resample(audio, df_sr, meta.sample_rate)
-        save_audio(
-            file, audio, sr=meta.sample_rate, output_dir=args.output_dir, suffix=suffix, log=False
-        )
+        audio = resample(audio.to("cpu"), df_sr, audio_sr)
+        save_audio(file, audio, sr=audio_sr, output_dir=args.output_dir, suffix=suffix, log=False)
 
 
 def get_model_basedir(m: Optional[str]) -> str:
