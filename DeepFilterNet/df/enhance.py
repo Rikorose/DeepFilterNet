@@ -70,6 +70,8 @@ def main(args):
     loader = DataLoader(ds, num_workers=2, pin_memory=True)
     n_samples = len(ds)
     for i, (file, audio, audio_sr) in enumerate(loader):
+        file = file[0]
+        audio = audio.squeeze(0)
         progress = (i + 1) / n_samples * 100
         t0 = time.time()
         audio = enhance(
