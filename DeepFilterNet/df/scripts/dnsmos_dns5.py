@@ -22,9 +22,9 @@ URL_ONNX = "https://github.com/microsoft/DNS-Challenge/raw/e14b010/DNSMOS/DNSMOS
 
 
 class ComputeScore:
-    def __init__(self, primary_model_path, p808_model_path) -> None:
-        self.onnx_sess = get_ort_session(primary_model_path)
-        self.p808_onnx_sess = get_ort_session(p808_model_path)
+    def __init__(self, primary_model_path, p808_model_path, cpu: bool = False) -> None:
+        self.onnx_sess = get_ort_session(primary_model_path, providers="cpu" if cpu else "gpu")
+        self.p808_onnx_sess = get_ort_session(p808_model_path, providers="cpu" if cpu else "gpu")
 
     def audio_melspec(
         self, audio, n_mels=120, frame_size=320, hop_length=160, sr=16000, to_db=True
@@ -189,6 +189,7 @@ if __name__ == "__main__":
     eval_parser.add_argument(
         "-o", "--csv-file", help="If you want the scores in a CSV file provide the full path"
     )
+    eval_parser.add_argument("--cpu", help="Only run on CPU", action="store_true")
     eval_parser.add_argument(
         "-p",
         "--personalized_MOS",
