@@ -102,6 +102,7 @@ fn get_worker_fn(
                     DfControl::MinThreshDb => df.min_db_thresh = v,
                     DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                    _ => (),
                 }
             }
             let got_samples = {
@@ -234,6 +235,7 @@ enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
+    MinBufferFrames,
 }
 impl DfControl {
     fn from_port_name(name: &str) -> Self {
@@ -242,6 +244,7 @@ impl DfControl {
             "Min processing threshold (dB)" => Self::MinThreshDb,
             "Max ERB processing threshold (dB)" => Self::MaxErbThreshDb,
             "Max DF processing threshold (dB)" => Self::MaxDfThreshDb,
+            "Min Processing Buffer (frames)" => Self::MinBufferFrames,
             _ => panic!("name not found"),
         }
     }
@@ -253,6 +256,7 @@ impl fmt::Display for DfControl {
             DfControl::MinThreshDb => write!(f, "Min processing threshold (dB)"),
             DfControl::MaxErbThreshDb => write!(f, "Max ERB processing threshold (dB)"),
             DfControl::MaxDfThreshDb => write!(f, "Max DF processing threshold (dB)"),
+            DfControl::MinBufferFrames => write!(f, "Min Processing Buffer (frames)"),
         }
     }
 }
@@ -262,6 +266,7 @@ struct DfControlHistory {
     min_thresh_db: f32,
     max_erb_thresh_db: f32,
     max_df_thresh_db: f32,
+    min_buffer_frames: f32,
 }
 impl Default for DfControlHistory {
     fn default() -> Self {
@@ -270,6 +275,7 @@ impl Default for DfControlHistory {
             min_thresh_db: -10.,
             max_erb_thresh_db: 30.,
             max_df_thresh_db: 20.,
+            min_buffer_frames: 0.,
         }
     }
 }
@@ -280,6 +286,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db,
+            DfControl::MinBufferFrames => self.min_buffer_frames,
         }
     }
     fn set(&mut self, c: &DfControl, v: f32) {
@@ -288,6 +295,7 @@ impl DfControlHistory {
             DfControl::MinThreshDb => self.min_thresh_db = v,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db = v,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db = v,
+            DfControl::MinBufferFrames => self.min_buffer_frames = v,
         }
     }
 }
@@ -416,7 +424,8 @@ impl Plugin for DfPlugin {
             }
         } else if self.t_proc_change > 10 * self.sr / self.frame_size
             && rtf < 0.5
-            && self.proc_delay >= self.frame_size
+            && self.proc_delay
+                >= self.frame_size * (1 + self.control_hist.min_buffer_frames as usize)
         {
             // Reduce delay again
             let dropped_samples = {
@@ -539,6 +548,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
                 },
+                Port {
+                    name: "Min Processing Buffer (frames)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Low),
+                    lower_bound: Some(0.),
+                    upper_bound: Some(10.),
+                },
             ],
             new: |d, sr| Box::new(get_new_df(1)(d, sr)),
         }),
@@ -601,6 +618,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     default: Some(DefaultValue::High),
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
+                },
+                Port {
+                    name: "Min Processing Buffer (frames)",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(DefaultValue::Low),
+                    lower_bound: Some(0.),
+                    upper_bound: Some(10.),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(2)(d, sr)),
