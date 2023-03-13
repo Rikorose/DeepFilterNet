@@ -1,3 +1,4 @@
+#[allow(clippy::almost_swapped)]
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;

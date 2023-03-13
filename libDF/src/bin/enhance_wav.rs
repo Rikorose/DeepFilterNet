@@ -1,3 +1,4 @@
+#[allow(clippy::almost_swapped)]
 use std::{path::PathBuf, process::exit, time::Instant};
 
 use anyhow::Result;
