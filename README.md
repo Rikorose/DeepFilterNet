@@ -1,6 +1,8 @@
 # DeepFilterNet
 A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using on Deep Filtering.
 
+![deepfilternet3](https://user-images.githubusercontent.com/16517898/225623209-a54fea75-ca00-404c-a394-c91d2d1146d2.svg)
+
 ### News
 
 - New real-time version and a LADSPA plugin
