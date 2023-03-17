@@ -301,14 +301,15 @@ impl DataLoader {
             self.join_fill_thread()?;
         }
         if self.overfit {
+            log::trace!("Overfitting epoch. Using train set for all splits.");
             epoch_seed = 0;
         }
         log::trace!("Start {} epoch with seed {}", split, epoch_seed);
         // Check whether we need to regenerate. Typically only required for a custom sampling factor.
-        for split in Split::iter() {
-            if self.get_ds_arc(split).need_generate_keys() {
+        if self.get_ds_arc(split).need_generate_keys(self.overfit) {
+            for s in Split::iter() {
                 let mut ds = match Arc::try_unwrap(
-                    match split {
+                    match s {
                         Split::Train => self.ds_train.take(),
                         Split::Valid => self.ds_valid.take(),
                         Split::Test => self.ds_test.take(),
@@ -319,18 +320,18 @@ impl DataLoader {
                     Err(_) => panic!("Could not regain ownership over dataset"),
                 };
                 ds.generate_keys(Some(epoch_seed as u64))?;
-                log::trace!("Generated dataset keys for {}", split);
-                self.set_ds(split, ds);
+                log::trace!("Generated dataset keys for {}", s);
+                self.set_ds(s, ds);
             }
         }
         // Output buffers for ordering analogue to self.idcs
         self.out_buf = BTreeMap::new();
         self.cur_out_idx = 0;
         // Prepare for new epoch
-        self.current_split = split;
+        self.current_split = if !self.overfit { split } else { Split::Train };
         {
             // Recreate indices to index into the dataset and shuffle them
-            let n_samples = self.dataset_len(split);
+            let n_samples = self.dataset_len(self.current_split);
             let sample_idcs: Vec<usize> = if self.overfit {
                 log::warn!("Overfitting on one batch.");
                 (0..n_samples).cycle().take(n_samples).collect()
@@ -340,15 +341,17 @@ impl DataLoader {
                 tmp
             };
             // Concatenate an ordering index
-            let idcs: VecDeque<(usize, isize)> =
-                sample_idcs.into_iter().zip(0..self.dataset_len(split) as isize).collect();
+            let idcs: VecDeque<(usize, isize)> = sample_idcs
+                .into_iter()
+                .zip(0..self.dataset_len(self.current_split) as isize)
+                .collect();
             self.idcs.lock().unwrap().clone_from(&idcs);
         }
         // Start thread to submit dataset jobs for the pool workers
-        self.fill_thread = Some(self.start_idx_worker(split, epoch_seed as u64)?);
+        self.fill_thread = Some(self.start_idx_worker(self.current_split, epoch_seed as u64)?);
         log::trace!(
             "Started dataloader worker for split {} with epoch_seed {}",
-            split,
+            self.current_split,
             epoch_seed
         );
         self.drained = false;
