@@ -459,18 +459,20 @@ impl DataLoader {
         // Drop out_receiver so that parallel iter in fill thread will return
         drop(self.out_receiver.take());
         if let Some(thread) = self.fill_thread.take() {
-            if let Err(e) = thread
-                .join()
-                .map_err(|e| DfDataloaderError::ThreadJoinError(format!("{e:?}")))?
-            {
-                match e {
-                    DfDataloaderError::SendError(_) => (),
-                    // Not expected send error due to out_channel closing
-                    e => {
-                        eprint!("Error during worker shutdown: {e:?}");
+            let e = thread.join();
+            match e {
+                Err(e) => {
+                    eprint!("Error during worker shutdown");
+                    return Err(DfDataloaderError::ThreadJoinError(format!("{e:?}")));
+                }
+                Ok(r) => match r {
+                    Ok(()) => (),
+                    Err(DfDataloaderError::SendError(_)) => (),
+                    Err(e) => {
+                        // Not expected send error due to out_channel closing
                         return Err(e);
                     }
-                }
+                },
             }
         }
         Ok(())

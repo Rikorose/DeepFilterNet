@@ -448,7 +448,7 @@ where
     }
     fn max_sample_len(&self) -> usize;
     fn set_seed(&mut self, seed: u64);
-    fn need_generate_keys(&self) -> bool;
+    fn need_generate_keys(&self, overfit: bool) -> bool;
     fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()>;
 }
 
@@ -922,8 +922,8 @@ impl Dataset<Complex32> for FftDataset {
         self.ds.set_seed(seed)
     }
 
-    fn need_generate_keys(&self) -> bool {
-        self.ds.need_generate_keys()
+    fn need_generate_keys(&self, overfit: bool) -> bool {
+        self.ds.need_generate_keys(overfit)
     }
 
     fn generate_keys(&mut self, epoch_seed: Option<u64>) -> Result<()> {
@@ -1371,9 +1371,12 @@ impl Dataset<f32> for TdDataset {
         self.seed = seed
     }
 
-    fn need_generate_keys(&self) -> bool {
+    fn need_generate_keys(&self, overfit: bool) -> bool {
         if self.sp_keys.is_empty() {
             return true;
+        }
+        if overfit {
+            return false;
         }
         if self.ds_split == Split::Train {
             for (_, name, _) in self.ds_keys.iter() {
