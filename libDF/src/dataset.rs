@@ -1203,14 +1203,22 @@ impl Dataset<f32> for TdDataset {
         log::trace!("get_sample() idx {} with seed {:?}", idx, sample_seed,);
         seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
         let mut rng = thread_rng()?;
-        let (mut speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
-        if crate::rms(speech.iter()) < 1e-10 {
-            log::warn!(
-                "No speech signal found for idx {}, seed {}",
-                idx,
-                sample_seed
-            );
-        }
+        // Sample SNR and gain
+        let &snr = self.snrs.choose(&mut rng).unwrap();
+        let &gain = self.gains.choose(&mut rng).unwrap();
+        let (mut speech, max_freq) = if snr <= -100 {
+            (Array2::zeros((1, self.max_samples)), self.sr / 2)
+        } else {
+            let (speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
+            if crate::rms(speech.iter()) < 1e-10 {
+                log::warn!(
+                    "No speech signal found for idx {}, seed {}",
+                    idx,
+                    sample_seed
+                );
+            }
+            (speech, max_freq)
+        };
         #[cfg(feature = "timings")]
         let t_sp = Instant::now();
         // Apply low pass to the noise as well
@@ -1233,9 +1241,6 @@ impl Dataset<f32> for TdDataset {
             noises.push(ns);
             noise_gains.push(gain);
         }
-        // Sample SNR and gain
-        let &snr = self.snrs.choose(&mut rng).unwrap();
-        let &gain = self.gains.choose(&mut rng).unwrap();
         // Truncate to speech len, combine noises and mix to noisy
         let mut noise = combine_noises(ch, len, &mut noises, Some(noise_gains.as_slice()))?;
         #[cfg(feature = "timings")]
