@@ -1,6 +1,7 @@
 name: Test DF
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
