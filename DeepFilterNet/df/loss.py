@@ -9,7 +9,7 @@ from torch import Tensor, nn
 from df.config import Csv, config
 from df.io import resample
 from df.model import ModelParams
-from df.modules import LocalSnrTarget, erb_fb, Mask
+from df.modules import LocalSnrTarget, Mask, erb_fb
 from df.stoi import stoi
 from df.utils import angle, as_complex, get_device
 from libdf import DF
