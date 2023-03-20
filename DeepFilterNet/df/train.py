@@ -377,15 +377,7 @@ def run_epoch(
                 feat_spec=feat_spec,
             )
             try:
-                err = losses.forward(
-                    clean,
-                    noisy,
-                    enh,
-                    m,
-                    lsnr,
-                    max_freq=batch.max_freq,
-                    snrs=snrs,
-                )
+                err = losses.forward(clean, noisy, enh, m, lsnr, snrs=snrs)
             except Exception as e:
                 if "nan" in str(e).lower() or "finite" in str(e).lower():
                     logger.warning("NaN in loss computation: {}. Skipping backward.".format(str(e)))
@@ -438,7 +430,7 @@ def run_epoch(
                 l_dict["wd"] = opt.param_groups[0]["weight_decay"]
             if log_timings:
                 l_dict["t_sample"] = batch.timings[:-1].sum()
-                l_dict["t_batch"] = batch.timings[-1].mean()  # last if for whole batch
+                l_dict["t_batch"] = batch.timings[-1].mean()  # last is for whole batch
             if debug:
                 l_dict.update(
                     {

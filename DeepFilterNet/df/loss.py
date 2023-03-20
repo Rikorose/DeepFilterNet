@@ -9,7 +9,7 @@ from torch import Tensor, nn
 from df.config import Csv, config
 from df.io import resample
 from df.model import ModelParams
-from df.modules import LocalSnrTarget, erb_fb
+from df.modules import LocalSnrTarget, erb_fb, Mask
 from df.stoi import stoi
 from df.utils import angle, as_complex, get_device
 from libdf import DF
@@ -270,6 +270,17 @@ class MaskLoss(nn.Module):
             # Reduce the 2 from .pow(2) above
             loss += tmp.clamp_min(1e-13).pow(power // 2).mean().mul(factor) * self.factor
         return loss.mean()
+
+
+class MaskSpecLoss(nn.Module):
+    def __init__(self, df_state: DF, factor=1, gamma: float = 0.6):
+        super().__init__()
+        self.apply_mask = Mask(erb_fb(df_state.erb_widths(), ModelParams().sr, inverse=True))
+        self.loss = SpectralLoss(factor_magnitude=factor, gamma=gamma)
+
+    def forward(self, input: Tensor, clean: Tensor, noisy: Tensor) -> Tensor:
+        enh = self.apply_mask(noisy, input)
+        return self.loss(enh, clean)
 
 
 class DfAlphaLoss(nn.Module):
@@ -654,16 +665,19 @@ class Loss(nn.Module):
         self.ml_gamma = config("gamma", 0.6, float, section="MaskLoss")
         self.ml_gamma_pred = config("gamma_pred", 0.6, float, section="MaskLoss")
         self.ml_f_under = config("f_under", 2, float, section="MaskLoss")
-        self.ml = MaskLoss(
-            state,
-            mask=self.ml_mask,
-            factor=self.ml_f,
-            f_under=self.ml_f_under,
-            gamma=self.ml_gamma,
-            gamma_pred=self.ml_gamma_pred,
-            factors=[1, 10],
-            powers=[2, 4],
-        )
+        if self.ml_mask == "spec":
+            self.ml = MaskSpecLoss(state, self.ml_f, self.ml_gamma)
+        else:
+            self.ml = MaskLoss(
+                state,
+                mask=self.ml_mask,
+                factor=self.ml_f,
+                f_under=self.ml_f_under,
+                gamma=self.ml_gamma,
+                gamma_pred=self.ml_gamma_pred,
+                factors=[1, 10],
+                powers=[2, 4],
+            )
         # SpectralLoss
         self.sl_fm = config("factor_magnitude", 0, float, section="SpectralLoss")  # e.g. 1e4
         self.sl_fc = config("factor_complex", 0, float, section="SpectralLoss")
@@ -734,15 +748,7 @@ class Loss(nn.Module):
             mask (Tensor): Mask (real-valued) estimate of shape [B, C, T, E], E: Number of ERB bins.
             lsnr (Tensor): Local SNR estimates of shape [B, T, 1].
             snrs (Tensor): Input SNRs of the noisy mixture of shape [B].
-            max_freq (Optional, Tensor): Maximum frequency present in the noisy mixtrue (e.g. due to a lower sampling rate) of shape [B].
         """
-        max_bin: Optional[Tensor] = None
-        if max_freq is not None:
-            max_bin = (
-                max_freq.to(device=clean.device)
-                .mul(self.fft_size)
-                .div(self.sr, rounding_mode="trunc")
-            ).long()
         enhanced_td = None
         clean_td = None
         lsnr_gt = self.lsnr(clean, noise=noisy - clean)
@@ -753,7 +759,7 @@ class Loss(nn.Module):
 
         ml, sl, mrsl, cal, sdrl, asrl, lsnrl = [torch.zeros((), device=clean.device)] * 7
         if self.ml_f != 0 and self.ml is not None:
-            ml = self.ml(input=mask, clean=clean, noisy=noisy, max_bin=max_bin)
+            ml = self.ml(input=mask, clean=clean, noisy=noisy)
         if self.sl_f != 0 and self.sl is not None:
             sl = self.sl(input=enhanced, target=clean)
         if self.mrsl_f > 0 and self.mrsl is not None:
