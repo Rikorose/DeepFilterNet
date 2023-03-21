@@ -398,7 +398,7 @@ impl DfTract {
         let (apply_gains, apply_gain_zeros, apply_df) = self.apply_stages(lsnr);
 
         log::trace!(
-            "Enhancing frame with lsnr {:.1}. Applying stage 1: {} and stage 2: {}.",
+            "Enhancing frame with lsnr {:>5.1} dB. Applying stage 1: {} and stage 2: {}.",
             lsnr,
             apply_gains,
             apply_df
@@ -447,10 +447,6 @@ impl DfTract {
             enh.fill(0.);
             return Ok(-15.);
         }
-        if self.atten_lim.unwrap_or_default() == 1. {
-            enh.assign(&noisy);
-            return Ok(35.);
-        }
         if max_a > 0.9999 {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
@@ -468,6 +464,10 @@ impl DfTract {
         }
         self.rolling_spec_buf_y.push_back(self.spec_buf.clone());
         self.rolling_spec_buf_x.push_back(self.spec_buf.clone());
+        if self.atten_lim.unwrap_or_default() == 1. {
+            enh.assign(&noisy);
+            return Ok(35.);
+        }
 
         let (lsnr, gains, coefs) = self.process_raw()?;
 
@@ -491,7 +491,7 @@ impl DfTract {
                     );
                 }
             } else {
-                // Multi channel gains
+                // Same number of channels of gains and spec
                 for (mut gains_ch, mut spec_ch) in
                     gains.axis_iter_mut(Axis(0)).zip(spec.axis_iter_mut(Axis(0)))
                 {
