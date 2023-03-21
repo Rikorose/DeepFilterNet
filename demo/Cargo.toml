@@ -1,0 +1,43 @@
+[package]
+name = "df-demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "df-demo"
+path = "src/main.rs"
+required-features = ["ui"]
+
+[[bin]]
+# Command line demo without UI or controls
+name = "df-demo-c"
+path = "src/capture.rs"
+
+[features]
+ui = ["iced", "image_rs"]
+
+[dependencies]
+iced = { version = "0.8", features = [
+  "image",
+  "debug",
+  "tokio",
+], optional = true }
+itertools = "0.10"
+crossbeam-channel = "0.5"
+image_rs = { package = "image", version = "0.24", optional = true }
+anyhow = "1.0"
+cpal = "0.15"
+deep_filter = { path = "../libDF/", default-features = false, features = [
+  "tract",
+  "use-jemalloc",
+  "default-model",
+] }
+ndarray = "^0.15"
+ringbuf = "0.3"
+env_logger = "0.10"
+log = { version = "0.4", features = ["std"] }
+
+[profile.dev]
+opt-level = 1
+incremental = true
+lto = false
