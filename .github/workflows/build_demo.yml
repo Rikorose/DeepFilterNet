@@ -1,0 +1,46 @@
+name: Build DF Demo
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  test-df-output:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
+            ext: .exe
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: 'rustfmt, clippy'
+      - name: Install Alsa
+        if: ${{ runner.os == 'linux' }}
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install libasound2-dev
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ matrix.command }}-${{matrix.rust}}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          cache-on-failure: true
+      - name: Run cargo ${{matrix.command}}
+        shell: bash
+        run: |
+          cargo build -p df-demo --bin df-demo --features ui --release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: demo-build-artifact-${{runner.os}}
+          path: target/release/df-demo${{matrix.ext}}
