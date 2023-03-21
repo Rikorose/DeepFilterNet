@@ -98,7 +98,7 @@ fn main() -> Result<()> {
                 exit(1)
             }
         }
-    } else if cfg!(feature = "default_model") {
+    } else if cfg!(feature = "default-model") {
         DfParams::default()
     } else {
         log::error!("deep-filter was not compiled with a default model. Please provide a model via '--model <path-to-model.tar.gz>'");

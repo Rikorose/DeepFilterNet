@@ -68,7 +68,7 @@ impl DfParams {
 }
 impl Default for DfParams {
     fn default() -> Self {
-        #[cfg(feature = "default_model")]
+        #[cfg(feature = "default-model")]
         return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"))
             .expect("Could not load model config");
         #[cfg(not(feature = "default_model"))]
@@ -173,7 +173,7 @@ pub struct DfTract {
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
 }
 
-#[cfg(all(not(feature = "capi"), feature = "default_model"))]
+#[cfg(all(not(feature = "capi"), feature = "default-model"))]
 impl Default for DfTract {
     fn default() -> Self {
         let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
