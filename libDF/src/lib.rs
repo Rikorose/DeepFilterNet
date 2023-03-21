@@ -475,7 +475,7 @@ impl NonNan {
     }
 }
 
-pub(crate) fn find_max<'a, I>(vals: I) -> Option<f32>
+pub fn find_max<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -488,7 +488,7 @@ where
     })
 }
 
-pub(crate) fn find_max_abs<'a, I>(vals: I) -> Option<f32>
+pub fn find_max_abs<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -501,7 +501,7 @@ where
     })
 }
 
-pub(crate) fn find_min<'a, I>(vals: I) -> Option<f32>
+pub fn find_min<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -514,7 +514,7 @@ where
     })
 }
 
-pub(crate) fn find_min_abs<'a, I>(vals: I) -> Option<f32>
+pub fn find_min_abs<'a, I>(vals: I) -> Option<f32>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -527,7 +527,7 @@ where
     })
 }
 
-pub(crate) fn argmax<'a, I>(vals: I) -> Option<usize>
+pub fn argmax<'a, I>(vals: I) -> Option<usize>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -542,7 +542,7 @@ where
     Some(index)
 }
 
-pub(crate) fn argmax_abs<'a, I>(vals: I) -> Option<usize>
+pub fn argmax_abs<'a, I>(vals: I) -> Option<usize>
 where
     I: IntoIterator<Item = &'a f32>,
 {
@@ -581,7 +581,7 @@ where
     sum / n as f32
 }
 
-pub(crate) fn median<T>(x: &mut [T]) -> T
+pub fn median<T>(x: &mut [T]) -> T
 where
     T: PartialOrd<T> + Copy,
 {

@@ -164,11 +164,11 @@ pub struct DfTract {
     pub max_db_df_thresh: f32,
     pub reduce_mask: ReduceMask,
     pub atten_lim: Option<f32>,
-    df_states: Vec<DFState>,
-    spec_buf: Tensor, // Real-valued spectrogram buffer of shape [n_ch, 1, 1, n_freqs, 2]
-    erb_buf: TValue,  // Real-valued ERB feature buffer of shape [n_ch, 1, 1, n_erb]
-    cplx_buf: TValue, // Real-valued complex epectrum shape for DF of shape [n_ch, 1, nb_df, 2]
-    m_zeros: Vec<f32>, // Preallocated buffer for applying a zero mask
+    pub df_states: Vec<DFState>,
+    pub spec_buf: Tensor, // Real-valued spectrogram buffer of shape [n_ch, 1, 1, n_freqs, 2]
+    erb_buf: TValue,      // Real-valued ERB feature buffer of shape [n_ch, 1, 1, n_erb]
+    cplx_buf: TValue,     // Real-valued complex epectrum shape for DF of shape [n_ch, 1, nb_df, 2]
+    m_zeros: Vec<f32>,    // Preallocated buffer for applying a zero mask
     rolling_spec_buf_y: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
 }
@@ -580,6 +580,27 @@ impl DfTract {
             }
         }
         Ok(())
+    }
+
+    pub fn get_spec_noisy(&self) -> ArrayView2<Complex32> {
+        as_arrayview_complex(
+            self.rolling_spec_buf_x
+                .get(self.lookahead)
+                .unwrap()
+                .to_array_view::<f32>()
+                .unwrap(),
+            &[self.ch, self.n_freqs],
+        )
+        .into_dimensionality::<Ix2>()
+        .unwrap()
+    }
+    pub fn get_spec_enh(&self) -> ArrayView2<Complex32> {
+        as_arrayview_complex(
+            self.spec_buf.to_array_view::<f32>().unwrap(),
+            &[self.ch, self.n_freqs],
+        )
+        .into_dimensionality::<Ix2>()
+        .unwrap()
     }
 }
 
