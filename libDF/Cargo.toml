@@ -29,7 +29,7 @@ path = "src/bin/enhance_wav.rs"
 required-features = ["bin", "tract", "wav-utils", "transforms"]
 
 [features]
-default = ["default_model", "vorbis", "flac"]
+default = ["default-model", "vorbis", "flac"]
 
 transforms = ["dep:thiserror", "dep:ndarray", "dep:rubato"]
 dataset = [
@@ -77,8 +77,8 @@ tract = [
   "dep:flate2",
   "dep:tar",
 ]
-default_model = []
-capi = ["tract", "default_model", "dep:ndarray"]
+default-model = []  # Include default DFN3 model
+capi = ["tract", "default-model", "dep:ndarray"]
 hdf5-static = ["hdf5?/static"]
 
 [dependencies]
