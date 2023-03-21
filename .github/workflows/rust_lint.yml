@@ -18,10 +18,11 @@ jobs:
       matrix:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check', hdf5: false}
-          - {command: clippy, rust: nightly, args: '--all-features --tests -- -D warnings', hdf5: true}
+          - {command: clippy, rust: nightly, args: '--all-features --tests -- -D warnings', hdf5: true, alsa: true}
           - {command: test, rust: nightly, args: '--all-features -p deep_filter', hdf5: true}
-          - {command: build, rust: nightly, args: '-p deep_filter', hdf5: false}
-          - {command: build, rust: nightly, args: '--all-features', hdf5: true}
+          - {command: build, rust: stable, args: '-p deep_filter', hdf5: false}
+          - {command: build, rust: stable, args: '-p DeepFilterLib', hdf5: false}
+          - {command: build, rust: stable, args: '-p DeepFilterDataLoader', hdf5: true}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -40,6 +41,11 @@ jobs:
         run: |
           sudo apt-get update && \
           sudo apt-get install libhdf5-dev
+      - name: Install HDF5
+        if: matrix.alsa == true
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install libasound2-dev
       - name: Run cargo ${{matrix.command}}
         shell: bash
         run: |
