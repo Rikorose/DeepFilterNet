@@ -85,16 +85,10 @@ impl AudioSink {
     fn new(channels: u16, sample_rate: u32, device_str: Option<String>) -> Result<Self> {
         let host = cpal::default_host();
         let config = get_cpal_stream_cfg(channels, sample_rate);
-        let mut device = host
-            .default_output_device()
-            .expect("no output device available");
+        let mut device = host.default_output_device().expect("no output device available");
         if let Some(device_str) = device_str {
             for avail_dev in host.output_devices()? {
-                if avail_dev
-                    .name()?
-                    .to_lowercase()
-                    .contains(&device_str.to_lowercase())
-                {
+                if avail_dev.name()?.to_lowercase().contains(&device_str.to_lowercase()) {
                     device = avail_dev
                 }
             }
@@ -139,16 +133,10 @@ impl AudioSource {
     fn new(channels: u16, sample_rate: u32, device_str: Option<String>) -> Result<Self> {
         let host = cpal::default_host();
         let config = get_cpal_stream_cfg(channels, sample_rate);
-        let mut device = host
-            .default_input_device()
-            .expect("no output device available");
+        let mut device = host.default_input_device().expect("no output device available");
         if let Some(device_str) = device_str {
             for avail_dev in host.input_devices()? {
-                if avail_dev
-                    .name()?
-                    .to_lowercase()
-                    .contains(&device_str.to_lowercase())
-                {
+                if avail_dev.name()?.to_lowercase().contains(&device_str.to_lowercase()) {
                     device = avail_dev
                 }
             }
@@ -230,9 +218,9 @@ fn get_worker_fn(
             if let Some(ref mut r_opt) = r_opt.as_mut() {
                 while let Ok((c, v)) = r_opt.try_recv() {
                     match c {
-                        DfControl::AttenLim => df
-                            .set_atten_lim(v)
-                            .expect("Failed to set attenuation limit."),
+                        DfControl::AttenLim => {
+                            df.set_atten_lim(v).expect("Failed to set attenuation limit.")
+                        }
                         DfControl::MinThreshDb => df.min_db_thresh = v,
                         DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                         DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
@@ -246,13 +234,8 @@ fn get_worker_fn(
 
 fn push_spec(spec: ArrayView2<Complex32>, sender: &mut SendSpec) {
     debug_assert_eq!(spec.len_of(Axis(0)), 1); // only single channel for now
-    let out = spec
-        .iter()
-        .map(|x| x.norm_sqr().max(1e-10).log10() * 10.)
-        .collect::<Vec<f32>>();
-    sender
-        .send(out.into_boxed_slice())
-        .expect("Failed to send spectrogram")
+    let out = spec.iter().map(|x| x.norm_sqr().max(1e-10).log10() * 10.).collect::<Vec<f32>>();
+    sender.send(out.into_boxed_slice()).expect("Failed to send spectrogram")
 }
 
 pub fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
