@@ -6,6 +6,7 @@ members = [
   "pyDF",
   "pyDF-data",
   "ladspa",
+  "demo",
 ]
 
 [profile.dev]
