@@ -257,7 +257,7 @@ impl Application for SpecView {
                 self.min_threshdb,
                 -15.,
                 35.,
-                |v| Message::MinThreshDbChanged(v),
+                Message::MinThreshDbChanged,
                 1000
             ),
             slider_view(
@@ -265,7 +265,7 @@ impl Application for SpecView {
                 self.max_erbthreshdb,
                 -15.,
                 35.,
-                |v| Message::MaxErbThreshDbChanged(v),
+                Message::MaxErbThreshDbChanged,
                 1000
             ),
             slider_view(
@@ -273,7 +273,7 @@ impl Application for SpecView {
                 self.max_dfthreshdb,
                 -15.,
                 35.,
-                |v| Message::MaxDfThreshDbChanged(v),
+                Message::MaxDfThreshDbChanged,
                 1000
             ),
             slider_view(
@@ -281,7 +281,7 @@ impl Application for SpecView {
                 self.atten_lim,
                 0.,
                 100.,
-                |v| Message::AttenLimChanged(v),
+                Message::AttenLimChanged,
                 1000
             ),
             self.specs(),
@@ -363,12 +363,11 @@ impl SpecView {
             Message::EnhChanged
         })
     }
-    fn specs<'a>(&self) -> Container<Message> {
+    fn specs(&self) -> Container<Message> {
         container(column![
             spec_view("Noisy", self.noisy_img.clone(), 1000, 350),
             spec_view("DeepFilterNet Enhanced", self.enh_img.clone(), 1000, 350),
         ])
-        .into()
     }
 }
 
