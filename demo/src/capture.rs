@@ -56,7 +56,6 @@ pub enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
-    MinBufferFrames,
 }
 
 /// Initialize DF model and returns sample rate, frame size, and number of frequency bins
@@ -224,7 +223,6 @@ fn get_worker_fn(
                         DfControl::MinThreshDb => df.min_db_thresh = v,
                         DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                         DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
-                        _ => (),
                     }
                 }
             }
