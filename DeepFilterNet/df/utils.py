@@ -10,7 +10,6 @@ import numpy as np
 import torch
 from loguru import logger
 from torch import Tensor
-from torch._six import string_classes
 from torch.autograd import Function
 from torch.types import Number
 
@@ -184,7 +183,7 @@ def apply_to_tensor(input_, func):
         return func(input_.data)
     elif isinstance(input_, Tensor):
         return func(input_)
-    elif isinstance(input_, string_classes):
+    elif isinstance(input_, (str, bytes)):
         return input_
     elif isinstance(input_, collections.Mapping):
         return {k: apply_to_tensor(sample, func) for k, sample in input_.items()}
