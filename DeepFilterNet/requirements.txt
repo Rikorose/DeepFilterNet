@@ -8,3 +8,4 @@ numpy>=1.20
 ptflops
 requests
 packaging
+sympy
