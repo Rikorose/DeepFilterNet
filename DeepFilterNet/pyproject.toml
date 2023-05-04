@@ -50,7 +50,7 @@ deepFilter = "df.enhance:run"
 deep-filter-py = "df.enhance:run"
 
 [tool.poetry.dev-dependencies]
-poethepoet = "^0.18"
+poethepoet = "^0.20"
 
 [tool.poe.tasks]
 install-torch-cuda11 = "python -m pip install torch==1.12.0 torchaudio==0.12.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
