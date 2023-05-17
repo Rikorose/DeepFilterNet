@@ -15,11 +15,14 @@ def spec_figure(
     figure=None,
     return_im=False,
     labels=False,
+    xlabels=False,
+    ylabels=False,
     **kwargs,
 ) -> plt.Figure:
     spec = torch.as_tensor(spec).detach()
-    if labels:
+    if labels or xlabels:
         kwargs.setdefault("xlabel", "Time [s]")
+    if labels or ylabels:
         if kwargs.get("kHz", False):
             kwargs.setdefault("ylabel", "Frequency [kHz]")
         else:
