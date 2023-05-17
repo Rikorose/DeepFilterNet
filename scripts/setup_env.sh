@@ -91,8 +91,8 @@ setup_env() {
   fi
   if [ "$INSTALL_PYTESTDEPS" -eq 1 ]; then
     echo "Installing test requirements"
-    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements.txt
-    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements_test.txt
+    echo pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements_eval.txt
+    pip install -r "$PROJECT_HOME"/DeepFilterNet/requirements_eval.txt
   fi
   if [ "$INSTALL_LIBDF" -eq 1 ]; then
     echo "Installing DeepFilterLib"
