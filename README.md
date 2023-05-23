@@ -3,13 +3,24 @@ A Low Complexity Speech Enhancement Framework for Full-Band Audio (48kHz) using 
 
 ![deepfilternet3](https://user-images.githubusercontent.com/16517898/225623209-a54fea75-ca00-404c-a394-c91d2d1146d2.svg)
 
+### Demo
+
+https://github.com/Rikorose/DeepFilterNet/assets/16517898/79679fd7-de73-4c22-948c-891927c7d2ca
+
 ### News
 
-- New real-time version and a LADSPA plugin
+- New DeepFilterNet Demo: *DeepFilterNet: Perceptually Motivated Real-Time Speech Enhancement*
+  - Paper: https://arxiv.org/abs/2305.08227
+  - Video: https://youtu.be/EO7n96YwnyE
+
+- New Multi-Frame Filtering Paper: *Deep Multi-Frame Filtering for Hearing Aids*
+  - Paper: https://arxiv.org/abs/2305.08225
+
+- Real-time version and a LADSPA plugin
   - [Pre-compiled binary](#deep-filter), no python dependencies. Usage: `deep-filter audio-file.wav`
   - [LADSPA plugin](ladspa/) with pipewire filter-chain integration for real-time noise reduction on your mic.
 
-- New DeepFilterNet2 Paper: *DeepFilterNet2: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio*
+- DeepFilterNet2 Paper: *DeepFilterNet2: Towards Real-Time Speech Enhancement on Embedded Devices for Full-Band Audio*
   - Paper: https://arxiv.org/abs/2205.05474
   - Samples: https://rikorose.github.io/DeepFilterNet2-Samples/
   - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet2
