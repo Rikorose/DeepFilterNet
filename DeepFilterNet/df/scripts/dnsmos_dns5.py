@@ -5,7 +5,7 @@ import argparse
 import concurrent.futures
 import glob
 import os
-from typing import Union
+from typing import List, Optional, Union
 
 import librosa
 import numpy as np
@@ -13,12 +13,14 @@ import pandas as pd
 import soundfile as sf
 from tqdm import tqdm
 
+from df.logger import log_metrics
 from df.scripts.dnsmos import get_ort_session
 from df.utils import download_file, get_cache_dir
 
 SAMPLING_RATE = 16000
 INPUT_LENGTH = 9.01
 URL_ONNX = "https://github.com/microsoft/DNS-Challenge/raw/e14b010/DNSMOS/DNSMOS"
+NAMES = ["SIG", "BAK", "OVRL", "P808_MOS"]
 
 
 class ComputeScore:
@@ -125,6 +127,24 @@ def download_onnx_models():
     return sig_bak_ovr, p808
 
 
+def eval_dnsmos_single(file: str, target_mos: Optional[List[float]] = None):
+    primary_model_path, p808_model_path = download_onnx_models()
+    compute_score = ComputeScore(primary_model_path, p808_model_path)
+    desired_fs = SAMPLING_RATE
+    scores = compute_score(file, desired_fs, False)
+    scores = {n: scores[n] for n in NAMES}
+    log_metrics("Predicted", {n: v for (n, v) in scores.items()})
+    if target_mos is not None:
+        assert len(target_mos) == 4
+        for n, t in zip(NAMES, target_mos):
+            if not isclose(scores[n], t):
+                diff = (np.asarray(target_mos) - np.fromiter(scores.values(), dtype=float)).tolist()
+                log_metrics("Diff     ", {n: v for (n, v) in zip(NAMES, diff)}, level="ERROR")
+                exit(2)
+
+    return scores
+
+
 def eval_dnsmos(args):
     models = glob.glob(os.path.join(args.testset_dir, "*"))
     audio_clips_list = []
@@ -177,11 +197,20 @@ def print_csv(df: Union[pd.DataFrame, str]):
     print(df.describe())
 
 
+def isclose(a, b) -> bool:
+    __a_tol = 1e-4
+    __r_tol = 1e-4
+    return abs(a - b) <= (__a_tol + __r_tol * abs(b))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="subparser_name")
     mn_parser = subparsers.add_parser("mean", aliases=["m"])
     mn_parser.add_argument("csv_file", type=str)
+    eval_single_parser = subparsers.add_parser("eval-single")
+    eval_single_parser.add_argument("file", type=str)
+    eval_single_parser.add_argument("--target_mos", "-t", type=float, nargs="*")
     eval_parser = subparsers.add_parser("eval", aliases=["e"])
     eval_parser.add_argument(
         "testset_dir", help="Path to the dir containing audio clips in .wav to be evaluated"
@@ -204,5 +233,7 @@ if __name__ == "__main__":
         exit(1)
     if args.subparser_name in ("m", "mean"):
         print_csv(args.csv_file)
+    elif args.subparser_name == "eval-single":
+        eval_dnsmos_single(args.file, args.target_mos)
     else:
         eval_dnsmos(args)
