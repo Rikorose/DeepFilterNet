@@ -21,8 +21,8 @@ from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm
 from df.version import version
 from libdf import DF, erb, erb_norm, unit_norm
 
-PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2")
-DEFAULT_MODEL = "DeepFilterNet2"
+PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2", "DeepFilterNet3")
+DEFAULT_MODEL = "DeepFilterNet3"
 
 
 class AudioDataset(Dataset):
