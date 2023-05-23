@@ -36,8 +36,3 @@ ndarray = "^0.15"
 ringbuf = "0.3"
 env_logger = "0.10"
 log = { version = "0.4", features = ["std"] }
-
-[profile.dev]
-opt-level = 1
-incremental = true
-lto = false
