@@ -13,6 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        rust: 
+          - nightly
         include:
           - os: ubuntu-latest
           - os: macos-latest
@@ -24,7 +26,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: ${{matrix.rust}}
           components: 'rustfmt, clippy'
       - name: Install Alsa
         if: ${{ runner.os == 'linux' }}
@@ -34,9 +36,9 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ runner.os }}-${{ matrix.command }}-${{matrix.rust}}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{matrix.rust}}-cargo-${{ hashFiles('**/Cargo.toml') }}
           cache-on-failure: true
-      - name: Run cargo ${{matrix.command}}
+      - name: Run cargo build
         shell: bash
         run: |
           cargo build -p df-demo --bin df-demo --features ui --release
