@@ -64,6 +64,17 @@ TARGET_METRICS = {
         "stoi": 0.9725977621169399,
         "sdr": 19.41733717918396,
     },
+    "DeepFilterNet3": {
+        "composite": [
+            2.75010919570923,
+            4.10029220581055,
+            2.67130112648010,
+            3.41263580322266,
+            -1.26063239574432,
+        ],
+        "stoi": 0.9745599031448364,
+        "sdr": 19.928733825683594,
+    },
 }
 
 
@@ -127,6 +138,10 @@ class TestDfModels(unittest.TestCase):
 
     def test_deepfilternet2(self):
         model = "DeepFilterNet2"
+        self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
+
+    def test_deepfilternet3(self):
+        model = "DeepFilterNet3"
         self._test_model(*self.models[model], target_metrics=TARGET_METRICS[model], prefix=model)
 
 
