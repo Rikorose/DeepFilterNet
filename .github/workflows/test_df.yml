@@ -112,12 +112,24 @@ jobs:
 
       # Install DeepFilterNet and dependencies
       - name: Install runtime dependencies and DeepFilterNet
+        if: matrix.os != 'windows-latest'
+        working-directory: DeepFilterNet
+        run: |
+          poetry --version
+          poetry install -vvv --no-interaction -E eval -E dnsmos-local ${{env.EXTRA}}
+          echo "Installing pytorch"
+          poetry run poe install-torch-cpu
+      - name: Install runtime dependencies and DeepFilterNet for Windows
+        if: matrix.os == 'windows-latest'
         working-directory: DeepFilterNet
         run: |
           poetry --version
           poetry install -vvv --no-interaction -E dnsmos-local ${{env.EXTRA}}
           echo "Installing pytorch"
           poetry run poe install-torch-cpu
+          echo "Installing eval-utils"
+          poetry run poe install-eval-utils
+
 
       # Run tests
       - name: Run DF Test
