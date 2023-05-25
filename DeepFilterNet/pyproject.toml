@@ -56,7 +56,7 @@ poethepoet = "^0.20"
 install-torch-cuda11 = "python -m pip install torch==1.12.0 torchaudio==0.12.0 --extra-index-url https://download.pytorch.org/whl/cu113/"
 install-torch-cpu = "python -m pip install torch==1.12.0 torchaudio==0.12.0 --extra-index-url https://download.pytorch.org/whl/cpu/"
 install-eval-utils = "python -m pip install -r requirements_eval.txt"
-install-dnsmos-utils = "python -m pip install -r requirements_eval.txt"
+install-dnsmos-utils = "python -m pip install -r requirements_dnsmos.txt"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
