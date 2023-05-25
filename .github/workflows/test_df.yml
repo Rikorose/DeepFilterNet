@@ -143,10 +143,10 @@ jobs:
           poetry run deepFilter ../assets/noisy_snr0.wav -m DeepFilterNet -o ../out
           poetry run deepFilter ../assets/noisy_snr0.wav -m DeepFilterNet2 -o ../out
           poetry run deepFilter ../assets/noisy_snr0.wav -m DeepFilterNet3 -o ../out
-          poetry run python df/scripts/dnsmos_dns5.py ../assets/noisy_snr0.wav -t 3.593157109941994, 2.6762185573926756, 2.5772815929645208, 2.9930654
-          poetry run python df/scripts/dnsmos_dns5.py ../out/noisy_snr0_DeepFilterNet.wav -t 3.320198609916083, 3.995019883633959, 3.0340518350340058, 3.709483
-          poetry run python df/scripts/dnsmos_dns5.py ../out/noisy_snr0_DeepFilterNet2.wav -t 3.3456805601892454, 4.095289455202942, 3.1015692702262143, 3.7800858
-          poetry run python df/scripts/dnsmos_dns5.py ../out/noisy_snr0_DeepFilterNet3.wav -t 3.3711728515217914, 4.087029941126605, 3.118482291999213, 3.7518153
+          poetry run python df/scripts/dnsmos_dns5.py eval-single ../assets/noisy_snr0.wav -t 3.593157109941994 2.6762185573926756 2.5772815929645208 2.9930654
+          poetry run python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet.wav -t 3.320198609916083 3.995019883633959 3.0340518350340058 3.709483
+          poetry run python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet2.wav -t 3.3456805601892454 4.095289455202942 3.1015692702262143 3.7800858
+          poetry run python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet3.wav -t 3.3711728515217914 4.087029941126605 3.118482291999213 3.7518153
 
       - uses: actions/upload-artifact@v3
         with:
