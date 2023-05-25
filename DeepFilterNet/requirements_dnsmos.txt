@@ -1,4 +1,4 @@
-librosa
+librosa=0.10
 pandas
 tqdm
 soundfile
