@@ -23,16 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.9"]
-        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-        # is_pr:
-        #   - ${{ github.event_name == 'pull_request' }}
-        # include:
-        #   - os: "ubuntu-latest"
-        # exclude:
-        #   - os: "macos-latest"
-        #     is_pr: true  # Run only linux on PR
-        #   - os: "windows-latest"
-        #     is_pr: true  # Run only linux on PR
+        include:
+          - os: "ubuntu-latest"
+          # - os: "macos-latest"  # Fails to install hdf5 from git
+          - os: "windows-latest"
     defaults:
       run:
         shell: bash
@@ -119,6 +113,7 @@ jobs:
           poetry install -vvv --no-interaction -E eval -E dnsmos-local ${{env.EXTRA}}
           echo "Installing pytorch"
           poetry run poe install-torch-cpu
+          poetry run poe install-dnsmos-utils
       - name: Install runtime dependencies and DeepFilterNet for Windows
         if: matrix.os == 'windows-latest'
         working-directory: DeepFilterNet
@@ -129,7 +124,7 @@ jobs:
           poetry run poe install-torch-cpu
           echo "Installing eval-utils"
           poetry run poe install-eval-utils
-
+          poetry run poe install-dnsmos-utils
 
       # Run tests
       - name: Run DF Test
