@@ -11,9 +11,10 @@ import librosa
 import numpy as np
 import pandas as pd
 import soundfile as sf
+from loguru import logger
 from tqdm import tqdm
 
-from df.logger import log_metrics
+from df.logger import init_logger, log_metrics
 from df.scripts.dnsmos import get_ort_session
 from df.utils import download_file, get_cache_dir
 
@@ -54,7 +55,8 @@ class ComputeScore:
 
         return sig_poly, bak_poly, ovr_poly
 
-    def __call__(self, fpath, sampling_rate, is_personalized_MOS):
+    def __call__(self, fpath: str, sampling_rate: int, is_personalized_MOS: bool):
+        logger.debug(f"Processing file: {fpath}")
         aud, input_fs = sf.read(fpath)
         fs = sampling_rate
         if input_fs != fs:
@@ -133,6 +135,7 @@ def eval_dnsmos_single(file: str, target_mos: Optional[List[float]] = None):
     desired_fs = SAMPLING_RATE
     scores = compute_score(file, desired_fs, False)
     scores = {n: scores[n] for n in NAMES}
+    logger.info(f"Processing file: {file}")
     log_metrics("Predicted", {n: v for (n, v) in scores.items()})
     if target_mos is not None:
         assert len(target_mos) == 4
@@ -204,6 +207,7 @@ def isclose(a, b) -> bool:
 
 
 if __name__ == "__main__":
+    init_logger()
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="subparser_name")
     mn_parser = subparsers.add_parser("mean", aliases=["m"])
