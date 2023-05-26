@@ -265,7 +265,7 @@ jobs:
       # Cargo build options
       PACKAGE: deep_filter
       BIN: deep-filter
-      FEATURES: bin,tract,use-jemalloc,wav-utils,transforms,default_model
+      FEATURES: bin,tract,use-jemalloc,wav-utils,transforms,default-model
     strategy:
       fail-fast: false
       matrix:
