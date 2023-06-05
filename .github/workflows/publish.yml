@@ -92,17 +92,17 @@ jobs:
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
 
       - name: Install HDF5
-        if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
+        if: runner.os == 'ubuntu' && matrix.df_wheel == 'pyDF-data'
         run: |
           sudo apt-get install -y libhdf5-dev
 
       - name: Install Python
-        if: matrix.os != 'ubuntu-latest'
+        if: runner.os != 'ubuntu'
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python.version }}
       - name: Setup Python manylinux
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'ubuntu'
         run: |
           ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/"
           ls -l /etc/*release
@@ -119,7 +119,7 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build wheel unix
-        if: matrix.os != 'windows-latest'
+        if: runner.os != 'windows'
         run: |
           mkdir -p target/wheels
           maturin build --profile=release-lto \
@@ -129,7 +129,7 @@ jobs:
             -o target/wheels/
 
       - name: Build wheel windows
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'windows'
         run: |
           mkdir -p target/wheels target/repaired
           maturin build --profile=release-lto \
