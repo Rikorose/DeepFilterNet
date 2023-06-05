@@ -64,19 +64,19 @@ jobs:
             tag: "310"
             abi: "310"
         df_wheel: ["pyDF", "pyDF-data"]
-        os: ["ubuntu-22.04", "macos-latest", "windows-latest"]
+        os: ["ubuntu-22.04", "macos-13", "windows-2022"]
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_24_x86_64:latest
-          - os: macos-latest
+          - os: macos-13
             target: x86_64-apple-darwin
-          - os: windows-latest
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
         exclude:
-          - os: windows-latest
+          - os: windows-2022
             df_wheel: pyDF-data
-          - os: macos-latest
+          - os: macos-13
             df_wheel: pyDF-data
     defaults:
       run:
