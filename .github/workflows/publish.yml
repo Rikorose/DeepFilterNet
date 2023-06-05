@@ -97,9 +97,7 @@ jobs:
       - name: Install HDF5
         if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
-          apt-get update || echo "Failed to run apt-get update"
-          echo "apt update done"
-          apt-get install -y libhdf5-dev
+          dnf install hdf5-devel
 
       - name: Install Python
         if: runner.os != 'linux'
