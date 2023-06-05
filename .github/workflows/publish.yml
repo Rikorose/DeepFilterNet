@@ -68,7 +68,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            container: quay.io/pypa/manylinux_2_24_x86_64:latest
+            container: quay.io/pypa/manylinux_2_28_x86_64:latest
           - os: macos-13
             target: x86_64-apple-darwin
           - os: windows-2022
@@ -97,7 +97,7 @@ jobs:
       - name: Install HDF5
         if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
-          apt-get update || true
+          apt-get update || echo "Failed to run apt-get update"
           echo "apt update done"
           apt-get install -y libhdf5-dev
 
