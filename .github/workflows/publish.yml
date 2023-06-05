@@ -87,22 +87,23 @@ jobs:
 
       - name: Echo git tag
         run: |
+          echo "OS: ${{runner.os}}"
           echo "git tag: ${{github.event.head_commit.message}}"
           echo "DF version: $(scripts/get_version.sh)"
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
 
       - name: Install HDF5
-        if: runner.os == 'ubuntu' && matrix.df_wheel == 'pyDF-data'
+        if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
           sudo apt-get install -y libhdf5-dev
 
       - name: Install Python
-        if: runner.os != 'ubuntu'
+        if: runner.os != 'linux'
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python.version }}
       - name: Setup Python manylinux
-        if: runner.os == 'ubuntu'
+        if: runner.os == 'linux'
         run: |
           ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/"
           ls -l /etc/*release
