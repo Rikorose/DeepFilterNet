@@ -64,7 +64,7 @@ jobs:
             tag: "310"
             abi: "310"
         df_wheel: ["pyDF", "pyDF-data"]
-        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        os: ["ubuntu-22.04", "macos-latest", "windows-latest"]
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -281,10 +281,10 @@ jobs:
             os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
           - build: macos-x86
-            os: macos-12
+            os: macos-13
             target: x86_64-apple-darwin
           - build: macos-aarch64
-            os: macos-12
+            os: macos-13
             target: aarch64-apple-darwin
           - build: win-msvc
             os: windows-2022
@@ -354,7 +354,7 @@ jobs:
 
       - name: Upload release archive
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: gh release upload $GITHUB_REF ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
   build-deepfilter-ladspa:
@@ -391,12 +391,12 @@ jobs:
             libname: libdeep_filter_ladspa
             libext: so
           - build: macos-x86
-            os: macos-12
+            os: macos-13
             target: x86_64-apple-darwin
             libname: libdeep_filter_ladspa
             libext: dylib
           - build: macos-aarch64
-            os: macos-12
+            os: macos-13
             target: aarch64-apple-darwin
             libname: libdeep_filter_ladspa
             libext: dylib
@@ -458,5 +458,5 @@ jobs:
 
       - name: Upload release archive
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: gh release upload $GITHUB_REF ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
