@@ -97,7 +97,8 @@ jobs:
       - name: Install HDF5
         if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
-          dnf install hdf5-devel
+          dnf install -y epel-release
+          dnf install -y hdf5-devel
 
       - name: Install Python
         if: runner.os != 'linux'
