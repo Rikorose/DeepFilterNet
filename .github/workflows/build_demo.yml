@@ -14,11 +14,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             rust: nightly
-          - os: macos-latest
+          - os: macos-13
             rust: nightly
-          - os: windows-latest
+          - os: windows-2022
             rust: nightly
             ext: .exe
     steps:
