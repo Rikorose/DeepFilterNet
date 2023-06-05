@@ -14,9 +14,11 @@ jobs:
   create-release:
     name: create-release
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     outputs:
-      upload_url: ${{ steps.release.outputs.upload_url }}
       df_version: ${{ env.DF_VERSION }}
+      upload_url: ${{ steps.release.outputs.upload_url }}
     steps:
       - name: Checkout DeepFilterNet
         uses: actions/checkout@v3
@@ -37,12 +39,11 @@ jobs:
           echo "DF_VERSION=$DF_VERSION" >> $GITHUB_OUTPUT
       - name: Create Release
         id: release
-        uses: actions/create-release@v1
+        uses: ncipollo/release-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{ env.DF_VERSION }}
-          release_name: v${{ env.DF_VERSION }}
+          tag: v${{ env.DF_VERSION }}
           draft: true
 
   build-libdf-wheels:
@@ -93,7 +94,6 @@ jobs:
       - name: Install HDF5
         if: matrix.os == 'ubuntu-latest' && matrix.df_wheel == 'pyDF-data'
         run: |
-          apt-get update
           apt-get install -y --no-install-recommends libhdf5-dev
 
       - name: Install Python
@@ -302,6 +302,11 @@ jobs:
           toolchain: nightly
           target: ${{ matrix.target }}
 
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+          echo "DF version is: ${{ env.DF_VERSION }}"
+
       - name: Use Cross
         shell: bash
         run: |
@@ -337,15 +342,18 @@ jobs:
           name: ${{ env.DF_BIN_NAME }}
           path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
+      # - name: Upload release archive
+      #   uses: actions/upload-release-asset@v1.0.2
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ needs.create-release.outputs.upload_url }}
+      #     asset_name: ${{ env.DF_BIN_NAME }}
+      #     asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+      #     asset_content_type: application/octet-stream
+
       - name: Upload release archive
-        uses: actions/upload-release-asset@v1.0.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_name: ${{ env.DF_BIN_NAME }}
-          asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
-          asset_content_type: application/octet-stream
+        run: gh release upload $GITHUB_REF ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
   build-deepfilter-ladspa:
     needs: ['create-release']
@@ -436,12 +444,15 @@ jobs:
           name: ${{ env.DF_LADSPA_NAME }}
           path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
 
+      # - name: Upload release archive
+      #   uses: actions/upload-release-asset@v1.0.2
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ needs.create-release.outputs.upload_url }}
+      #     asset_name: ${{ env.DF_LADSPA_NAME }}
+      #     asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
+      #     asset_content_type: application/octet-stream
+
       - name: Upload release archive
-        uses: actions/upload-release-asset@v1.0.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_name: ${{ env.DF_LADSPA_NAME }}
-          asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
-          asset_content_type: application/octet-stream
+        run: gh release upload $GITHUB_REF ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
