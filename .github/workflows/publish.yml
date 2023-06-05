@@ -89,13 +89,15 @@ jobs:
         run: |
           echo "OS: ${{runner.os}}"
           echo "git tag: ${{github.event.head_commit.message}}"
-          echo "DF version: $(scripts/get_version.sh)"
-          echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
+
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
 
       - name: Install HDF5
         if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
-          sudo apt-get install -y libhdf5-dev
+          apt-get install -y libhdf5-dev
 
       - name: Install Python
         if: runner.os != 'linux'
@@ -177,7 +179,6 @@ jobs:
       - name: Show DF version
         run: |
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
-          echo "DF version is: ${{ env.DF_VERSION }}"
       - name: Get libdf wheels
         uses: actions/download-artifact@v3
         with:
@@ -306,7 +307,6 @@ jobs:
       - name: Show DF version
         run: |
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
-          echo "DF version is: ${{ env.DF_VERSION }}"
 
       - name: Use Cross
         shell: bash
@@ -321,9 +321,8 @@ jobs:
           echo "cargo command is: ${{ env.CARGO }}"
           echo "target flag is: ${{ env.TARGET_FLAGS }}"
           echo "target dir is: ${{ env.TARGET_DIR }}"
-          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
-          echo "DF version is: ${{ env.DF_VERSION }}"
           echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}${{ matrix.ext }}" >> $GITHUB_ENV
+          echo "GITHUB_REF is: ${GITHUB_REF}"
 
       - name: Build release binary
         run: | 
@@ -343,20 +342,10 @@ jobs:
           name: ${{ env.DF_BIN_NAME }}
           path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
-      # - name: Upload release archive
-      #   uses: actions/upload-release-asset@v1.0.2
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   with:
-      #     upload_url: ${{ needs.create-release.outputs.upload_url }}
-      #     asset_name: ${{ env.DF_BIN_NAME }}
-      #     asset_path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
-      #     asset_content_type: application/octet-stream
-
       - name: Upload release archive
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: gh release upload $GITHUB_REF ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+        run: gh release upload ${GITHUB_REF} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
   build-deepfilter-ladspa:
     needs: ['create-release']
@@ -418,6 +407,10 @@ jobs:
           toolchain: nightly
           target: ${{ matrix.target }}
 
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+
       - name: Use Cross
         shell: bash
         run: |
@@ -431,8 +424,6 @@ jobs:
           echo "cargo command is: ${{ env.CARGO }}"
           echo "target flag is: ${{ env.TARGET_FLAGS }}"
           echo "target dir is: ${{ env.TARGET_DIR }}"
-          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
-          echo "DF version is: ${{ env.DF_VERSION }}"
           echo "DF_LADSPA_NAME=${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}" >> $GITHUB_ENV
 
       - name: Build release binary
