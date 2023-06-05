@@ -97,7 +97,9 @@ jobs:
       - name: Install HDF5
         if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
-          apt-get update && apt-get install -y libhdf5-dev
+          apt-get update || true
+          echo "apt update done"
+          apt-get install -y libhdf5-dev
 
       - name: Install Python
         if: runner.os != 'linux'
@@ -440,4 +442,4 @@ jobs:
       - name: Upload release archive
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: gh release upload v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+        run: gh release upload v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
