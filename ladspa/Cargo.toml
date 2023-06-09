@@ -12,11 +12,15 @@ crate-type = ["cdylib"]
 dbus = ["dep:zbus", "dep:event-listener"]
 
 [dependencies]
-deep_filter = { path = "../libDF", features = ["tract", "use-jemalloc"] }
+deep_filter = { path = "../libDF", default-features = false, features = [
+  "tract",
+  "use-jemalloc",
+  "default-model-ll",
+] }
 ladspa = "0.3.4"
 ndarray = "^0.15"
 env_logger = "0.10"
 uuid = { version = "1.2.1", features = ["v4", "fast-rng"] }
 log = { version = "0.4", features = ["std"] }
 zbus = { version = "3.6", optional = true }
-event-listener = {version = "2.5", optional = true}
+event-listener = { version = "2.5", optional = true }
