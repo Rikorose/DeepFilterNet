@@ -35,6 +35,12 @@ impl DfParams {
     pub fn from_bytes(tar_buf: &'static [u8]) -> Result<Self> {
         Self::from_targz(tar_buf)
     }
+    #[cfg(feature = "default-model-ll")]
+    pub fn default_ll() -> Self {
+        log::debug!("Loading model DeepFilterNet3_ll_onnx.tar.gz");
+        DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz"))
+            .expect("Could not load model config")
+    }
     fn from_targz<R: Read>(f: R) -> Result<Self> {
         let tar = GzDecoder::new(f);
         let mut archive = Archive::new(tar);
@@ -66,24 +72,15 @@ impl DfParams {
         })
     }
 }
-#[allow(unreachable_code)]
 impl Default for DfParams {
     fn default() -> Self {
-        #[cfg(feature = "default-model-ll")]
-        {
-            log::debug!("Loading model DeepFilterNet3_ll_onnx.tar.gz");
-            return DfParams::from_bytes(include_bytes!(
-                "../../models/DeepFilterNet3_ll_onnx.tar.gz"
-            ))
-            .expect("Could not load model config");
-        }
-        #[cfg(all(feature = "default-model", not(feature = "default-model-ll")))]
+        #[cfg(feature = "default-model")]
         {
             log::debug!("Loading model DeepFilterNet3_onnx.tar.gz");
             return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"));
         }
         .expect("Could not load model config");
-        #[cfg(any(not(feature = "default-model"), not(feature = "default-model-ll")))]
+        #[cfg(not(feature = "default-model"))]
         panic!("Not compiled with a default model")
     }
 }
