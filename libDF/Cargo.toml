@@ -78,6 +78,7 @@ tract = [
   "dep:tar",
 ]
 default-model = []  # Include default DFN3 model
+default-model-ll = []  # Include default DFN3 low latency model
 capi = ["tract", "default-model", "dep:ndarray"]
 hdf5-static = ["hdf5?/static"]
 

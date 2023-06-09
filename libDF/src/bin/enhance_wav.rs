@@ -75,6 +75,7 @@ fn main() -> Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default())
         .filter_level(level)
+        .filter_module("tract_onnx", log::LevelFilter::Error)
         .filter_module("tract_core", log::LevelFilter::Error)
         .filter_module("tract_hir", log::LevelFilter::Error)
         .filter_module("tract_linalg", log::LevelFilter::Error)
