@@ -66,12 +66,24 @@ impl DfParams {
         })
     }
 }
+#[allow(unreachable_code)]
 impl Default for DfParams {
     fn default() -> Self {
-        #[cfg(feature = "default-model")]
-        return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"))
+        #[cfg(feature = "default-model-ll")]
+        {
+            log::debug!("Loading model DeepFilterNet3_ll_onnx.tar.gz");
+            return DfParams::from_bytes(include_bytes!(
+                "../../models/DeepFilterNet3_ll_onnx.tar.gz"
+            ))
             .expect("Could not load model config");
-        #[cfg(not(feature = "default-model"))]
+        }
+        #[cfg(all(feature = "default-model", not(feature = "default-model-ll")))]
+        {
+            log::debug!("Loading model DeepFilterNet3_onnx.tar.gz");
+            return DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"));
+        }
+        .expect("Could not load model config");
+        #[cfg(any(not(feature = "default-model"), not(feature = "default-model-ll")))]
         panic!("Not compiled with a default model")
     }
 }
