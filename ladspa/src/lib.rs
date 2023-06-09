@@ -173,6 +173,9 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         };
         INIT_LOGGER.call_once(|| {
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+                .filter_module("polling", log::LevelFilter::Error)
+                .filter_module("async_io", log::LevelFilter::Error)
+                .filter_module("tract_onnx", log::LevelFilter::Error)
                 .filter_module("tract_core", log::LevelFilter::Error)
                 .filter_module("tract_hir", log::LevelFilter::Error)
                 .filter_module("tract_linalg", log::LevelFilter::Error)
@@ -492,6 +495,21 @@ impl DfDbusControl {
         self.tx
             .send((DfControl::AttenLim, lim as f32))
             .expect("Failed to send DfControl");
+    }
+    fn min_processing_thresh(&self, thresh: i32) {
+        self.tx
+            .send((DfControl::MinThreshDb, thresh as f32))
+            .expect("Failed to send DfControl")
+    }
+    fn max_erb_thresh(&self, thresh: i32) {
+        self.tx
+            .send((DfControl::MaxErbThreshDb, thresh as f32))
+            .expect("Failed to send DfControl")
+    }
+    fn max_df_thresh(&self, thresh: i32) {
+        self.tx
+            .send((DfControl::MaxDfThreshDb, thresh as f32))
+            .expect("Failed to send DfControl")
     }
 }
 
