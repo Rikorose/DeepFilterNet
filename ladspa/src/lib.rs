@@ -615,7 +615,7 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Max DF processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::High),
+                    default: Some(DefaultValue::Maximum),
                     lower_bound: Some(-15.),
                     upper_bound: Some(35.),
                 },
