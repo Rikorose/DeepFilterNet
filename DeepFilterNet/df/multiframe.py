@@ -124,7 +124,7 @@ def psd(x: Tensor, n: int) -> Tensor:
 
 
 def df(spec: Tensor, coefs: Tensor) -> Tensor:
-    """Deep filter implemenation using `torch.einsum`. Requires unfolded spectrogram.
+    """Deep filter implementation using `torch.einsum`. Requires unfolded spectrogram.
 
     Args:
         spec (complex Tensor): Spectrogram of shape [B, C, T, F, N]
@@ -137,7 +137,7 @@ def df(spec: Tensor, coefs: Tensor) -> Tensor:
 
 
 def df_real(spec: Tensor, coefs: Tensor) -> Tensor:
-    """Deep filter implemenation for real valued input Tensors. Requires unfolded spectrograms.
+    """Deep filter implementation for real valued input Tensors. Requires unfolded spectrograms.
 
     Args:
         spec (real-valued Tensor): Spectrogram of shape [B, C, N, T, F, 2].
