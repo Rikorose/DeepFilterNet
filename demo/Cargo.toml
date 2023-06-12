@@ -15,6 +15,7 @@ path = "src/capture.rs"
 
 [features]
 ui = ["iced", "image_rs"]
+thresholds = []
 
 [dependencies]
 iced = { version = "0.9", features = [

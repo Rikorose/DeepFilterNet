@@ -1,5 +1,7 @@
+use std::env;
 use std::io::{self, stdout, Write};
 use std::mem::MaybeUninit;
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Once,
@@ -59,7 +61,7 @@ pub enum DfControl {
 }
 
 /// Initialize DF model and returns sample rate, frame size, and number of frequency bins
-fn init_df(channels: usize) -> (usize, usize, usize) {
+fn init_df(model_path: Option<PathBuf>, channels: usize) -> (usize, usize, usize) {
     unsafe {
         if let Some(m) = MODEL.as_ref() {
             if m.ch == channels {
@@ -67,8 +69,13 @@ fn init_df(channels: usize) -> (usize, usize, usize) {
             }
         }
     }
-    let df_params = DfParams::default();
-    let r_params = RuntimeParams::new(channels, false, 100., -16., 35., 25., ReduceMask::MEAN);
+    // let df_params = DfParams::default();
+    let df_params = if let Some(path) = model_path {
+        DfParams::new(path).expect("Failed to read DF model")
+    } else {
+        DfParams::default()
+    };
+    let r_params = RuntimeParams::new(channels, false, 100., -15., 35., 35., ReduceMask::MEAN);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     let (sr, frame_size, freq_size) = (df.sr, df.hop_size, df.n_freqs);
     unsafe { MODEL = Some(df) };
@@ -255,6 +262,7 @@ pub struct DeepFilterCapture {
     pub sr: usize,
     pub frame_size: usize,
     pub freq_size: usize,
+    model_path: Option<PathBuf>,
     should_stop: Arc<AtomicBool>,
     worker_handle: Option<JoinHandle<()>>,
     source: AudioSource,
@@ -263,19 +271,20 @@ pub struct DeepFilterCapture {
 
 impl Default for DeepFilterCapture {
     fn default() -> Self {
-        DeepFilterCapture::new(None, None, None, None)
+        DeepFilterCapture::new(None, None, None, None, None)
             .expect("Error during DeepFilterCapture initialization")
     }
 }
 impl DeepFilterCapture {
     pub fn new(
+        model_path: Option<PathBuf>,
         s_lsnr: Option<SendLsnr>,
         s_noisy: Option<SendSpec>,
         s_enh: Option<SendSpec>,
         r_contr: Option<RecvControl>,
     ) -> Result<Self> {
         let ch = 1;
-        let (sr, frame_size, freq_size) = init_df(ch);
+        let (sr, frame_size, freq_size) = init_df(model_path.clone(), ch);
         let in_rb = HeapRb::<f32>::new(frame_size * 100);
         let out_rb = HeapRb::<f32>::new(frame_size * 100);
         let (in_prod, in_cons) = in_rb.split();
@@ -309,6 +318,7 @@ impl DeepFilterCapture {
             sr,
             frame_size,
             freq_size,
+            model_path,
             should_stop,
             worker_handle,
             source,
@@ -341,7 +351,8 @@ pub fn main() -> Result<()> {
     });
 
     let (lsnr_prod, mut lsnr_cons) = unbounded();
-    let _c = DeepFilterCapture::new(Some(lsnr_prod), None, None, None);
+    let model_path = env::var("DF_MODEL").ok().map(|s| PathBuf::from(s));
+    let _c = DeepFilterCapture::new(model_path, Some(lsnr_prod), None, None, None);
 
     loop {
         sleep(Duration::from_millis(200));
