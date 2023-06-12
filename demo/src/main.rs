@@ -1,6 +1,8 @@
 #![feature(slice_flatten, array_chunks, get_many_mut)]
 
+use std::env;
 use std::future::Future;
+use std::path::PathBuf;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
@@ -13,6 +15,10 @@ use iced::{
     Subscription, Theme,
 };
 use image_rs::{imageops, Rgba, RgbaImage};
+
+mod capture;
+mod cmap;
+use capture::*;
 
 pub fn main() -> iced::Result {
     capture::INIT_LOGGER.call_once(|| {
@@ -33,10 +39,6 @@ pub fn main() -> iced::Result {
 
     SpecView::run(Settings::default())
 }
-
-mod capture;
-mod cmap;
-use capture::*;
 
 static mut SPEC_NOISY: Option<Arc<Mutex<SpecImage>>> = None;
 static mut SPEC_ENH: Option<Arc<Mutex<SpecImage>>> = None;
@@ -134,9 +136,15 @@ impl Application for SpecView {
         let (s_enh, r_enh) = unbounded();
         let (s_controls, r_controls) = unbounded();
 
-        let df_worker =
-            DeepFilterCapture::new(Some(s_lsnr), Some(s_noisy), Some(s_enh), Some(r_controls))
-                .expect("Failed to initialize DeepFilterNet audio capturing");
+        let model_path = env::var("DF_MODEL").ok().map(|s| PathBuf::from(s));
+        let df_worker = DeepFilterCapture::new(
+            model_path,
+            Some(s_lsnr),
+            Some(s_noisy),
+            Some(s_enh),
+            Some(r_controls),
+        )
+        .expect("Failed to initialize DeepFilterNet audio capturing");
 
         let w = (df_worker.sr / df_worker.frame_size * 10) as u32;
         let freq_res = df_worker.sr / 2 / (df_worker.freq_size - 1);
@@ -154,9 +162,9 @@ impl Application for SpecView {
                 df_worker,
                 lsnr: 0.,
                 atten_lim: 100.,
-                min_threshdb: -10.,
+                min_threshdb: -15.,
                 max_erbthreshdb: 35.,
-                max_dfthreshdb: 20.,
+                max_dfthreshdb: 35.,
                 r_lsnr,
                 r_noisy,
                 r_enh,
@@ -246,55 +254,60 @@ impl Application for SpecView {
     }
 
     fn view(&self) -> Element<Message> {
-        let content = column![
-            row![
-                text("DeepFilterNet Demo").size(40).width(Length::Fill),
-                button("exit").on_press(Message::Exit)
-            ]
-            .width(1000),
-            slider_view(
-                "Threshold Min [dB]",
-                self.min_threshdb,
-                -15.,
-                35.,
-                Message::MinThreshDbChanged,
-                1000
-            ),
-            slider_view(
-                "Threshold ERB Max [dB]",
-                self.max_erbthreshdb,
-                -15.,
-                35.,
-                Message::MaxErbThreshDbChanged,
-                1000
-            ),
-            slider_view(
-                "Threshold DF  Max [dB]",
-                self.max_dfthreshdb,
-                -15.,
-                35.,
-                Message::MaxDfThreshDbChanged,
-                1000
-            ),
-            slider_view(
+        let content = column![row![
+            text("DeepFilterNet Demo").size(40).width(Length::Fill),
+            button("exit").on_press(Message::Exit)
+        ]
+        .width(1000),];
+        #[cfg(feature = "thresholds")]
+        let content = {
+            content
+                .push(slider_view(
+                    "Threshold Min [dB]",
+                    self.min_threshdb,
+                    -15.,
+                    35.,
+                    Message::MinThreshDbChanged,
+                    1000,
+                ))
+                .push(slider_view(
+                    "Threshold ERB Max [dB]",
+                    self.max_erbthreshdb,
+                    -15.,
+                    35.,
+                    Message::MaxErbThreshDbChanged,
+                    1000,
+                ))
+                .push(slider_view(
+                    "Threshold DF  Max [dB]",
+                    self.max_dfthreshdb,
+                    -15.,
+                    35.,
+                    Message::MaxDfThreshDbChanged,
+                    1000,
+                ))
+        };
+        let content = content
+            .push(slider_view(
                 "Noise Attenuation [dB]",
                 self.atten_lim,
                 0.,
                 100.,
                 Message::AttenLimChanged,
-                1000
-            ),
-            self.specs(),
-            row![
-                text("Current SNR:").size(18),
-                text(format!("{:>5.1} dB", self.lsnr))
-                    .size(18)
-                    .width(80)
-                    .horizontal_alignment(alignment::Horizontal::Right)
-            ]
-        ]
-        .spacing(20)
-        .align_items(Alignment::End);
+                1000,
+            ))
+            .push(self.specs())
+            .push(
+                row![
+                    text("Current SNR:").size(18),
+                    text(format!("{:>5.1} dB", self.lsnr))
+                        .size(18)
+                        .width(80)
+                        .horizontal_alignment(alignment::Horizontal::Right)
+                ]
+                .spacing(20)
+                .align_items(Alignment::End),
+            );
 
         container(content)
             .padding(50)
