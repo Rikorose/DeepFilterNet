@@ -17,7 +17,7 @@ path = "src/capture.rs"
 ui = ["iced", "image_rs"]
 
 [dependencies]
-iced = { version = "0.8", features = [
+iced = { version = "0.9", features = [
   "image",
   "debug",
   "tokio",
