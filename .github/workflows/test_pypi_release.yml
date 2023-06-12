@@ -43,7 +43,8 @@ jobs:
         run: |
           pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
           pip install deepfilternet onnxruntime
-          pip install -r DeepFilterNet/requirements_test.txt
+          pip install -r DeepFilterNet/requirements_eval.txt
+          pip install -r DeepFilterNet/requirements_dnsmos.txt
       # Test deepFilter executable
       - name: Test deepFilter script
         working-directory: DeepFilterNet
