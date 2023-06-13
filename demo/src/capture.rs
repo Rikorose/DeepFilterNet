@@ -283,7 +283,7 @@ impl DeepFilterCapture {
         r_contr: Option<RecvControl>,
     ) -> Result<Self> {
         let ch = 1;
-        let (sr, frame_size, freq_size) = init_df(model_path.clone(), ch);
+        let (sr, frame_size, freq_size) = init_df(model_path, ch);
         let in_rb = HeapRb::<f32>::new(frame_size * 100);
         let out_rb = HeapRb::<f32>::new(frame_size * 100);
         let (in_prod, in_cons) = in_rb.split();
