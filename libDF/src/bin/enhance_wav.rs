@@ -60,6 +60,7 @@ struct Args {
     #[arg(short, long, default_value = "out", value_hint = ValueHint::DirPath)]
     output_dir: PathBuf,
     // Audio files
+    #[arg(required = true)]
     files: Vec<PathBuf>,
 }
 
