@@ -23,6 +23,10 @@ use ::{
     event_listener::Event,
     zbus::{blocking::ConnectionBuilder, dbus_interface},
 };
+#[cfg(feature = "dbus")]
+const DBUS_NAME: &str = "org.deepfilter.DeepFilterLadspa";
+#[cfg(feature = "dbus")]
+const DBUS_PATH: &str = "/org/deepfilter/DeepFilterLadspa";
 
 struct DfPlugin {
     i_tx: SampleQueue,
@@ -308,6 +312,9 @@ impl Plugin for DfPlugin {
         log::info!("DF {} | activate", self.id);
         #[cfg(feature = "dbus")]
         {
+            if !test_dbus_name_avail() {
+                return;
+            }
             let init = Arc::new(Event::new());
             let done = Arc::new(Event::new());
             let init_listen = init.listen();
@@ -456,6 +463,29 @@ impl Plugin for DfPlugin {
     }
 }
 
+fn build_dbus_session<I>(control: I) -> Result<zbus::blocking::Connection, zbus::Error>
+where
+    I: zbus::Interface,
+{
+    ConnectionBuilder::session()?
+        .name(DBUS_NAME)?
+        .serve_at(DBUS_PATH, control)?
+        .build()
+}
+fn test_dbus_name_avail() -> bool {
+    let control = DfDbusControlDummy {};
+    match build_dbus_session(control) {
+        Ok(con) => {
+            con.release_name(DBUS_NAME).expect("Failed to release dbus name");
+            true
+        }
+        Err(e) => {
+            log::error!("Failed to init dbus session {}", e);
+            false
+        }
+    }
+}
+
 #[cfg(feature = "dbus")]
 fn get_dbus_worker(
     tx: ControlProd,
@@ -467,23 +497,20 @@ fn get_dbus_worker(
         log::debug!("{id} | Initializing dbus server");
         let done_listener = done.clone().listen();
         let control = DfDbusControl { tx: tx.clone() };
-        let name = "org.deepfilter.DeepFilterLadspa";
-        let con = ConnectionBuilder::session()
-            .expect("Failed to start dbus session")
-            .name(name)
-            .expect("Failed to register dbus name")
-            .serve_at("/org/deepfilter/DeepFilterLadspa", control)
-            .expect("dbus serving failed")
-            .build()
-            .expect("dbus connection building failed");
+        let con = build_dbus_session(control).expect("Failed to init dbus session");
         init.notify(1); // Notify caller that dbus server has been initialized.
         done_listener.wait();
-        con.release_name(name).expect("Failed to release dbus name");
+        con.release_name(DBUS_NAME).expect("Failed to release dbus name");
         log::debug!("{id} | Got done notification. Releasing dbus name");
     }
 }
 
 #[cfg(feature = "dbus")]
+struct DfDbusControlDummy {}
+#[cfg(feature = "dbus")]
+#[dbus_interface(name = "org.deepfilter.DeepFilterLadspa")]
+impl DfDbusControlDummy {}
+
 struct DfDbusControl {
     tx: ControlProd,
 }
