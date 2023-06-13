@@ -18,8 +18,8 @@ jobs:
       matrix:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check', hdf5: false}
-          - {command: clippy, rust: nightly, args: '--all-features --tests -p demo -- -D warnings', alsa: true}
-          - {command: clippy, rust: stable, args: '--all-features --tests -p deep_filter -- -D warnings', hdf5: true}
+          - {command: clippy, rust: nightly, args: '-p df-demo --tests --all-features -- -D warnings', alsa: true}
+          - {command: clippy, rust: stable, args: '-p deep_filter --tests --all-features -- -D warnings', hdf5: true}
           - {command: test, rust: stable, args: '--all-features -p deep_filter', hdf5: true}
           - {command: build, rust: stable, args: '-p deep_filter', hdf5: false}
           - {command: build, rust: stable, args: '-p DeepFilterLib', hdf5: false}
