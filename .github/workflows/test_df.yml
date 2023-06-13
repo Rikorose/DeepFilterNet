@@ -148,7 +148,6 @@ jobs:
 
       - name: Test rust deep-filter script
         run: |
-          mkdir out/
           cargo run -p deep_filter --profile=release --features=tract,bin,wav-utils,transforms --bin deep-filter -- ./assets/noisy_snr0.wav -m ./models/DeepFilterNet3_onnx.tar.gz -o out_DeepFilterNet3 -vvvv
           cd DeepFilterNet
           poetry run python df/scripts/dnsmos_dns5.py eval-single ../out_DeepFilterNet3/noisy_snr0.wav -t 3.385834652850639 4.130096419832765 3.153399733642353 3.594115
