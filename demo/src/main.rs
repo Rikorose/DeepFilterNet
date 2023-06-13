@@ -136,7 +136,7 @@ impl Application for SpecView {
         let (s_enh, r_enh) = unbounded();
         let (s_controls, r_controls) = unbounded();
 
-        let model_path = env::var("DF_MODEL").ok().map(|s| PathBuf::from(s));
+        let model_path = env::var("DF_MODEL").ok().map(PathBuf::from);
         let df_worker = DeepFilterCapture::new(
             model_path,
             Some(s_lsnr),
