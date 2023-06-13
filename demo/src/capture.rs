@@ -262,7 +262,6 @@ pub struct DeepFilterCapture {
     pub sr: usize,
     pub frame_size: usize,
     pub freq_size: usize,
-    model_path: Option<PathBuf>,
     should_stop: Arc<AtomicBool>,
     worker_handle: Option<JoinHandle<()>>,
     source: AudioSource,
@@ -318,7 +317,6 @@ impl DeepFilterCapture {
             sr,
             frame_size,
             freq_size,
-            model_path,
             should_stop,
             worker_handle,
             source,
@@ -351,7 +349,7 @@ pub fn main() -> Result<()> {
     });
 
     let (lsnr_prod, mut lsnr_cons) = unbounded();
-    let model_path = env::var("DF_MODEL").ok().map(|s| PathBuf::from(s));
+    let model_path = env::var("DF_MODEL").ok().map(PathBuf::from);
     let _c = DeepFilterCapture::new(model_path, Some(lsnr_prod), None, None, None);
 
     loop {
