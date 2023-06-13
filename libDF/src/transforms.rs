@@ -368,8 +368,8 @@ pub fn resample(
     let num_chunks = (len as f32 / chunk_size as f32).ceil() as usize + 1;
     let chunk_size_out = resampler.output_frames_max();
     let mut out = Array2::uninit((channels, chunk_size_out * num_chunks));
-    let mut inbuf = vec![vec![0f32; chunk_size]; channels];
-    let mut outbuf = vec![vec![0f32; resampler.output_frames_max()]; channels];
+    let mut inbuf = resampler.input_buffer_allocate(true);
+    let mut outbuf = resampler.output_buffer_allocate(true);
     let mut out_chunk_iter = out.axis_chunks_iter_mut(Axis(1), chunk_size_out);
     for chunk in x.axis_chunks_iter(Axis(1), chunk_size) {
         for (chunk_ch, buf_ch) in chunk.axis_iter(Axis(0)).zip(inbuf.iter_mut()) {
