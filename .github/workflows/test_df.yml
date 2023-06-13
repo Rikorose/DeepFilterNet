@@ -62,7 +62,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: stable
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -132,11 +132,9 @@ jobs:
         working-directory: DeepFilterNet
         run: |
           poetry run python df/scripts/test_df.py
-      # Test deepFilter executable
-      - name: Test deepFilter script
+
+      - name: Test python deepFilter script
         working-directory: DeepFilterNet
-        env:
-          DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
         run: |
           mkdir ../out
           poetry run deepFilter --version
@@ -147,6 +145,13 @@ jobs:
           poetry run python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet.wav -t 3.347275035532741 4.0226200060870045 3.0721500373065647 3.6992884
           poetry run python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet2.wav -t 3.356522067484457 4.094995405584476 3.1071521784172025 3.737621
           poetry run python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet3.wav -t 3.4399468223627174 4.144957235621709 3.2074756563112996 3.7088842
+
+      - name: Test rust deep-filter script
+        run: |
+          mkdir out/
+          cargo run -p deep_filter --profile=release --features=tract,bin,wav-utils,transforms --bin deep-filter -- ./assets/noisy_snr0.wav -m ./models/DeepFilterNet3_onnx.tar.gz -o out_DeepFilterNet3 -vvvv
+          cd DeepFilterNet
+          poetry run python df/scripts/dnsmos_dns5.py eval-single ../out_DeepFilterNet3/noisy_snr0.wav -t 3.385834652850639 4.130096419832765 3.153399733642353 3.594115
 
       - uses: actions/upload-artifact@v3
         with:
