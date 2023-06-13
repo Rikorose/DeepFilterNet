@@ -136,15 +136,18 @@ def eval_dnsmos_single(file: str, target_mos: Optional[List[float]] = None):
     scores = compute_score(file, desired_fs, False)
     scores = {n: scores[n] for n in NAMES}
     logger.info(f"Processing file: {file}")
-    log_metrics("Predicted", {n: v for (n, v) in scores.items()})
     if target_mos is not None:
         assert len(target_mos) == 4
         for n, t in zip(NAMES, target_mos):
             if not isclose(scores[n], t):
                 diff = (np.asarray(target_mos) - np.fromiter(scores.values(), dtype=float)).tolist()
+                log_metrics("Target   ", {n: v for (n, v) in zip(NAMES, target_mos)}, level="ERROR")
+                log_metrics("Predicted", {n: v for (n, v) in scores.items()}, level="ERROR")
                 log_metrics("Diff     ", {n: v for (n, v) in zip(NAMES, diff)}, level="ERROR")
+                print(scores.values())
                 exit(2)
 
+    log_metrics("Predicted", {n: v for (n, v) in scores.items()})
     return scores
 
 
