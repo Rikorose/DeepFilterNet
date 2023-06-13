@@ -1830,7 +1830,7 @@ dependencies = [
 [[package]]
 name = "hdf5"
 version = "0.8.1"
-source = "git+https://github.com/aldanor/hdf5-rust.git?rev=refs/pull/216/head#44b05c109bcd432bd5de6c532b5f1bc458cf0db7"
+source = "git+https://github.com/aldanor/hdf5-rust.git?rev=26046fb#26046fb4900ec38afd2a1c0494cff688b288662e"
 dependencies = [
  "bitflags 2.3.1",
  "cfg-if",
@@ -1847,7 +1847,7 @@ dependencies = [
 [[package]]
 name = "hdf5-derive"
 version = "0.8.1"
-source = "git+https://github.com/aldanor/hdf5-rust.git?rev=refs/pull/216/head#44b05c109bcd432bd5de6c532b5f1bc458cf0db7"
+source = "git+https://github.com/aldanor/hdf5-rust.git?rev=26046fb#26046fb4900ec38afd2a1c0494cff688b288662e"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
@@ -1858,7 +1858,7 @@ dependencies = [
 [[package]]
 name = "hdf5-src"
 version = "0.8.1"
-source = "git+https://github.com/aldanor/hdf5-rust.git?rev=refs/pull/216/head#44b05c109bcd432bd5de6c532b5f1bc458cf0db7"
+source = "git+https://github.com/aldanor/hdf5-rust.git?rev=26046fb#26046fb4900ec38afd2a1c0494cff688b288662e"
 dependencies = [
  "cmake",
 ]
@@ -1866,7 +1866,7 @@ dependencies = [
 [[package]]
 name = "hdf5-sys"
 version = "0.8.1"
-source = "git+https://github.com/aldanor/hdf5-rust.git?rev=refs/pull/216/head#44b05c109bcd432bd5de6c532b5f1bc458cf0db7"
+source = "git+https://github.com/aldanor/hdf5-rust.git?rev=26046fb#26046fb4900ec38afd2a1c0494cff688b288662e"
 dependencies = [
  "hdf5-src",
  "libc",
@@ -1881,7 +1881,7 @@ dependencies = [
 [[package]]
 name = "hdf5-types"
 version = "0.8.1"
-source = "git+https://github.com/aldanor/hdf5-rust.git?rev=refs/pull/216/head#44b05c109bcd432bd5de6c532b5f1bc458cf0db7"
+source = "git+https://github.com/aldanor/hdf5-rust.git?rev=26046fb#26046fb4900ec38afd2a1c0494cff688b288662e"
 dependencies = [
  "ascii",
  "cfg-if",
