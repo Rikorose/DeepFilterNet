@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 #[cfg(feature = "timings")]
 use std::time::Instant;
 
@@ -382,8 +381,8 @@ impl DfTract {
 
         for (nsy_ch, mut erb_ch, mut cplx_ch, state) in izip!(
             spec.axis_iter(Axis(0)),
-            tvalue_as_mut(&mut self.erb_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
-            tvalue_as_mut(&mut self.cplx_buf).to_array_view_mut()?.axis_iter_mut(Axis(0)),
+            tvalue_to_array_view_mut(&mut self.erb_buf).axis_iter_mut(Axis(0)),
+            tvalue_to_array_view_mut(&mut self.cplx_buf).axis_iter_mut(Axis(0)),
             self.df_states.iter_mut()
         ) {
             let nsy_ch = as_slice_complex(nsy_ch.as_slice().unwrap());
@@ -965,11 +964,15 @@ pub fn as_array_mut_complex<'a>(
         ArrayViewMutD::from_shape_ptr(shape, ptr)
     }
 }
-pub fn tvalue_as_mut(x: &mut TValue) -> &mut Tensor {
+pub fn tvalue_to_array_view_mut(x: &mut TValue) -> ArrayViewMutD<f32> {
     unsafe {
         match x {
-            TValue::Var(x) => Rc::get_mut_unchecked(x),
-            TValue::Const(x) => Arc::get_mut_unchecked(x),
+            TValue::Var(x) => {
+                ArrayViewMutD::from_shape_ptr(x.shape(), x.as_ptr_unchecked::<f32>() as *mut f32)
+            }
+            TValue::Const(x) => {
+                ArrayViewMutD::from_shape_ptr(x.shape(), x.as_ptr_unchecked::<f32>() as *mut f32)
+            }
         }
     }
 }
