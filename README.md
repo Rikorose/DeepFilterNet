@@ -266,8 +266,9 @@ python df/train.py path/to/dataset.cfg path/to/data_dir/ path/to/base_dir/
 
 ## Citation Guide
 
-If you use this framework, please cite: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
+To reproduce any metrics, we recomend to use the python implementation via `pip install deepfilternet`.
 
+If you use this framework, please cite: *DeepFilterNet: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering*
 ```bibtex
 @inproceedings{schroeter2022deepfilternet,
   title={{DeepFilterNet}: A Low Complexity Speech Enhancement Framework for Full-Band Audio based on Deep Filtering}, 
@@ -287,7 +288,28 @@ If you use the DeepFilterNet2 model, please cite: *DeepFilterNet2: Towards Real-
   booktitle={17th International Workshop on Acoustic Signal Enhancement (IWAENC 2022)},
   year = {2022},
 }
+```
 
+If you use the DeepFilterNet3 model, please cite: *DeepFilterNet: Perceptually Motivated Real-Time Speech Enhancement*
+
+```bibtex
+@inproceedings{schroeter2023deepfilternet3,
+  title = {{DeepFilterNet}: Perceptually Motivated Real-Time Speech Enhancement},
+  author = {Schröter, Hendrik and Rosenkranz, Tobias and Escalante-B., Alberto N. and Maier, Andreas},
+  booktitle={INTERSPEECH},
+  year = {2023},
+}
+```
+
+If you use the multi-frame beamforming algorithms. please cite *Deep Multi-Frame Filtering for Hearing Aids*
+
+```bibtex
+@inproceedings{schroeter2023deep_mf,
+  title = {Deep Multi-Frame Filtering for Hearing Aids},
+  author = {Schröter, Hendrik and Rosenkranz, Tobias and Escalante-B., Alberto N. and Maier, Andreas},
+  booktitle={INTERSPEECH},
+  year = {2023},
+}
 ```
 
 ## License
