@@ -199,7 +199,7 @@ def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor,
 
 @torch.no_grad()
 def enhance(
-    model: nn.Module, df_state: DF, audio: Tensor, pad=False, atten_lim_db: Optional[float] = None
+    model: nn.Module, df_state: DF, audio: Tensor, pad=True, atten_lim_db: Optional[float] = None
 ):
     """Enhance a single audio given a preloaded model and DF state.
 
@@ -334,10 +334,10 @@ def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.Argume
 def run():
     parser = setup_df_argument_parser()
     parser.add_argument(
-        "--compensate-delay",
-        "-D",
-        action="store_true",
-        help="Add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
+        "--no-delay-compensation",
+        dest="compensate_delay",
+        action="store_false",
+        help="Dont't add some paddig to compensate the delay introduced by the real-time STFT/ISTFT implementation.",
     )
     parser.add_argument(
         "--atten-lim",
