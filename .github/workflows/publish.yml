@@ -326,7 +326,7 @@ jobs:
 
       - name: Build release binary
         run: | 
-          ${{ env.CARGO }} build --verbose --profile=release-lto \
+          ${{ env.CARGO }} build --verbose --profile=release \
             --features ${{ env.FEATURES }} \
             -p ${{ env.PACKAGE }} \
             --bin ${{ env.BIN }} \
@@ -334,7 +334,7 @@ jobs:
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/deep-filter${{ matrix.ext }}" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
+          mv "target/${{ matrix.target }}/release/deep-filter${{ matrix.ext }}" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
           chmod +x "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
 
       - uses: actions/upload-artifact@v3
