@@ -52,9 +52,9 @@ jobs:
           DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
         run: |
           mkdir ../out
-          deepFilter ../assets/noisy_snr0.wav -m DeepFilterNet -o ../out
-          deepFilter ../assets/noisy_snr0.wav -m DeepFilterNet2 -o ../out
-          deepFilter ../assets/noisy_snr0.wav -m DeepFilterNet3 -o ../out
+          deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet -o ../out
+          deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet2 -o ../out
+          deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet3 -o ../out
           python df/scripts/dnsmos_dns5.py eval-single ../assets/noisy_snr0.wav -t 3.604316132288559 2.682694789493083 2.58449544791776 2.981942
           python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet.wav -t 3.347275035532741 4.0226200060870045 3.0721500373065647 3.6992884
           python df/scripts/dnsmos_dns5.py eval-single ../out/noisy_snr0_DeepFilterNet2.wav -t 3.356522067484457 4.094995405584476 3.1071521784172025 3.737621
