@@ -53,7 +53,7 @@ struct Args {
         short = 'v',
         action = clap::ArgAction::Count,
         global = true,
-        help = "Increase logging verbosity with multiple `-vvv`",
+        help = "Increase logging verbosity with multiple `-vv`",
     )]
     verbose: u8,
     // Output directory with enhanced audio files. Defaults to 'out'
@@ -68,18 +68,24 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let level = match args.verbose {
-        0 => log::LevelFilter::Error,
-        1 => log::LevelFilter::Warn,
-        2 => log::LevelFilter::Info,
-        3 => log::LevelFilter::Debug,
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
+    let tract_level = match args.verbose {
+        0..=3 => log::LevelFilter::Error,
+        4 => log::LevelFilter::Info,
+        5 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+    dbg!(&tract_level);
     env_logger::Builder::from_env(env_logger::Env::default())
         .filter_level(level)
-        .filter_module("tract_onnx", log::LevelFilter::Error)
-        .filter_module("tract_core", log::LevelFilter::Error)
-        .filter_module("tract_hir", log::LevelFilter::Error)
-        .filter_module("tract_linalg", log::LevelFilter::Error)
+        .filter_module("tract_onnx", tract_level)
+        .filter_module("tract_hir", tract_level)
+        .filter_module("tract_core", tract_level)
+        .filter_module("tract_linalg", tract_level)
         .init();
 
     // Initialize with 1 channel
