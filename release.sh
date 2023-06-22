@@ -61,5 +61,3 @@ git commit -m "v$VERSION"
 git push
 git tag -f "v$VERSION"
 git push -f --tags
-
-cargo update
