@@ -208,7 +208,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        rust: [nightly]
+        rust: [stable]
         manylinux: [2014]
         python:
           # CPython
@@ -302,7 +302,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: stable
           target: ${{ matrix.target }}
 
       - name: Show DF version
