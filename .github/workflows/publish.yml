@@ -119,7 +119,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: stable
           target: ${{ matrix.target }}
 
       - name: Build wheel unix
