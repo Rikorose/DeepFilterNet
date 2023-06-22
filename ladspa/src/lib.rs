@@ -463,6 +463,7 @@ impl Plugin for DfPlugin {
     }
 }
 
+#[cfg(feature = "dbus")]
 fn build_dbus_session<I>(control: I) -> Result<zbus::blocking::Connection, zbus::Error>
 where
     I: zbus::Interface,
