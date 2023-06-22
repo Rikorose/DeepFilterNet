@@ -473,6 +473,7 @@ where
         .serve_at(DBUS_PATH, control)?
         .build()
 }
+#[cfg(feature = "dbus")]
 fn test_dbus_name_avail() -> bool {
     let control = DfDbusControlDummy {};
     match build_dbus_session(control) {
