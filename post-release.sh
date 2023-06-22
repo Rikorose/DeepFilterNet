@@ -30,7 +30,13 @@ echo cargo add --manifest-path ./pyDF/Cargo.toml --features transforms --path ./
 # cargo add --manifest-path ./pyDF-data/Cargo.toml --features dataset --path ./libDF deep_filter
 
 cargo update
-
+(
+  cd DeepFilterNet/
+  echo "Running poetry update"
+  poetry update
+  echo "done"
+  git add poetry.lock
+)
 fd "(pyproject)|(Cargo)" -I -t f -e toml -e lock -X git add {}
 
 git commit -m "post-release v$VERSION"

@@ -43,16 +43,12 @@ export -f set_version
 fd "(pyproject)|(Cargo)" -t f -e toml -x bash -c "set_version {} $VERSION"
 (
   cd DeepFilterNet/
-  echo "Running poetry update"
-  poetry update
-  echo "done"
-  git add poetry.lock
   # Workaround since 'poetry add' needs the specified package version to be at pypi
   sed -i "s/^deepfilterlib.*/deepfilterlib = \"$VERSION\"/" pyproject.toml
   sed -i "s/^deepfilterdataloader.*/deepfilterdataloader = { version = \"$VERSION\", optional = true }/" pyproject.toml
 )
 
-cargo build --all-features
+cargo +nightly build --all-features
 
 (
   cd libDF
