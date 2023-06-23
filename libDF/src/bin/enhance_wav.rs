@@ -79,7 +79,6 @@ fn main() -> Result<()> {
         5 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
-    dbg!(&tract_level);
     env_logger::Builder::from_env(env_logger::Env::default())
         .filter_level(level)
         .filter_module("tract_onnx", tract_level)
