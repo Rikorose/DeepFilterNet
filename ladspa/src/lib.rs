@@ -160,7 +160,8 @@ fn init_df(channels: usize) -> (usize, usize) {
             }
         }
     }
-    let df_params = DfParams::default_ll();
+
+    let df_params = DfParams::default();
     let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     let (sr, frame_size) = (df.sr, df.hop_size);

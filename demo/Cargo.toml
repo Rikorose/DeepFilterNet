@@ -15,6 +15,7 @@ path = "src/capture.rs"
 
 [features]
 ui = ["iced", "image_rs"]
+default-model-ll = ["deep_filter/default-model-ll"]
 thresholds = []
 
 [dependencies]
