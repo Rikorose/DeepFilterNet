@@ -533,8 +533,12 @@ impl DfTract {
         // Limit noise attenuation by mixing back some of the noisy signal
         let mut spec_enh = self.spec_buf.to_array_view_mut()?;
         if let Some(lim) = self.atten_lim {
-            let spec_noisy =
-                self.rolling_spec_buf_x.get(self.lookahead).unwrap().to_array_view().unwrap();
+            let spec_noisy = self
+                .rolling_spec_buf_x
+                .get(self.lookahead.max(self.df_order) - self.lookahead - 1)
+                .unwrap()
+                .to_array_view()
+                .unwrap();
             spec_enh.map_inplace(|x| *x *= 1. - lim);
             spec_enh.scaled_add(lim, &spec_noisy);
         }
