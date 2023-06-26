@@ -39,3 +39,6 @@ application. The output will only contain speech and suppress most of the noise.
 Follow the instructions in the [configuration file](filter-chain-configs/deepfilter-stereo-sink.conf).
 
 More information about Pipewire filter chain can be found in the [Pipewire wiki](https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Filter-Chain).
+
+
+## D-Bus

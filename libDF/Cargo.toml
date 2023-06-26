@@ -1,6 +1,6 @@
 [package]
 name = "deep_filter"
-version = "0.5.3"
+version = "0.5.4-pre"
 authors = ["Hendrik Schröter"]
 edition = "2021"
 description = "Noise supression using deep filtering"
