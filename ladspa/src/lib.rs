@@ -28,6 +28,22 @@ const DBUS_NAME: &str = "org.deepfilter.DeepFilterLadspa";
 #[cfg(feature = "dbus")]
 const DBUS_PATH: &str = "/org/deepfilter/DeepFilterLadspa";
 
+const ATTEN_LIM_DEF: DefaultValue = DefaultValue::Maximum;
+const ATTEN_LIM_MIN: f32 = 0.;
+const ATTEN_LIM_MAX: f32 = 100.;
+const MIN_PROC_THRESH_DEF: DefaultValue = DefaultValue::Minimum;
+const MIN_PROC_THRESH_MIN: f32 = -15.;
+const MIN_PROC_THRESH_MAX: f32 = 35.;
+const MAX_ERB_BUF_DEF: DefaultValue = DefaultValue::Maximum;
+const MAX_ERB_BUF_MIN: f32 = -15.;
+const MAX_ERB_BUF_MAX: f32 = 35.;
+const MAX_DF_BUF_DEF: DefaultValue = DefaultValue::Maximum;
+const MAX_DF_BUF_MIN: f32 = -15.;
+const MAX_DF_BUF_MAX: f32 = 35.;
+const MIN_PROC_BUF_DEF: DefaultValue = DefaultValue::Minimum;
+const MIN_PROC_BUF_MIN: f32 = 0.;
+const MIN_PROC_BUF_MAX: f32 = 10.;
+
 struct DfPlugin {
     i_tx: SampleQueue,
     o_rx: SampleQueue,
@@ -568,41 +584,41 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Attenuation Limit (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Maximum),
-                    lower_bound: Some(0.),
-                    upper_bound: Some(100.),
+                    default: Some(ATTEN_LIM_DEF),
+                    lower_bound: Some(ATTEN_LIM_MIN),
+                    upper_bound: Some(ATTEN_LIM_MAX),
                 },
                 Port {
                     name: "Min processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Minimum),
-                    lower_bound: Some(-15.),
-                    upper_bound: Some(35.),
+                    default: Some(MIN_PROC_THRESH_DEF),
+                    lower_bound: Some(MIN_PROC_THRESH_MIN),
+                    upper_bound: Some(MIN_PROC_THRESH_MAX),
                 },
                 Port {
                     name: "Max ERB processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Maximum),
-                    lower_bound: Some(-15.),
-                    upper_bound: Some(35.),
+                    default: Some(MAX_ERB_BUF_DEF),
+                    lower_bound: Some(MAX_ERB_BUF_MIN),
+                    upper_bound: Some(MAX_ERB_BUF_MAX),
                 },
                 Port {
                     name: "Max DF processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Maximum),
-                    lower_bound: Some(-15.),
-                    upper_bound: Some(35.),
+                    default: Some(MAX_DF_BUF_DEF),
+                    lower_bound: Some(MAX_DF_BUF_MIN),
+                    upper_bound: Some(MAX_DF_BUF_MAX),
                 },
                 Port {
                     name: "Min Processing Buffer (frames)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Minimum),
-                    lower_bound: Some(0.),
-                    upper_bound: Some(10.),
+                    default: Some(MIN_PROC_BUF_DEF),
+                    lower_bound: Some(MIN_PROC_BUF_MIN),
+                    upper_bound: Some(MIN_PROC_BUF_MAX),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(1)(d, sr)),
@@ -639,41 +655,41 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     name: "Attenuation Limit (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Maximum),
-                    lower_bound: Some(0.),
-                    upper_bound: Some(100.),
+                    default: Some(ATTEN_LIM_DEF),
+                    lower_bound: Some(ATTEN_LIM_MIN),
+                    upper_bound: Some(ATTEN_LIM_MAX),
                 },
                 Port {
                     name: "Min processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Minimum),
-                    lower_bound: Some(-15.),
-                    upper_bound: Some(35.),
+                    default: Some(MIN_PROC_THRESH_DEF),
+                    lower_bound: Some(MIN_PROC_THRESH_MIN),
+                    upper_bound: Some(MIN_PROC_THRESH_MAX),
                 },
                 Port {
                     name: "Max ERB processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Maximum),
-                    lower_bound: Some(-15.),
-                    upper_bound: Some(35.),
+                    default: Some(MAX_ERB_BUF_DEF),
+                    lower_bound: Some(MAX_ERB_BUF_MIN),
+                    upper_bound: Some(MAX_ERB_BUF_MAX),
                 },
                 Port {
                     name: "Max DF processing threshold (dB)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Maximum),
-                    lower_bound: Some(-15.),
-                    upper_bound: Some(35.),
+                    default: Some(MAX_DF_BUF_DEF),
+                    lower_bound: Some(MAX_DF_BUF_MIN),
+                    upper_bound: Some(MAX_DF_BUF_MAX),
                 },
                 Port {
                     name: "Min Processing Buffer (frames)",
                     desc: PortDescriptor::ControlInput,
                     hint: None,
-                    default: Some(DefaultValue::Minimum),
-                    lower_bound: Some(0.),
-                    upper_bound: Some(10.),
+                    default: Some(MIN_PROC_BUF_DEF),
+                    lower_bound: Some(MIN_PROC_BUF_MIN),
+                    upper_bound: Some(MIN_PROC_BUF_MAX),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(2)(d, sr)),
