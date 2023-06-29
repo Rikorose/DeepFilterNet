@@ -663,7 +663,7 @@ class Loss(nn.Module):
         """
         super().__init__()
         p = ModelParams()
-        self.lsnr = LocalSnrTarget(ws=20, target_snr_range=[p.lsnr_min - 5, p.lsnr_max + 5])
+        self.lsnr = LocalSnrTarget(ws=20, target_snr_range=[p.lsnr_min - 1, p.lsnr_max + 1])
         self.istft = istft  # Could also be used for sdr loss
         self.sr = p.sr
         self.fft_size = p.fft_size
