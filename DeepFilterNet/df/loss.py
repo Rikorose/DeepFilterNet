@@ -4,7 +4,7 @@ from typing import Dict, Final, Iterable, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from torch import Tensor, gt, nn
+from torch import Tensor, nn
 
 from df.config import Csv, config
 from df.io import resample
