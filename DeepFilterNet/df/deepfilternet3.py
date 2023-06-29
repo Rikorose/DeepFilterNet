@@ -333,7 +333,7 @@ class DfNet(nn.Module):
         self.emb_dim: int = layer_width * p.nb_erb
         self.erb_bins: int = p.nb_erb
         if p.conv_lookahead > 0:
-            assert p.conv_lookahead == p.df_lookahead
+            assert p.conv_lookahead >= p.df_lookahead
             self.pad_feat = nn.ConstantPad2d((0, 0, -p.conv_lookahead, p.conv_lookahead), 0.0)
         else:
             self.pad_feat = nn.Identity()
