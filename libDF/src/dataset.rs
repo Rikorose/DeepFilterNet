@@ -1200,12 +1200,18 @@ impl Dataset<f32> for TdDataset {
         #[cfg(feature = "timings")]
         let t0 = Instant::now();
         let sample_seed = seed.unwrap_or(idx as u64);
-        log::trace!("get_sample() idx {} with seed {:?}", idx, sample_seed,);
         seed_from_u64(self.seed + seed.unwrap_or(idx as u64));
         let mut rng = thread_rng()?;
         // Sample SNR and gain
         let &snr = self.snrs.choose(&mut rng).unwrap();
         let &gain = self.gains.choose(&mut rng).unwrap();
+        log::trace!(
+            "get_sample() idx {} with seed {:?}, snr {}, gain {}",
+            idx,
+            sample_seed,
+            snr,
+            gain
+        );
         let (mut speech, max_freq) = if snr <= -100 {
             (Array2::zeros((1, self.max_samples)), self.sr / 2)
         } else {
