@@ -23,6 +23,7 @@ export XDG_CACHE_DIR="/cluster/$USER/.cache"
 export PYTHONUSERBASE="/cluster/$USER/.python_packages"
 
 PROJECT_NAME=DeepFilterNet
+BRANCH=${BRANCH:-main}
 DATA_DIR=${DATA_DIR:-$CLUSTER/Data/voicebank-demand-test}     # Set to the directory containing the HDF5s
 PYTORCH_JIT=${PYTORCH_JIT:-1}                # Set to 0 to disable pytorch JIT compilation
 
