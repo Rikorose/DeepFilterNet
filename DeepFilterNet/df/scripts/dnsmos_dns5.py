@@ -152,10 +152,9 @@ def eval_dnsmos_single(file: str, target_mos: Optional[List[float]] = None):
 
 
 def eval_dnsmos(args):
-    models = glob.glob(os.path.join(args.testset_dir, "*"))
-    audio_clips_list = []
     if args.personalized_MOS:
         raise NotImplementedError()
+
     primary_model_path, p808_model_path = download_onnx_models()
 
     compute_score = ComputeScore(primary_model_path, p808_model_path)
@@ -165,15 +164,10 @@ def eval_dnsmos(args):
     clips = glob.glob(os.path.join(args.testset_dir, "*.wav"))
     is_personalized_eval = args.personalized_MOS
     desired_fs = SAMPLING_RATE
-    for m in tqdm(models):
-        max_recursion_depth = 10
-        audio_path = os.path.join(args.testset_dir, m)
-        audio_clips_list = glob.glob(os.path.join(audio_path, "*.wav"))
-        while len(audio_clips_list) == 0 and max_recursion_depth > 0:
-            audio_path = os.path.join(audio_path, "**")
-            audio_clips_list = glob.glob(os.path.join(audio_path, "*.wav"))
-            max_recursion_depth -= 1
-        clips.extend(audio_clips_list)
+
+    if len(clips) == 0:
+        print(f"No samples found in dir {args.testset_dir}")
+        exit(1)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers) as executor:
         future_to_url = {
