@@ -4,7 +4,7 @@ from typing import Dict, Final, Iterable, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from torch import Tensor, nn
+from torch import Tensor, gt, nn
 
 from df.config import Csv, config
 from df.io import resample
@@ -189,6 +189,7 @@ class MaskLoss(nn.Module):
         eps=1e-12,
         factor: float = 1.0,
         gamma_pred: Optional[float] = None,
+        f_max_idx: Optional[int] = None,  # Maximum frequency bin index
     ):
         super().__init__()
         if mask == "wg":
@@ -208,6 +209,7 @@ class MaskLoss(nn.Module):
         self.f_under = f_under
         self.eps = eps
         self.factor = factor
+        self.f_max_idx = f_max_idx
         self.erb_fb: Tensor
         self.erb_inv_fb: Tensor
         self.register_buffer("erb_fb", erb_fb(df_state.erb_widths(), ModelParams().sr))
@@ -257,6 +259,9 @@ class MaskLoss(nn.Module):
             g_t = self.erb(clean.abs()).pow(self.gamma)  # We use directly the clean spectrum
             g_p = (self.erb(noisy.abs()) * input).pow(self.gamma_pred)
         loss = torch.zeros((), device=input.device)
+        if self.f_max_idx is not None:
+            g_t = g_t[..., : self.f_max_idx]
+            g_p = g_p[..., : self.f_max_idx]
         tmp = g_t.sub(g_p).pow(2)
         if self.f_under != 1:
             # Weighting if gains are too low
@@ -273,13 +278,19 @@ class MaskLoss(nn.Module):
 
 
 class MaskSpecLoss(nn.Module):
-    def __init__(self, df_state: DF, factor=1, gamma: float = 0.6):
+    def __init__(
+        self, df_state: DF, factor=1.0, gamma: float = 0.6, f_max_idx: Optional[int] = None
+    ):
         super().__init__()
+        self.f_max_idx = f_max_idx
         self.apply_mask = Mask(erb_fb(df_state.erb_widths(), ModelParams().sr, inverse=True))
         self.loss = SpectralLoss(factor_magnitude=factor, gamma=gamma)
 
     def forward(self, input: Tensor, clean: Tensor, noisy: Tensor) -> Tensor:
         enh = self.apply_mask(noisy, input)
+        if self.f_max_idx is not None:
+            enh = enh[..., : self.f_max_idx]
+            clean = clean[..., : self.f_max_idx]
         return self.loss(enh, clean)
 
 
@@ -665,8 +676,13 @@ class Loss(nn.Module):
         self.ml_gamma = config("gamma", 0.6, float, section="MaskLoss")
         self.ml_gamma_pred = config("gamma_pred", 0.6, float, section="MaskLoss")
         self.ml_f_under = config("f_under", 2, float, section="MaskLoss")
+        ml_max_freq = config("max_freq", 0, float, section="MaskLoss")
+        if ml_max_freq == 0:
+            self.ml_f_max_idx = None
+        else:
+            self.ml_f_max_idx = int(ml_max_freq / (p.sr / p.fft_size))
         if self.ml_mask == "spec":
-            self.ml = MaskSpecLoss(state, self.ml_f, self.ml_gamma)
+            self.ml = MaskSpecLoss(state, self.ml_f, self.ml_gamma, f_max_idx=self.ml_f_max_idx)
         else:
             self.ml = MaskLoss(
                 state,
@@ -677,6 +693,7 @@ class Loss(nn.Module):
                 gamma_pred=self.ml_gamma_pred,
                 factors=[1, 10],
                 powers=[2, 4],
+                f_max_idx=self.ml_f_max_idx,
             )
         # SpectralLoss
         self.sl_fm = config("factor_magnitude", 0, float, section="SpectralLoss")  # e.g. 1e4
