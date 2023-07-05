@@ -857,7 +857,7 @@ impl Dataset<Complex32> for FftDataset {
 
         // To frequency domain
         let nb_erb = self.nb_erb.unwrap_or(1);
-        let min_nb_erb = self.min_nb_freqs.unwrap_or(2);
+        let min_nb_erb = self.min_nb_freqs.unwrap_or(1);
         let sr = self.sr();
         let fft_size = self.fft_size;
         let mut state = DFState::new(sr, fft_size, self.hop_size, nb_erb, min_nb_erb);
