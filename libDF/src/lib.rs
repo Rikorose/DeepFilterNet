@@ -397,7 +397,7 @@ fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFSt
         .process_with_scratch(input, &mut x, &mut state.synthesis_scratch)
     {
         Err(realfft::FftError::InputValues(_, _)) => (),
-        Err(e) => Err(e).unwrap(),
+        Err(e) => panic!("Error during fft_inverse: {:?}", e),
         Ok(_) => (),
     }
     apply_window_in_place(&mut x, &state.window);
