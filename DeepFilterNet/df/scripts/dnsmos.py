@@ -62,7 +62,7 @@ def get_ort_session(onnx: str, providers="gpu"):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 sess = ort.InferenceSession(onnx, providers=ORT_PROVIDERS_ALL)
-        except ValueError:
+        except (ValueError, RuntimeError):
             sess = ort.InferenceSession(onnx, providers=ORT_PROVIDERS_CPU)
         ORT_SESS[onnx] = sess
     return ORT_SESS[onnx]
