@@ -234,9 +234,9 @@ class MaskLoss(nn.Module):
         return mask
 
     @torch.jit.export
-    def erb(self, x: Tensor, clamp_min=True) -> Tensor:
+    def erb(self, x: Tensor, clamp_min: Optional[float] = None) -> Tensor:
         x = torch.matmul(x, self.erb_fb)
-        if clamp_min:
+        if clamp_min is not None:
             x = x.clamp_min(clamp_min)
         return x
 
