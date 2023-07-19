@@ -237,7 +237,7 @@ fn get_worker_fn(
     }
 }
 
-fn push_spec(spec: ArrayView2<Complex32>, sender: &mut SendSpec) {
+fn push_spec(spec: ArrayView2<Complex32>, sender: &SendSpec) {
     debug_assert_eq!(spec.len_of(Axis(0)), 1); // only single channel for now
     let out = spec.iter().map(|x| x.norm_sqr().max(1e-10).log10() * 10.).collect::<Vec<f32>>();
     sender.send(out.into_boxed_slice()).expect("Failed to send spectrogram")

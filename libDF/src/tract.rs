@@ -913,6 +913,7 @@ pub fn as_slice_complex(buffer: &[f32]) -> &[Complex32] {
     }
 }
 
+#[allow(clippy::needless_pass_by_ref_mut)]
 pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut Complex32;
@@ -921,6 +922,7 @@ pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     }
 }
 
+#[allow(clippy::needless_pass_by_ref_mut)]
 pub fn as_slice_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut f32;
