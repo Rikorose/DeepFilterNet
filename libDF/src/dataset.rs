@@ -85,8 +85,6 @@ pub enum DfDatasetError {
     SendError(String),
     #[error("Multithreading Recv Error: {0:?}")]
     RecvError(String),
-    #[error("Thread Join Error: {0:?}")]
-    ThreadJoinError(String),
     #[error("Crossbeam Multithreading Send Error: {0:?}")]
     CrossbeamSendError(String),
     #[error("Not enough {0} samples in the dataset.")]
@@ -853,7 +851,17 @@ impl Dataset<Complex32> for FftDataset {
     fn get_sample(&self, idx: usize, seed: Option<u64>) -> Result<Sample<Complex32>> {
         #[cfg(feature = "timings")]
         let t0 = Instant::now();
-        let sample: Sample<f32> = self.ds.get_sample(idx, seed)?;
+        let sample: Sample<f32> =
+            self.ds
+                .get_sample(idx, seed)
+                .map_err(move |e: DfDatasetError| -> DfDatasetError {
+                    eprintln!(
+                        "get_sample() backtrace: {}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                    log::error!("Error during ds.get_sample(): {e:?}");
+                    e
+                })?;
 
         // To frequency domain
         let nb_erb = self.nb_erb.unwrap_or(1);
@@ -1216,7 +1224,12 @@ impl Dataset<f32> for TdDataset {
         let (mut speech, max_freq) = if snr <= -100 {
             (Array2::zeros((1, self.max_samples)), self.sr / 2)
         } else {
-            let (speech, max_freq) = self.load_aug_speech(idx, &mut rng)?;
+            let (speech, max_freq) = self.load_aug_speech(idx, &mut rng).map_err(
+                move |e: DfDatasetError| -> DfDatasetError {
+                    log::error!("Error during load_aug_speech(): {e:?}");
+                    e
+                },
+            )?;
             if crate::rms(speech.iter()) < 1e-10 {
                 log::warn!(
                     "No speech signal found for idx {}, seed {}",
@@ -1244,7 +1257,12 @@ impl Dataset<f32> for TdDataset {
         let mut noises = Vec::with_capacity(n_noises);
         let mut noise_gains = Vec::with_capacity(n_noises);
         for _ in 0..n_noises {
-            let (ns, gain) = self.load_aug_noise(&mut rng)?;
+            let (ns, gain) = self.load_aug_noise(&mut rng).map_err(
+                move |e: DfDatasetError| -> DfDatasetError {
+                    log::error!("Error during load_aug_noise(): {e:?}");
+                    e
+                },
+            )?;
             noises.push(ns);
             noise_gains.push(gain);
         }

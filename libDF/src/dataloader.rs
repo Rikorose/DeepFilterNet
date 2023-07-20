@@ -283,6 +283,9 @@ impl DataLoader {
                             eprintln!(
                                 "Error during get_sample() (idx: {sample_idx}, seed {seed:?}): {e:?}"
                             );
+                            log::error!(
+                                "Error during get_sample() (idx: {sample_idx}, seed {seed:?}): {e:?}"
+                                      );
                             Err(e.into())
                         }
                     };
@@ -463,6 +466,7 @@ impl DataLoader {
             match e {
                 Err(e) => {
                     eprint!("Error during worker shutdown");
+                    dbg!(&e);
                     return Err(DfDataloaderError::ThreadJoinError(format!("{e:?}")));
                 }
                 Ok(r) => match r {
