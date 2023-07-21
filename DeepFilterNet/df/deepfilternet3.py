@@ -49,6 +49,9 @@ class ModelParams(DfParams):
         self.emb_num_layers: int = config(
             "EMB_NUM_LAYERS", cast=int, default=2, section=self.section
         )
+        self.emb_gru_skip_enc: str = config(
+            "EMB_GRU_SKIP_ENC", default="none", section=self.section
+        )
         self.emb_gru_skip: str = config("EMB_GRU_SKIP", default="none", section=self.section)
         self.df_hidden_dim: int = config(
             "DF_HIDDEN_DIM", cast=int, default=256, section=self.section
@@ -128,13 +131,27 @@ class Encoder(nn.Module):
         else:
             self.combine = Add()
         self.emb_n_layers = p.emb_num_layers
+        if p.emb_gru_skip_enc == "none":
+            skip_op = None
+        elif p.emb_gru_skip_enc == "identity":
+            assert self.emb_in_dim == self.emb_out_dim, "Dimensions do not match"
+            skip_op = partial(nn.Identity)
+        elif p.emb_gru_skip_enc == "groupedlinear":
+            skip_op = partial(
+                GroupedLinearEinsum,
+                input_size=self.emb_out_dim,
+                hidden_size=self.emb_out_dim,
+                groups=p.lin_groups,
+            )
+        else:
+            raise NotImplementedError()
         self.emb_gru = SqueezedGRU_S(
             self.emb_in_dim,
             self.emb_dim,
             output_size=self.emb_out_dim,
             num_layers=1,
             batch_first=True,
-            gru_skip_op=None,
+            gru_skip_op=skip_op,
             linear_groups=p.lin_groups,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
@@ -154,10 +171,10 @@ class Encoder(nn.Module):
         e2 = self.erb_conv2(e1)  # [B, C*4, T, F/4]
         e3 = self.erb_conv3(e2)  # [B, C*4, T, F/4]
         c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
-        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
+        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc/2]
         cemb = c1.permute(0, 2, 3, 1).flatten(2)  # [B, T, -1]
         cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
-        emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F/4]
+        emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F]
         emb = self.combine(emb, cemb)
         emb, _ = self.emb_gru(emb)  # [B, T, -1]
         lsnr = self.lsnr_fc(emb) * self.lsnr_scale + self.lsnr_offset
@@ -299,16 +316,15 @@ class DfDecoder(nn.Module):
         self.df_out = nn.Sequential(df_out, nn.Tanh())
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
 
-    def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, emb: Tensor, c0: Tensor) -> Tensor:
         b, t, _ = emb.shape
         c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
         if self.df_skip is not None:
             c = c + self.df_skip(emb)
         c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
-        alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
         c = c.view(b, t, self.df_bins, self.df_out_ch) + c0  # [B, T, F, O*2]
-        return c, alpha
+        return c
 
 
 class DfNet(nn.Module):
@@ -410,9 +426,9 @@ class DfNet(nn.Module):
 
         if self.run_df:
             if self.lsnr_droput:
-                df_coefs[:, idcs] = self.df_dec(emb, c0)[0]
+                df_coefs[:, idcs] = self.df_dec(emb, c0)
             else:
-                df_coefs = self.df_dec(emb, c0)[0]
+                df_coefs = self.df_dec(emb, c0)
             df_coefs = self.df_out_transform(df_coefs)
             spec = self.df_op(spec, df_coefs)
             spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
