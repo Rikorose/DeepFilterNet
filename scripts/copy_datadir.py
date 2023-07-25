@@ -231,7 +231,11 @@ def copy_datasets(
                     cur_b += new_b
                     futures[executor.submit(cp, fn_src, fn_tgt, try_other_hosts)] = fn_tgt
     for future in concurrent.futures.as_completed(futures):
-        cur_gb = float(du(target_dir)) / 1024**3
+        try:
+            cur_gb = float(du(target_dir)) / 1024**3
+        except ValueError as e:
+            print(e)
+            continue
         print(f"Completed {futures[future]} (current dir size: {cur_gb:.1f} GB)", flush=True)
 
     if lock is not None:
