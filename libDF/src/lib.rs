@@ -214,10 +214,7 @@ impl DFState {
         band_unit_norm_t(input, &mut self.unit_norm_state, alpha, output)
     }
 
-    pub fn apply_mask(&self, output: &mut [Complex32], gains: &mut [f32], pf: bool) {
-        if pf {
-            post_filter(gains);
-        }
+    pub fn apply_mask(&self, output: &mut [Complex32], gains: &[f32]) {
         apply_interp_band_gain(output, gains, &self.erb)
     }
 }
@@ -440,22 +437,31 @@ where
     }
 }
 
-pub fn post_filter(gains: &mut [f32]) {
-    debug_assert!(gains.len() % 4 == 0);
+pub fn post_filter(noisy: &[Complex32], enh: &mut [Complex32]) {
     let beta = 0.02f32;
+    let beta_p1 = 1.02f32;
     let eps = 1e-12;
     let pi = std::f32::consts::PI;
-    // Run in efficient size-4 chunks
+    let mut g = [0.0; 4];
     let mut g_sin = [0.0; 4];
-    for g in gains.chunks_exact_mut(4) {
-        g_sin[0] = (g[0] * (g[0] * pi / 2.0).sin()).max(eps);
-        g_sin[1] = (g[1] * (g[1] * pi / 2.0).sin()).max(eps);
-        g_sin[2] = (g[2] * (g[2] * pi / 2.0).sin()).max(eps);
-        g_sin[3] = (g[3] * (g[3] * pi / 2.0).sin()).max(eps);
-        g[0] = (1.0 + beta) * g[0] / (1.0 + beta * (g[0] / g_sin[0]).powi(2));
-        g[1] = (1.0 + beta) * g[1] / (1.0 + beta * (g[1] / g_sin[1]).powi(2));
-        g[2] = (1.0 + beta) * g[2] / (1.0 + beta * (g[2] / g_sin[2]).powi(2));
-        g[3] = (1.0 + beta) * g[3] / (1.0 + beta * (g[3] / g_sin[3]).powi(2));
+    let mut pf = [0.0; 4];
+    for (n, e) in noisy.chunks_exact(4).zip(enh.chunks_exact_mut(4)) {
+        g[0] = (e[0].norm() / (n[0].norm() + eps)).min(1.);
+        g[1] = (e[1].norm() / (n[1].norm() + eps)).min(1.);
+        g[2] = (e[2].norm() / (n[2].norm() + eps)).min(1.);
+        g[3] = (e[3].norm() / (n[3].norm() + eps)).min(1.);
+        g_sin[0] = g[0] * (g[0] * pi / 2.0).sin();
+        g_sin[1] = g[1] * (g[1] * pi / 2.0).sin();
+        g_sin[2] = g[2] * (g[2] * pi / 2.0).sin();
+        g_sin[3] = g[3] * (g[3] * pi / 2.0).sin();
+        pf[0] = (beta_p1 * g[0] / (1. + beta * (g[0] / g_sin[0]).powi(2))) / g[0];
+        pf[1] = (beta_p1 * g[1] / (1. + beta * (g[1] / g_sin[1]).powi(2))) / g[1];
+        pf[2] = (beta_p1 * g[2] / (1. + beta * (g[2] / g_sin[2]).powi(2))) / g[2];
+        pf[3] = (beta_p1 * g[3] / (1. + beta * (g[3] / g_sin[3]).powi(2))) / g[3];
+        e[0] *= pf[0];
+        e[1] *= pf[1];
+        e[2] *= pf[2];
+        e[3] *= pf[3];
     }
 }
 
@@ -559,6 +565,17 @@ where
 pub fn rms<'a, I>(vals: I) -> f32
 where
     I: IntoIterator<Item = &'a f32>,
+{
+    let mut n = 0;
+    let pow_sum = vals.into_iter().fold(0., |acc, v| {
+        n += 1;
+        acc + v.powi(2)
+    });
+    (pow_sum / n as f32).sqrt()
+}
+pub fn rms_v<I>(vals: I) -> f32
+where
+    I: IntoIterator<Item = f32>,
 {
     let mut n = 0;
     let pow_sum = vals.into_iter().fold(0., |acc, v| {

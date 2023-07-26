@@ -489,7 +489,6 @@ impl DfTract {
             .unwrap()
             .to_array_view_mut()?;
         if let Some(gains) = gains {
-            let pf = apply_erb && self.post_filter;
             let mut gains = gains.into_array()?;
             if gains.shape()[0] < noisy.shape()[0] {
                 // Mask was reduced to single channel
@@ -498,19 +497,17 @@ impl DfTract {
                     self.df_states[0].apply_mask(
                         as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
                         gain_slc,
-                        pf,
                     );
                 }
             } else {
                 // Same number of channels of gains and spec
-                for (mut gains_ch, mut spec_ch) in
-                    gains.axis_iter_mut(Axis(0)).zip(spec.axis_iter_mut(Axis(0)))
+                for (gains_ch, mut spec_ch) in
+                    gains.axis_iter(Axis(0)).zip(spec.axis_iter_mut(Axis(0)))
                 {
-                    let gain_slc = gains_ch.as_slice_mut().unwrap();
+                    let gain_slc = gains_ch.as_slice().unwrap();
                     self.df_states[0].apply_mask(
                         as_slice_mut_complex(spec_ch.as_slice_mut().unwrap()),
                         gain_slc,
-                        pf,
                     );
                 }
             }
@@ -530,8 +527,32 @@ impl DfTract {
             )?;
         };
 
+        let spec_noisy = as_arrayview_complex(
+            self.rolling_spec_buf_x
+                .get(self.lookahead.max(self.df_order) - self.lookahead - 1)
+                .unwrap()
+                .to_array_view::<f32>()
+                .unwrap(),
+            &[self.ch, self.n_freqs],
+        )
+        .into_dimensionality::<Ix2>()
+        .unwrap();
+        let mut spec_enh = as_arrayview_mut_complex(
+            self.spec_buf.to_array_view_mut::<f32>().unwrap(),
+            &[self.ch, self.n_freqs],
+        )
+        .into_dimensionality::<Ix2>()
+        .unwrap();
+
+        // Run post filter
+        if apply_erb && self.post_filter {
+            post_filter(
+                spec_noisy.as_slice().unwrap(),
+                spec_enh.as_slice_mut().unwrap(),
+            );
+        }
+
         // Limit noise attenuation by mixing back some of the noisy signal
-        let mut spec_enh = self.spec_buf.to_array_view_mut()?;
         if let Some(lim) = self.atten_lim {
             let spec_noisy = self
                 .rolling_spec_buf_x
@@ -540,7 +561,7 @@ impl DfTract {
                 .to_array_view()
                 .unwrap();
             spec_enh.map_inplace(|x| *x *= 1. - lim);
-            spec_enh.scaled_add(lim, &spec_noisy);
+            spec_enh.scaled_add(lim.into(), &spec_noisy);
         }
 
         for (state, spec_ch, mut enh_out_ch) in izip!(
@@ -549,7 +570,7 @@ impl DfTract {
             enh.axis_iter_mut(Axis(0)),
         ) {
             state.synthesis(
-                as_slice_mut_complex(spec_ch.to_owned().as_slice_mut().unwrap()),
+                spec_ch.to_owned().as_slice_mut().unwrap(),
                 enh_out_ch.as_slice_mut().unwrap(),
             );
         }
@@ -600,7 +621,7 @@ impl DfTract {
     pub fn get_spec_noisy(&self) -> ArrayView2<Complex32> {
         as_arrayview_complex(
             self.rolling_spec_buf_x
-                .get(self.lookahead)
+                .get(self.lookahead.max(self.df_order) - self.lookahead - 1)
                 .unwrap()
                 .to_array_view::<f32>()
                 .unwrap(),
@@ -612,6 +633,14 @@ impl DfTract {
     pub fn get_spec_enh(&self) -> ArrayView2<Complex32> {
         as_arrayview_complex(
             self.spec_buf.to_array_view::<f32>().unwrap(),
+            &[self.ch, self.n_freqs],
+        )
+        .into_dimensionality::<Ix2>()
+        .unwrap()
+    }
+    pub fn get_mut_spec_enh(&mut self) -> ArrayViewMut2<Complex32> {
+        as_arrayview_mut_complex(
+            self.spec_buf.to_array_view_mut::<f32>().unwrap(),
             &[self.ch, self.n_freqs],
         )
         .into_dimensionality::<Ix2>()
@@ -645,7 +674,7 @@ fn df(
     debug_assert_eq!(ch, spec_out.shape()[0]);
     debug_assert!(spec.len() >= df_order);
     let mut o_f: ArrayViewMut2<Complex32> =
-        as_array_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
+        as_arrayview_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
             .into_dimensionality()?;
     // Zero relevant frequency bins of output
     o_f.slice_mut(s![.., ..nb_df]).fill(Complex32::default());
@@ -962,7 +991,7 @@ pub fn as_arrayview_complex<'a>(
         ArrayViewD::from_shape_ptr(shape, ptr)
     }
 }
-pub fn as_array_mut_complex<'a>(
+pub fn as_arrayview_mut_complex<'a>(
     buffer: ArrayViewMutD<'a, f32>,
     shape: &[usize], // having an explicit shape parameter allows to also squeeze axes.
 ) -> ArrayViewMutD<'a, Complex32> {
