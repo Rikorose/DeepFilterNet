@@ -648,7 +648,7 @@ mod tests {
         println!("******** Start test_data_loader() ********");
         seed_from_u64(42);
         let fft_size = 960;
-        let hop_size = Some(480);
+        let hop_size = 480;
         let nb_erb = Some(32);
         let nb_spec = None;
         let norm_alpha = None;
@@ -657,7 +657,7 @@ mod tests {
         let max_len_s = 1.0;
         let mut cfg = DatasetConfigJson::open("../assets/dataset.cfg")?;
         let builder = DatasetBuilder::new(ds_dir, sr)
-            .df_params(fft_size, hop_size, nb_erb, nb_spec, norm_alpha)
+            .df_params(fft_size, Some(hop_size), nb_erb, nb_spec, norm_alpha)
             .max_len(max_len_s);
         for dataset_size in [1, 2, 4, 17] {
             for c in cfg.train.iter_mut() {
@@ -725,7 +725,7 @@ mod tests {
                             dbg!(n_samples, batch.speech.shape());
                             debug_assert_eq!(
                                 batch.speech.len_of(Axis(2)),
-                                (max_len_s * (sr / hop_size.unwrap()) as f32).round() as usize
+                                (max_len_s * (sr / hop_size) as f32).round() as usize
                             );
                             assert!(n_samples <= dataset_size);
                         }

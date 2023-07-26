@@ -2134,7 +2134,7 @@ mod tests {
     {
         let mut e_clean = 0.;
         let mut e_noise = 0.;
-        for (xx, xv) in x.into_iter().zip(v.into_iter()) {
+        for (xx, xv) in x.into_iter().zip(v) {
             e_clean += (xx - xv).powi(2);
             e_noise += xv.powi(2);
         }
@@ -2154,7 +2154,7 @@ mod tests {
     {
         let mut e_clean = 0.;
         let mut e_noise = 0.;
-        for (xs, xx) in s.into_iter().zip(x.into_iter()) {
+        for (xs, xx) in s.into_iter().zip(x) {
             e_clean += xs.powi(2);
             e_noise += (xx - xs).powi(2);
         }
