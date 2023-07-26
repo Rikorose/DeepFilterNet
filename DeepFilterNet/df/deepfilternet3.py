@@ -16,7 +16,10 @@ from df.modules import (
     erb_fb,
     get_device,
 )
+from df.utils import as_complex
 from libdf import DF
+
+PI = 3.1415926535897932384626433
 
 
 class ModelParams(DfParams):
@@ -360,7 +363,9 @@ class DfNet(nn.Module):
         self.register_buffer("erb_fb", erb_fb)
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
-        self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
+        self.mask = Mask(erb_inv_fb)
+        self.erb_inv_fb = erb_inv_fb
+        self.post_filter = p.mask_pf
 
         self.df_order = p.df_order
         self.df_op = MF.DF(num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead)
@@ -430,10 +435,19 @@ class DfNet(nn.Module):
             else:
                 df_coefs = self.df_dec(emb, c0)
             df_coefs = self.df_out_transform(df_coefs)
-            spec = self.df_op(spec, df_coefs)
-            spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
+            spec_e = self.df_op(spec.clone(), df_coefs)
+            spec_e[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
         else:
             df_coefs = torch.zeros((), device=spec.device)
-            spec = spec_m
+            spec_e = spec_m
 
-        return spec, m, lsnr, df_coefs
+        if self.post_filter:
+            beta = 0.02
+            eps = 1e-12
+            mask = (as_complex(spec_e).abs() / as_complex(spec).abs().add(eps)).clamp_max(1)
+            mask_sin = mask * torch.sin(PI * mask / 2)
+            mask_pf = (1 + beta) * mask / (1 + beta * mask.div(mask_sin.clamp_min(eps)).pow(2))
+            pf = mask_pf / mask
+            spec_e = spec_e * pf.unsqueeze(-1)
+
+        return spec_e, m, lsnr, df_coefs
