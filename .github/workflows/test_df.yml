@@ -74,7 +74,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: "3.9"
+          python-version: "3.11"
       - name: Load cached Poetry installation
         if: matrix.os != 'windows-latest'
         uses: actions/cache@v3
