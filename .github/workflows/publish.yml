@@ -63,6 +63,9 @@ jobs:
           - version: "3.10"
             tag: "310"
             abi: "310"
+          - version: "3.11"
+            tag: "311"
+            abi: "311"
         df_wheel: ["pyDF", "pyDF-data"]
         os: ["ubuntu-22.04", "macos-13", "windows-2022"]
         include:
