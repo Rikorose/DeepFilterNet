@@ -365,6 +365,7 @@ impl DfTract {
     }
 
     pub fn set_pf_beta(&mut self, beta: f32) {
+        log::debug!("Setting post-filter beta to {beta}");
         self.post_filter_beta = beta;
         if beta > 0. {
             self.post_filter = true;
@@ -608,12 +609,6 @@ impl DfTract {
 
         // Limit noise attenuation by mixing back some of the noisy signal
         if let Some(lim) = self.atten_lim {
-            let spec_noisy = self
-                .rolling_spec_buf_x
-                .get(self.lookahead.max(self.df_order) - self.lookahead - 1)
-                .unwrap()
-                .to_array_view()
-                .unwrap();
             spec_enh.map_inplace(|x| *x *= 1. - lim);
             spec_enh.scaled_add(lim.into(), &spec_noisy);
         }
