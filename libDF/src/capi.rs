@@ -10,8 +10,7 @@ pub struct DFState(crate::tract::DfTract);
 
 impl DFState {
     fn new(model_path: &str, channels: usize, atten_lim: f32) -> Self {
-        let r_params =
-            RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
+        let r_params = RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
         let df_params =
             DfParams::new(PathBuf::from(model_path)).expect("Could not load model from path");
         let m =
