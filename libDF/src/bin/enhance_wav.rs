@@ -102,7 +102,7 @@ fn main() -> Result<()> {
     }
     if let Ok(red) = args.reduce_mask.try_into() {
         r_params = r_params.with_mask_reduce(red);
-    }else{
+    } else {
         log::warn!("Input not valid for `reduce_mask`.")
     }
     let df_params = if let Some(tar) = args.model.as_ref() {
