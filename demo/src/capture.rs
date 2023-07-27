@@ -26,8 +26,9 @@ pub type RecvSpec = Receiver<Box<[f32]>>;
 pub type SendControl = Sender<(DfControl, f32)>;
 pub type RecvControl = Receiver<(DfControl, f32)>;
 
-static mut MODEL: Option<DfTract> = None;
 pub(crate) static INIT_LOGGER: Once = Once::new();
+pub(crate) static mut MODEL_PATH: Option<PathBuf> = None;
+static mut MODEL: Option<DfTract> = None;
 
 const SAMPLE_FORMAT: cpal::SampleFormat = cpal::SampleFormat::F32;
 
@@ -55,6 +56,7 @@ fn get_cpal_stream_cfg(channels: u16, sample_rate: u32) -> cpal::StreamConfig {
 #[derive(PartialEq)]
 pub enum DfControl {
     AttenLim,
+    PostFilterBeta,
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
@@ -75,7 +77,7 @@ fn init_df(model_path: Option<PathBuf>, channels: usize) -> (usize, usize, usize
     } else {
         DfParams::default()
     };
-    let r_params = RuntimeParams::new(channels, false, 100., -15., 35., 35., ReduceMask::MEAN);
+    let r_params = RuntimeParams::default_with_ch(channels);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     let (sr, frame_size, freq_size) = (df.sr, df.hop_size, df.n_freqs);
     unsafe { MODEL = Some(df) };
@@ -161,6 +163,13 @@ impl AudioSource {
             move |data: &Data, _: &cpal::InputCallbackInfo| {
                 let len = data.len();
                 let data = data.as_slice().expect("Failed to caputre audio");
+                if log::log_enabled!(log::Level::Trace) {
+                    log::trace!(
+                        "Got data from audio source with len: {}, rms: {}",
+                        len,
+                        df::rms(data.iter())
+                    );
+                }
                 let mut n = 0;
                 while n < len {
                     n += rb.push_slice(&data[n..]);
@@ -224,9 +233,8 @@ fn get_worker_fn(
             if let Some(ref mut r_opt) = r_opt.as_mut() {
                 while let Ok((c, v)) = r_opt.try_recv() {
                     match c {
-                        DfControl::AttenLim => {
-                            df.set_atten_lim(v).expect("Failed to set attenuation limit.")
-                        }
+                        DfControl::AttenLim => df.set_atten_lim(v),
+                        DfControl::PostFilterBeta => df.set_pf_beta(v),
                         DfControl::MinThreshDb => df.min_db_thresh = v,
                         DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                         DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
@@ -349,7 +357,15 @@ pub fn main() -> Result<()> {
     });
 
     let (lsnr_prod, mut lsnr_cons) = unbounded();
-    let model_path = env::var("DF_MODEL").ok().map(PathBuf::from);
+    let mut model_path = env::var("DF_MODEL").ok().map(PathBuf::from);
+    unsafe {
+        if model_path.is_none() && MODEL_PATH.is_some() {
+            model_path = MODEL_PATH.clone()
+        }
+    }
+    if let Some(p) = model_path.as_ref() {
+        log::info!("Running with model '{:?}'", p);
+    }
     let _c = DeepFilterCapture::new(model_path, Some(lsnr_prod), None, None, None);
 
     loop {

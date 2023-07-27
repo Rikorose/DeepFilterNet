@@ -24,11 +24,12 @@ iced = { version = "0.9", features = [
   "debug",
   "tokio",
 ], optional = true }
-itertools = "0.10"
+itertools = "0.11"
 crossbeam-channel = "0.5"
 image_rs = { package = "image", version = "0.24", optional = true }
 anyhow = "1.0"
 cpal = "0.15"
+clap = { version = "4.0", features = ["derive"] }
 deep_filter = { path = "../libDF/", default-features = false, features = [
   "tract",
   "use-jemalloc",

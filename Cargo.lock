@@ -1045,7 +1045,7 @@ dependencies = [
  "flate2",
  "hdf5",
  "hound",
- "itertools",
+ "itertools 0.10.5",
  "jemallocator",
  "lewton",
  "log",
@@ -1099,13 +1099,14 @@ name = "df-demo"
 version = "0.5.4-pre"
 dependencies = [
  "anyhow",
+ "clap",
  "cpal",
  "crossbeam-channel",
  "deep_filter",
  "env_logger",
  "iced",
  "image",
- "itertools",
+ "itertools 0.11.0",
  "log",
  "ndarray",
  "ringbuf",
@@ -2177,6 +2178,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2397,7 +2407,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79e0724dfcaad5cfb7965ea0f178ca0870b8d7315178f4a7179f5696f7f04d5f"
 dependencies = [
  "anymap2",
- "itertools",
+ "itertools 0.10.5",
  "kstring",
  "liquid-derive",
  "num-traits",
@@ -2425,7 +2435,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2a17e273a6fb1fb6268f7a5867ddfd0bd4683c7e19b51084f3d567fad4348c0"
 dependencies = [
- "itertools",
+ "itertools 0.10.5",
  "liquid-core",
  "once_cell",
  "percent-encoding",
@@ -3324,7 +3334,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5d2d8d10f3c6ded6da8b05b5fb3b8a5082514344d56c9f871412d29b4e075b4"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -4259,7 +4269,7 @@ dependencies = [
  "anyhow",
  "educe",
  "half",
- "itertools",
+ "itertools 0.10.5",
  "lazy_static",
  "maplit",
  "ndarray",
