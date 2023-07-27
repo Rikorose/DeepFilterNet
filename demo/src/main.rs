@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
+use clap::{Parser, ValueHint};
 use crossbeam_channel::unbounded;
 use iced::widget::{self, column, container, image, row, slider, text, Container, Image};
 use iced::{
@@ -20,13 +21,49 @@ mod capture;
 mod cmap;
 use capture::*;
 
+/// Simple program to sample from a hd5 dataset directory
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to model tar.gz
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
+    model: Option<PathBuf>,
+    /// Logging verbosity
+    #[arg(
+        long,
+        short = 'v',
+        action = clap::ArgAction::Count,
+        global = true,
+        help = "Increase logging verbosity with multiple `-vv`",
+    )]
+    verbose: u8,
+}
+
 pub fn main() -> iced::Result {
+    let args = Args::parse();
+    let level = match args.verbose {
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+    let tract_level = match args.verbose {
+        0..=3 => log::LevelFilter::Error,
+        4 => log::LevelFilter::Info,
+        5 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+    if args.model.is_some() {
+        unsafe { MODEL_PATH = args.model }
+    }
+
     capture::INIT_LOGGER.call_once(|| {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
-            .filter_module("tract_onnx", log::LevelFilter::Error)
-            .filter_module("tract_core", log::LevelFilter::Error)
-            .filter_module("tract_hir", log::LevelFilter::Error)
-            .filter_module("tract_linalg", log::LevelFilter::Error)
+        env_logger::Builder::from_env(env_logger::Env::default())
+            .filter_level(level)
+            .filter_module("tract_onnx", tract_level)
+            .filter_module("tract_hir", tract_level)
+            .filter_module("tract_core", tract_level)
+            .filter_module("tract_linalg", tract_level)
             .filter_module("iced_winit", log::LevelFilter::Error)
             .filter_module("iced_wgpu", log::LevelFilter::Error)
             .filter_module("wgpu_core", log::LevelFilter::Error)
@@ -47,6 +84,7 @@ struct SpecView {
     df_worker: DeepFilterCapture,
     lsnr: f32,
     atten_lim: f32,
+    post_filter_beta: f32,
     min_threshdb: f32,
     max_erbthreshdb: f32,
     max_dfthreshdb: f32,
@@ -66,6 +104,7 @@ pub enum Message {
     NoisyChanged,
     EnhChanged,
     AttenLimChanged(f32),
+    PostFilterChanged(f32),
     MinThreshDbChanged(f32),
     MaxErbThreshDbChanged(f32),
     MaxDfThreshDbChanged(f32),
@@ -162,6 +201,7 @@ impl Application for SpecView {
                 df_worker,
                 lsnr: 0.,
                 atten_lim: 100.,
+                post_filter_beta: 0.,
                 min_threshdb: -15.,
                 max_erbthreshdb: 35.,
                 max_dfthreshdb: 35.,
@@ -231,6 +271,12 @@ impl Application for SpecView {
                     .send((DfControl::AttenLim, v))
                     .expect("Failed to send DfControl")
             }
+            Message::PostFilterChanged(v) => {
+                self.post_filter_beta = v;
+                self.s_controls
+                    .send((DfControl::PostFilterBeta, v))
+                    .expect("Failed to send DfControl")
+            }
             Message::MinThreshDbChanged(v) => {
                 self.min_threshdb = v;
                 self.s_controls
@@ -269,6 +315,8 @@ impl Application for SpecView {
                     35.,
                     Message::MinThreshDbChanged,
                     1000,
+                    0,
+                    3.,
                 ))
                 .push(slider_view(
                     "Threshold ERB Max [dB]",
@@ -277,6 +325,8 @@ impl Application for SpecView {
                     35.,
                     Message::MaxErbThreshDbChanged,
                     1000,
+                    0,
+                    3.,
                 ))
                 .push(slider_view(
                     "Threshold DF  Max [dB]",
@@ -285,6 +335,8 @@ impl Application for SpecView {
                     35.,
                     Message::MaxDfThreshDbChanged,
                     1000,
+                    0,
+                    3.,
                 ))
         };
         let content = content
@@ -295,6 +347,18 @@ impl Application for SpecView {
                 100.,
                 Message::AttenLimChanged,
                 1000,
+                0,
+                3.,
+            ))
+            .push(slider_view(
+                "Post Filter Beta",
+                self.post_filter_beta,
+                0.,
+                1.,
+                Message::PostFilterChanged,
+                1000,
+                3,
+                0.001,
             ))
             .push(self.specs())
             .push(
@@ -402,6 +466,7 @@ fn spec_raw<'a>(im: image::Handle, width: u16, height: u16) -> Container<'a, Mes
         .center_y()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn slider_view<'a>(
     title: &str,
     value: f32,
@@ -409,12 +474,14 @@ fn slider_view<'a>(
     max: f32,
     message: impl Fn(f32) -> Message + 'a,
     width: u16,
+    precision: usize,
+    step: f32,
 ) -> Element<'a, Message> {
     column![
         text(title).size(18).width(Length::Fill),
         row![
-            container(slider(min..=max, value, message)).width(Length::Fill),
-            text(format!("{:.0}", value))
+            container(slider(min..=max, value, message).step(step)).width(Length::Fill),
+            text(format!("{:.precision$}", value))
                 .size(18)
                 .width(100)
                 .horizontal_alignment(alignment::Horizontal::Right)
