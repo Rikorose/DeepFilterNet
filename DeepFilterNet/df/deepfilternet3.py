@@ -71,6 +71,7 @@ class ModelParams(DfParams):
             "ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section
         )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
+        self.pf_beta: float = config("PF_BETA", cast=float, default=0.02, section=self.section)
         self.lsnr_dropout: bool = config(
             "LSNR_DROPOUT", cast=bool, default=False, section=self.section
         )
@@ -334,6 +335,8 @@ class DfNet(nn.Module):
     run_df: Final[bool]
     run_erb: Final[bool]
     lsnr_droput: Final[bool]
+    post_filter: Final[bool]
+    post_filter_beta: Final[float]
 
     def __init__(
         self,
@@ -366,6 +369,7 @@ class DfNet(nn.Module):
         self.mask = Mask(erb_inv_fb)
         self.erb_inv_fb = erb_inv_fb
         self.post_filter = p.mask_pf
+        self.post_filter_beta = p.pf_beta
 
         self.df_order = p.df_order
         self.df_op = MF.DF(num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead)
@@ -442,12 +446,11 @@ class DfNet(nn.Module):
             spec_e = spec_m
 
         if self.post_filter:
-            beta = 0.02
+            beta = self.post_filter_beta
             eps = 1e-12
-            mask = (as_complex(spec_e).abs() / as_complex(spec).abs().add(eps)).clamp_max(1)
-            mask_sin = mask * torch.sin(PI * mask / 2)
-            mask_pf = (1 + beta) * mask / (1 + beta * mask.div(mask_sin.clamp_min(eps)).pow(2))
-            pf = mask_pf / mask
+            mask = (as_complex(spec_e).abs() / as_complex(spec).abs().add(eps)).clamp(eps, 1)
+            mask_sin = mask * torch.sin(PI * mask / 2).clamp_min(eps)
+            pf = ((1 + beta) / (1 + beta * mask.div(mask_sin).pow(2)))
             spec_e = spec_e * pf.unsqueeze(-1)
 
         return spec_e, m, lsnr, df_coefs
