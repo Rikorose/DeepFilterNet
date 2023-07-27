@@ -552,9 +552,7 @@ impl DfDbusControl {
             .expect("Failed to send DfControl");
     }
     fn pf_beta(&self, beta: f32) {
-        self.tx
-            .send((DfControl::PfBeta, beta))
-            .expect("Failed to send DfControl");
+        self.tx.send((DfControl::PfBeta, beta)).expect("Failed to send DfControl");
     }
     fn min_processing_thresh(&self, thresh: i32) {
         self.tx
