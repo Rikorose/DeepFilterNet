@@ -450,7 +450,7 @@ class DfNet(nn.Module):
             eps = 1e-12
             mask = (as_complex(spec_e).abs() / as_complex(spec).abs().add(eps)).clamp(eps, 1)
             mask_sin = mask * torch.sin(PI * mask / 2).clamp_min(eps)
-            pf = ((1 + beta) / (1 + beta * mask.div(mask_sin).pow(2)))
+            pf = (1 + beta) / (1 + beta * mask.div(mask_sin).pow(2))
             spec_e = spec_e * pf.unsqueeze(-1)
 
         return spec_e, m, lsnr, df_coefs
