@@ -24,9 +24,12 @@ struct Args {
     /// Path to model tar.gz
     #[arg(short, long, value_hint = ValueHint::FilePath)]
     model: Option<PathBuf>,
-    /// Enable postfilter
+    /// Enable post-filter
     #[arg(long = "pf")]
     post_filter: bool,
+    /// Post-filter beta. Higher beta results in stronger attenuation.
+    #[arg(long = "pf-beta", default_value_t = 0.02)]
+    post_filter_beta: f32,
     /// Compensate delay of STFT and model lookahead
     #[arg(short = 'D', long)]
     compensate_delay: bool,
@@ -88,15 +91,20 @@ fn main() -> Result<()> {
         .init();
 
     // Initialize with 1 channel
-    let mut r_params = RuntimeParams::new(
-        1,
-        args.post_filter,
-        args.atten_lim_db,
+    let mut r_params = RuntimeParams::default();
+    r_params = r_params.with_atten_lim(args.atten_lim_db).with_thresholds(
         args.min_db_thresh,
         args.max_db_erb_thresh,
         args.max_db_df_thresh,
-        args.reduce_mask.try_into().unwrap(),
     );
+    if args.post_filter {
+        r_params = r_params.with_post_filter(args.post_filter_beta);
+    }
+    if let Ok(red) = args.reduce_mask.try_into() {
+        r_params = r_params.with_mask_reduce(red);
+    }else{
+        log::warn!("Input not valid for `reduce_mask`.")
+    }
     let df_params = if let Some(tar) = args.model.as_ref() {
         match DfParams::new(tar.clone()) {
             Ok(p) => p,

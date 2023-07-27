@@ -31,6 +31,9 @@ const DBUS_PATH: &str = "/org/deepfilter/DeepFilterLadspa";
 const ATTEN_LIM_DEF: DefaultValue = DefaultValue::Maximum;
 const ATTEN_LIM_MIN: f32 = 0.;
 const ATTEN_LIM_MAX: f32 = 100.;
+const PF_BETA_DEF: DefaultValue = DefaultValue::Minimum;
+const PF_BETA_MIN: f32 = 0.;
+const PF_BETA_MAX: f32 = 0.05;
 const MIN_PROC_THRESH_DEF: DefaultValue = DefaultValue::Minimum;
 const MIN_PROC_THRESH_MIN: f32 = -15.;
 const MIN_PROC_THRESH_MAX: f32 = 35.;
@@ -116,9 +119,8 @@ fn get_worker_fn(
             if let Ok((c, v)) = controls.try_recv() {
                 log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
                 match c {
-                    DfControl::AttenLim => {
-                        df.set_atten_lim(v).expect("Failed to set attenuation limit.")
-                    }
+                    DfControl::AttenLim => df.set_atten_lim(v),
+                    DfControl::PfBeta => df.set_pf_beta(v),
                     DfControl::MinThreshDb => df.min_db_thresh = v,
                     DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                     DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
@@ -178,7 +180,7 @@ fn init_df(channels: usize) -> (usize, usize) {
     }
 
     let df_params = DfParams::default();
-    let r_params = RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN);
+    let r_params = RuntimeParams::default_with_ch(channels);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     let (sr, frame_size) = (df.sr, df.hop_size);
     unsafe { MODEL = Some(df) };
@@ -256,6 +258,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
 #[derive(PartialEq)]
 enum DfControl {
     AttenLim,
+    PfBeta,
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
@@ -265,6 +268,7 @@ impl DfControl {
     fn from_port_name(name: &str) -> Self {
         match name {
             "Attenuation Limit (dB)" => Self::AttenLim,
+            "Post Filter Beta" => Self::PfBeta,
             "Min processing threshold (dB)" => Self::MinThreshDb,
             "Max ERB processing threshold (dB)" => Self::MaxErbThreshDb,
             "Max DF processing threshold (dB)" => Self::MaxDfThreshDb,
@@ -277,6 +281,7 @@ impl fmt::Display for DfControl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DfControl::AttenLim => write!(f, "Attenuation Limit (dB)"),
+            DfControl::PfBeta => write!(f, "Post Filter Beta"),
             DfControl::MinThreshDb => write!(f, "Min processing threshold (dB)"),
             DfControl::MaxErbThreshDb => write!(f, "Max ERB processing threshold (dB)"),
             DfControl::MaxDfThreshDb => write!(f, "Max DF processing threshold (dB)"),
@@ -287,6 +292,7 @@ impl fmt::Display for DfControl {
 
 struct DfControlHistory {
     atten_lim: f32,
+    pf_beta: f32,
     min_thresh_db: f32,
     max_erb_thresh_db: f32,
     max_df_thresh_db: f32,
@@ -296,6 +302,7 @@ impl Default for DfControlHistory {
     fn default() -> Self {
         Self {
             atten_lim: 100.,
+            pf_beta: 0.0,
             min_thresh_db: -10.,
             max_erb_thresh_db: 30.,
             max_df_thresh_db: 20.,
@@ -307,6 +314,7 @@ impl DfControlHistory {
     fn get(&self, c: &DfControl) -> f32 {
         match c {
             DfControl::AttenLim => self.atten_lim,
+            DfControl::PfBeta => self.pf_beta,
             DfControl::MinThreshDb => self.min_thresh_db,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db,
@@ -316,6 +324,7 @@ impl DfControlHistory {
     fn set(&mut self, c: &DfControl, v: f32) {
         match c {
             DfControl::AttenLim => self.atten_lim = v,
+            DfControl::PfBeta => self.pf_beta = v,
             DfControl::MinThreshDb => self.min_thresh_db = v,
             DfControl::MaxErbThreshDb => self.max_erb_thresh_db = v,
             DfControl::MaxDfThreshDb => self.max_df_thresh_db = v,
@@ -542,6 +551,11 @@ impl DfDbusControl {
             .send((DfControl::AttenLim, lim as f32))
             .expect("Failed to send DfControl");
     }
+    fn pf_beta(&self, beta: f32) {
+        self.tx
+            .send((DfControl::PfBeta, beta))
+            .expect("Failed to send DfControl");
+    }
     fn min_processing_thresh(&self, thresh: i32) {
         self.tx
             .send((DfControl::MinThreshDb, thresh as f32))
@@ -620,6 +634,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     lower_bound: Some(MIN_PROC_BUF_MIN),
                     upper_bound: Some(MIN_PROC_BUF_MAX),
                 },
+                Port {
+                    name: "Post Filter Beta",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(PF_BETA_DEF),
+                    lower_bound: Some(PF_BETA_MIN),
+                    upper_bound: Some(PF_BETA_MAX),
+                },
             ],
             new: |d, sr| Box::new(get_new_df(1)(d, sr)),
         }),
@@ -690,6 +712,14 @@ pub fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
                     default: Some(MIN_PROC_BUF_DEF),
                     lower_bound: Some(MIN_PROC_BUF_MIN),
                     upper_bound: Some(MIN_PROC_BUF_MAX),
+                },
+                Port {
+                    name: "Post Filter Beta",
+                    desc: PortDescriptor::ControlInput,
+                    hint: None,
+                    default: Some(PF_BETA_DEF),
+                    lower_bound: Some(PF_BETA_MIN),
+                    upper_bound: Some(PF_BETA_MAX),
                 },
             ],
             new: |d, sr| Box::new(get_new_df(2)(d, sr)),

@@ -112,26 +112,29 @@ impl TryFrom<i32> for ReduceMask {
 }
 pub struct RuntimeParams {
     pub n_ch: usize,
-    post_filter: bool,
-    atten_lim_db: f32,
-    min_db_thresh: f32,
-    max_db_erb_thresh: f32,
-    max_db_df_thresh: f32,
-    reduce_mask: ReduceMask,
+    pub post_filter: bool,
+    pub post_filter_beta: f32,
+    pub atten_lim_db: f32,
+    pub min_db_thresh: f32,
+    pub max_db_erb_thresh: f32,
+    pub max_db_df_thresh: f32,
+    pub reduce_mask: ReduceMask,
 }
 impl RuntimeParams {
     pub fn new(
         n_ch: usize,
-        post_filter: bool,
+        post_filter_beta: f32,
         atten_lim_db: f32,
         min_db_thresh: f32,
         max_db_erb_thresh: f32,
         max_db_df_thresh: f32,
         reduce_mask: ReduceMask,
     ) -> Self {
+        let post_filter = post_filter_beta > 0.;
         Self {
             n_ch,
             post_filter,
+            post_filter_beta,
             atten_lim_db,
             min_db_thresh,
             max_db_erb_thresh,
@@ -139,13 +142,49 @@ impl RuntimeParams {
             reduce_mask,
         }
     }
+    pub fn with_post_filter(mut self, beta: f32) -> Self {
+        assert!(beta >= 0.); // Cannot be negative
+        if beta > 0. {
+            self.post_filter = true;
+        }
+        self.post_filter_beta = beta;
+        self
+    }
+    pub fn with_atten_lim(mut self, atten_lim_db: f32) -> Self {
+        self.atten_lim_db = atten_lim_db;
+        self
+    }
+    pub fn with_thresholds(
+        mut self,
+        min_db_thresh: f32,
+        max_db_erb_thresh: f32,
+        max_db_df_thresh: f32,
+    ) -> Self {
+        self.min_db_thresh = min_db_thresh;
+        self.max_db_erb_thresh = max_db_erb_thresh;
+        self.max_db_df_thresh = max_db_df_thresh;
+        self
+    }
+    pub fn with_mask_reduce(mut self, red: ReduceMask) -> Self {
+        self.reduce_mask = red;
+        self
+    }
     pub fn default_with_ch(channels: usize) -> Self {
-        RuntimeParams::new(channels, false, 100., -10., 30., 20., ReduceMask::MEAN)
+        RuntimeParams {
+            n_ch: channels,
+            post_filter: false,
+            post_filter_beta: 0.02,
+            atten_lim_db: 100.,
+            min_db_thresh: -10.,
+            max_db_erb_thresh: 30.,
+            max_db_df_thresh: 20.,
+            reduce_mask: ReduceMask::MEAN,
+        }
     }
 }
 impl Default for RuntimeParams {
     fn default() -> Self {
-        RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN)
+        Self::default_with_ch(1)
     }
 }
 
@@ -169,6 +208,7 @@ pub struct DfTract {
     pub n_freqs: usize,
     pub df_order: usize,
     pub post_filter: bool,
+    pub post_filter_beta: f32,
     pub alpha: f32,
     pub min_db_thresh: f32,
     pub max_db_erb_thresh: f32,
@@ -187,7 +227,7 @@ pub struct DfTract {
 #[cfg(all(not(feature = "capi"), feature = "default-model"))]
 impl Default for DfTract {
     fn default() -> Self {
-        let r_params = RuntimeParams::new(1, false, 100., -10., 30., 20., ReduceMask::MEAN);
+        let r_params = RuntimeParams::default();
         let df_params = DfParams::default();
         DfTract::new(df_params, &r_params).expect("Could not load DfTract")
     }
@@ -311,6 +351,7 @@ impl DfTract {
             rolling_spec_buf_x,
             df_states,
             post_filter: rp.post_filter,
+            post_filter_beta: rp.post_filter_beta,
         };
         m.init()?;
         #[cfg(feature = "timings")]
@@ -323,7 +364,20 @@ impl DfTract {
         Ok(m)
     }
 
-    pub fn set_atten_lim(&mut self, db: f32) -> Result<()> {
+    pub fn set_pf_beta(&mut self, beta: f32) {
+        self.post_filter_beta = beta;
+        if beta > 0. {
+            self.post_filter = true;
+        } else if beta == 0. {
+            self.post_filter = false;
+        } else {
+            log::warn!("Post-filter beta cannot be smaller than 0.");
+            self.post_filter = false;
+            self.post_filter_beta = 0.;
+        }
+    }
+
+    pub fn set_atten_lim(&mut self, db: f32) {
         let lim = db.abs();
         self.atten_lim = if lim >= 100. {
             None
@@ -334,7 +388,6 @@ impl DfTract {
             log::debug!("Setting attenuation limit to {:.1} dB", lim);
             Some(10f32.powf(-lim / 20.))
         };
-        Ok(())
     }
 
     pub fn init(&mut self) -> Result<()> {
@@ -549,6 +602,7 @@ impl DfTract {
             post_filter(
                 spec_noisy.as_slice().unwrap(),
                 spec_enh.as_slice_mut().unwrap(),
+                self.post_filter_beta,
             );
         }
 
