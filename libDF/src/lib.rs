@@ -437,19 +437,18 @@ where
     }
 }
 
-pub fn post_filter(noisy: &[Complex32], enh: &mut [Complex32]) {
-    let beta = 0.02f32;
-    let beta_p1 = 1.02f32;
+pub fn post_filter(noisy: &[Complex32], enh: &mut [Complex32], beta: f32) {
+    let beta_p1 = beta + 1.;
     let eps = 1e-12;
     let pi = std::f32::consts::PI;
     let mut g = [0.0; 4];
     let mut g_sin = [0.0; 4];
     let mut pf = [0.0; 4];
     for (n, e) in noisy.chunks_exact(4).zip(enh.chunks_exact_mut(4)) {
-        g[0] = (e[0].norm() / (n[0].norm() + eps)).min(1.);
-        g[1] = (e[1].norm() / (n[1].norm() + eps)).min(1.);
-        g[2] = (e[2].norm() / (n[2].norm() + eps)).min(1.);
-        g[3] = (e[3].norm() / (n[3].norm() + eps)).min(1.);
+        g[0] = (e[0].norm() / (n[0].norm() + eps)).min(1.).max(eps);
+        g[1] = (e[1].norm() / (n[1].norm() + eps)).min(1.).max(eps);
+        g[2] = (e[2].norm() / (n[2].norm() + eps)).min(1.).max(eps);
+        g[3] = (e[3].norm() / (n[3].norm() + eps)).min(1.).max(eps);
         g_sin[0] = g[0] * (g[0] * pi / 2.0).sin();
         g_sin[1] = g[1] * (g[1] * pi / 2.0).sin();
         g_sin[2] = g[2] * (g[2] * pi / 2.0).sin();
