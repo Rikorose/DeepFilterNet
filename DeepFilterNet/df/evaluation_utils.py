@@ -372,11 +372,14 @@ class MPMetric(Metric):
             assert clean.shape == noisy.shape, f"{clean.shape}, {noisy.shape}, {fn}"
         clean = self.maybe_resample(torch.as_tensor(clean)).squeeze(0)
         enhanced = self.maybe_resample(torch.as_tensor(enhanced)).squeeze(0)
+        assert enhanced.isfinite().all(), f"Error processing file {fn}"
         h = self.pool.apply_async(
             self.compute_metric,
             (clean, enhanced),
             callback=lambda x: self._add_values_enh(x, fn),
-            error_callback=logger.error,
+            error_callback=lambda e: logger.error(
+                f"Error computing {self.name} metric for enhanced sample {fn}: {e}"
+            ),
         )
         self.worker_results.append(h)
         if noisy is not None:
@@ -385,7 +388,9 @@ class MPMetric(Metric):
                 self.compute_metric,
                 (clean, noisy),
                 callback=lambda x: self._add_values_noisy(x, fn),
-                error_callback=logger.error,
+                error_callback=lambda e: logger.error(
+                    f"Error computing {self.name} metric for noisy sample {fn}: {e}"
+                ),
             )
             self.worker_results.append(h)
 
