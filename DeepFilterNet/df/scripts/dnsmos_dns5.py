@@ -129,13 +129,14 @@ def download_onnx_models():
     return sig_bak_ovr, p808
 
 
-def eval_dnsmos_single(file: str, target_mos: Optional[List[float]] = None):
+def eval_sample_dnsmos(file: str, target_mos: Optional[List[float]] = None, log: bool = True):
     primary_model_path, p808_model_path = download_onnx_models()
     compute_score = ComputeScore(primary_model_path, p808_model_path)
     desired_fs = SAMPLING_RATE
     scores = compute_score(file, desired_fs, False)
     scores = {n: scores[n] for n in NAMES}
-    logger.info(f"Processing file: {file}")
+    if log:
+        logger.info(f"Processing file: {file}")
     if target_mos is not None:
         assert len(target_mos) == 4
         for n, t in zip(NAMES, target_mos):
@@ -147,11 +148,12 @@ def eval_dnsmos_single(file: str, target_mos: Optional[List[float]] = None):
                 print(scores.values())
                 exit(2)
 
-    log_metrics("Predicted", {n: v for (n, v) in scores.items()})
+    if log:
+        log_metrics("Predicted", {n: v for (n, v) in scores.items()})
     return scores
 
 
-def eval_dnsmos(args):
+def eval_dir_dnsmos(args):
     if args.personalized_MOS:
         raise NotImplementedError()
 
@@ -209,24 +211,18 @@ if __name__ == "__main__":
     subparsers = parser.add_subparsers(dest="subparser_name")
     mn_parser = subparsers.add_parser("mean", aliases=["m"])
     mn_parser.add_argument("csv_file", type=str)
-    eval_single_parser = subparsers.add_parser("eval-single")
-    eval_single_parser.add_argument("file", type=str)
-    eval_single_parser.add_argument("--target_mos", "-t", type=float, nargs="*")
-    eval_parser = subparsers.add_parser("eval", aliases=["e"])
-    eval_parser.add_argument(
+    eval_sample_parser = subparsers.add_parser("eval-sample")
+    eval_sample_parser.add_argument("file", type=str)
+    eval_sample_parser.add_argument("--target_mos", "-t", type=float, nargs="*")
+    eval_dir_parser = subparsers.add_parser("eval-dir", aliases=["e"])
+    eval_dir_parser.add_argument(
         "testset_dir", help="Path to the dir containing audio clips in .wav to be evaluated"
     )
-    eval_parser.add_argument(
+    eval_dir_parser.add_argument(
         "-o", "--csv-file", help="If you want the scores in a CSV file provide the full path"
     )
-    eval_parser.add_argument("--cpu", help="Only run on CPU", action="store_true")
-    eval_parser.add_argument(
-        "-p",
-        "--personalized_MOS",
-        action="store_true",
-        help="Flag to indicate if personalized MOS score is needed or regular",
-    )
-    eval_parser.add_argument("--num-workers", type=int, default=1)
+    eval_dir_parser.add_argument("--cpu", help="Only run on CPU", action="store_true")
+    eval_dir_parser.add_argument("--num-workers", type=int, default=1)
 
     args = parser.parse_args()
     if args.subparser_name is None:
@@ -235,6 +231,6 @@ if __name__ == "__main__":
     if args.subparser_name in ("m", "mean"):
         print_csv(args.csv_file)
     elif args.subparser_name == "eval-single":
-        eval_dnsmos_single(args.file, args.target_mos)
+        eval_sample_dnsmos(args.file, args.target_mos)
     else:
-        eval_dnsmos(args)
+        eval_dir_dnsmos(args.file)
