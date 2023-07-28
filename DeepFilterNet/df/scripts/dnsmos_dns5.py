@@ -55,7 +55,7 @@ class ComputeScore:
 
         return sig_poly, bak_poly, ovr_poly
 
-    def __call__(self, fpath: str, sampling_rate: int, is_personalized_MOS: bool=False):
+    def __call__(self, fpath: str, sampling_rate: int, is_personalized_MOS: bool = False):
         logger.debug(f"Processing file: {fpath}")
         aud, input_fs = sf.read(fpath)
         fs = sampling_rate
@@ -233,7 +233,7 @@ if __name__ == "__main__":
         exit(1)
     if args.subparser_name in ("m", "mean"):
         print_csv(args.csv_file)
-    elif args.subparser_name == "eval-single":
+    elif args.subparser_name == "eval-sample":
         eval_sample_dnsmos(args.file, args.target_mos)
     else:
         eval_dir_dnsmos(args)
