@@ -295,8 +295,11 @@ class PrintVersion(argparse.Action):
         exit(0)
 
 
-def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+def setup_df_argument_parser(
+    default_log_level: str = "INFO", parser=None
+) -> argparse.ArgumentParser:
+    if parser is None:
+        parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-base-dir",
         "-m",
