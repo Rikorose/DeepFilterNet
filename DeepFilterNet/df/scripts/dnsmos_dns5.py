@@ -55,7 +55,7 @@ class ComputeScore:
 
         return sig_poly, bak_poly, ovr_poly
 
-    def __call__(self, fpath: str, sampling_rate: int, is_personalized_MOS: bool):
+    def __call__(self, fpath: str, sampling_rate: int, is_personalized_MOS: bool=False):
         logger.debug(f"Processing file: {fpath}")
         aud, input_fs = sf.read(fpath)
         fs = sampling_rate
@@ -154,9 +154,6 @@ def eval_sample_dnsmos(file: str, target_mos: Optional[List[float]] = None, log:
 
 
 def eval_dir_dnsmos(args):
-    if args.personalized_MOS:
-        raise NotImplementedError()
-
     primary_model_path, p808_model_path = download_onnx_models()
 
     compute_score = ComputeScore(primary_model_path, p808_model_path)
@@ -164,7 +161,7 @@ def eval_dir_dnsmos(args):
     rows = []
     clips = []
     clips = glob.glob(os.path.join(args.testset_dir, "*.wav"))
-    is_personalized_eval = args.personalized_MOS
+    is_personalized_eval = False
     desired_fs = SAMPLING_RATE
 
     if len(clips) == 0:
@@ -198,9 +195,9 @@ def print_csv(df: Union[pd.DataFrame, str]):
         df = pd.read_csv(df)
     print(df.describe())
     print(
-        np.mean(df["OVRL"]),
         np.mean(df["SIG"]),
         np.mean(df["BAK"]),
+        np.mean(df["OVRL"]),
         np.mean(df["P808_MOS"]),
     )
 
@@ -239,4 +236,4 @@ if __name__ == "__main__":
     elif args.subparser_name == "eval-single":
         eval_sample_dnsmos(args.file, args.target_mos)
     else:
-        eval_dir_dnsmos(args.file)
+        eval_dir_dnsmos(args)

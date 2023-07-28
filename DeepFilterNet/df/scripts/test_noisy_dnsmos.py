@@ -55,6 +55,12 @@ def main(args):
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
+    print(
+        metrics["Enhanced SIG"],
+        metrics["Enhanced BAK"],
+        metrics["Enhanced OVRL"],
+        metrics["Enhanced P808_MOS"],
+    )
 
 
 if __name__ == "__main__":
