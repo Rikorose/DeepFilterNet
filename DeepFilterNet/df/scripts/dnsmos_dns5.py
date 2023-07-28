@@ -197,6 +197,12 @@ def print_csv(df: Union[pd.DataFrame, str]):
     if isinstance(df, str):
         df = pd.read_csv(df)
     print(df.describe())
+    print(
+        np.mean(df["OVRL"]),
+        np.mean(df["SIG"]),
+        np.mean(df["BAK"]),
+        np.mean(df["P808_MOS"]),
+    )
 
 
 def isclose(a, b) -> bool:
