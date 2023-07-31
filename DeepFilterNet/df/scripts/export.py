@@ -269,7 +269,7 @@ def export(
         "coefs": {1: "S"},
     }
     path = os.path.join(export_dir, "df_dec.onnx")
-    coefs, _ = export_impl(  # noqa
+    coefs = export_impl(  # noqa
         path,
         model.df_dec,
         inputs=inputs,
