@@ -24,11 +24,11 @@ def main(args):
     if args.reverb:
         datasets.append(os.path.join(args.dataset_dir, "with_reverb"))
 
-    save_audio_callback = None  # type: ignore
+    save_audio_callback = None  # type: ignore  # noqa: F811
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
 
-        def save_audio_callback(cleanfn: str, enh):
+        def save_audio_callback(cleanfn: str, enh):  # noqa: F811
             save_audio(
                 os.path.basename(cleanfn), enh, sr, output_dir=args.output_dir, suffix=suffix
             )
