@@ -9,6 +9,11 @@ For PipeWire integration as a virtual noise suppression microphone look [here](h
 
 https://github.com/Rikorose/DeepFilterNet/assets/16517898/79679fd7-de73-4c22-948c-891927c7d2ca
 
+To run the demo (linux only) use:
+```bash
+cargo +nightly run -p df-demo --features ui --bin df-demo --release
+```
+
 ### News
 
 - New DeepFilterNet Demo: *DeepFilterNet: Perceptually Motivated Real-Time Speech Enhancement*
