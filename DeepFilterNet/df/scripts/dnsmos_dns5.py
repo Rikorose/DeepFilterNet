@@ -14,6 +14,7 @@ import soundfile as sf
 from loguru import logger
 from tqdm import tqdm
 
+from df.io import save_audio
 from df.logger import init_logger, log_metrics
 from df.scripts.dnsmos import get_ort_session
 from df.utils import download_file, get_cache_dir
@@ -190,6 +191,74 @@ def eval_dir_dnsmos(args):
     print_csv(df)
 
 
+def load_encoded(buffer: np.ndarray, codec: str):
+    import io
+
+    import torchaudio as ta
+
+    # In some rare cases, torch audio failes to fully decode vorbis resulting in a way shorter signal
+    wav, _ = ta.load(io.BytesIO(buffer[...].tobytes()), format=codec.lower())
+    return wav
+
+
+def eval_ds(args):
+    from tempfile import NamedTemporaryFile
+
+    import h5py
+    import torch
+
+    primary_model_path, p808_model_path = download_onnx_models()
+
+    compute_score = ComputeScore(primary_model_path, p808_model_path)
+
+    future_to_url = {}
+    rows = []
+    is_personalized_eval = False
+    desired_fs = SAMPLING_RATE
+
+    def compute_score_audio(audio: torch.Tensor, sr: int):
+        with NamedTemporaryFile(suffix=".wav") as nf:
+            save_audio(nf.name, audio, desired_fs, dtype=torch.float32)
+            return compute_score(nf.name, desired_fs, is_personalized_eval)
+
+    path = args.ds
+    assert os.path.isfile(path)
+    group = "speech"
+    with h5py.File(path, "r", libver="latest") as f, concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.num_workers
+    ) as executor:
+        assert group in f
+        sr = int(f.attrs["sr"])
+        codec = f.attrs.get("codec", "pcm")
+        for n, sample in f[group].items():  # type: ignore
+            # print(n, end=" ")
+            if codec == "pcm":
+                audio = torch.from_numpy(sample[...])
+                if audio.dim() == 1:
+                    audio.unsqueeze_(0)
+            else:
+                audio = load_encoded(sample, codec)
+            future_to_url[n] = executor.submit(compute_score_audio, audio, sr)
+            # print()
+
+        for future in tqdm(concurrent.futures.as_completed(future_to_url)):
+            clip = future_to_url[future]
+            try:
+                data = future.result()
+                print(clip, data)
+            except Exception as exc:
+                print("%r generated an exception: %s" % (clip, exc))
+                raise exc
+            else:
+                rows.append(data)
+
+    df = pd.DataFrame(rows)
+    if args.csv_file:
+        csv_file = args.csv_file
+        df.to_csv(csv_file)
+    print_csv(df)
+
+
 def print_csv(df: Union[pd.DataFrame, str]):
     if isinstance(df, str):
         df = pd.read_csv(df)
@@ -226,6 +295,12 @@ if __name__ == "__main__":
     )
     eval_dir_parser.add_argument("--cpu", help="Only run on CPU", action="store_true")
     eval_dir_parser.add_argument("--num-workers", type=int, default=1)
+    eval_ds_parser = subparsers.add_parser("eval-ds")
+    eval_ds_parser.add_argument("ds", help="Path to the hdf5 dataset file")
+    eval_ds_parser.add_argument(
+        "-o", "--csv-file", help="If you want the scores in a CSV file provide the full path"
+    )
+    eval_ds_parser.add_argument("--num-workers", type=int, default=1)
 
     args = parser.parse_args()
     if args.subparser_name is None:
@@ -235,5 +310,9 @@ if __name__ == "__main__":
         print_csv(args.csv_file)
     elif args.subparser_name == "eval-sample":
         eval_sample_dnsmos(args.file, args.target_mos)
-    else:
+    elif args.subparser_name == "eval-dir":
         eval_dir_dnsmos(args)
+    elif args.subparser_name == "eval-ds":
+        eval_ds(args)
+    else:
+        raise NotImplementedError()
