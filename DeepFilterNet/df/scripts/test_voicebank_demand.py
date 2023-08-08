@@ -46,6 +46,7 @@ def main(args):
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
+    print("".join(f"{m}," for k, m in metrics.items() if not "SSNR" in k)[:-1])
 
 
 if __name__ == "__main__":

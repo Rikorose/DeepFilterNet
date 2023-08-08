@@ -5,6 +5,7 @@ import argparse
 import concurrent.futures
 import glob
 import os
+from time import sleep
 from typing import List, Optional, Union
 
 import librosa
@@ -15,7 +16,6 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
-
 from df.io import load_audio, resample, save_audio
 from df.logger import init_logger, log_metrics
 from df.scripts.dnsmos import get_ort_session
@@ -25,8 +25,9 @@ SAMPLING_RATE = 16000
 INPUT_LENGTH = 9.01
 URL_ONNX = "https://github.com/microsoft/DNS-Challenge/raw/e14b010/DNSMOS/DNSMOS"
 NAMES = ["SIG", "BAK", "OVRL", "P808_MOS"]
+SLEEP_MS = int(os.environ.get("SLEEP", "0"))
 if torch.cuda.is_available():
-    TORCH_DEVICE = "gpu"
+    TORCH_DEVICE = "cuda"
 else:
     TORCH_DEVICE = "cpu"
 
@@ -58,7 +59,7 @@ class ComputeScore:
             .abs()
             .square()
         )
-        mel_spec = torch.einsum("...ft,mf->mt", powspec, self.mel).t().numpy()
+        mel_spec = torch.einsum("...ft,mf->mt", powspec, self.mel).t().cpu().numpy()
         if to_db:
             mel_spec = (librosa.power_to_db(mel_spec, ref=np.max) + 40) / 40
         return mel_spec
@@ -177,10 +178,17 @@ def download_onnx_models():
 
 
 def eval_sample_dnsmos(
-    file: str, target_mos: Optional[List[float]] = None, log: bool = True, use_torch: bool = False
+    file: str,
+    target_mos: Optional[List[float]] = None,
+    log: bool = True,
+    use_torch: bool = False,
+    compute_score: Optional[ComputeScore] = None,
 ):
     primary_model_path, p808_model_path = download_onnx_models()
     compute_score = ComputeScore(primary_model_path, p808_model_path)
+    if compute_score is None:
+        primary_model_path, p808_model_path = download_onnx_models()
+        compute_score = ComputeScore(primary_model_path, p808_model_path)
     desired_fs = SAMPLING_RATE
     if use_torch:
         audio = load_audio(file, desired_fs)[0].squeeze(0).numpy()
@@ -259,7 +267,6 @@ def eval_ds(args):
     import torch
 
     primary_model_path, p808_model_path = download_onnx_models()
-
     compute_score = ComputeScore(primary_model_path, p808_model_path)
 
     rows = []
@@ -268,7 +275,7 @@ def eval_ds(args):
 
     def compute_score_audio(audio: torch.Tensor, sr: int, fname: str):
         if args.use_torch:
-            audio = audio.to(TORCH_DEVICE).squeeze(0)
+            audio = audio.squeeze(0)
             if audio.dtype == torch.int16:
                 audio = audio.to(torch.float32) / 32767.0
             if sr != desired_fs:
@@ -278,23 +285,25 @@ def eval_ds(args):
             save_audio(nf.name, audio, sr, dtype=torch.float32)
             return compute_score(nf.name, desired_fs, is_personalized_eval, fname=fname)
 
-    path = args.ds
-    assert os.path.isfile(path)
-    group = "speech"
-    with h5py.File(path, "r", libver="latest") as f:
-        assert group in f
-        sr = int(f.attrs["sr"])
-        codec = f.attrs.get("codec", "pcm")
-        for n, sample in f[group].items():  # type: ignore
-            # print(n, end=" ")
-            if codec == "pcm":
-                audio = torch.from_numpy(sample[...])
-                if audio.dim() == 1:
-                    audio.unsqueeze_(0)
-            else:
-                audio = load_encoded(sample, codec)
-            rows.append(compute_score_audio(audio, sr, fname=n))
-            break
+    for path in args.ds:
+        assert os.path.isfile(path)
+        group = "speech"
+        with h5py.File(path, "r", libver="latest") as f:
+            print(f"Evaluating ds {path}")
+            assert group in f
+            sr = int(f.attrs["sr"])
+            codec = f.attrs.get("codec", "pcm")
+            for n, sample in f[group].items():  # type: ignore
+                print(n)
+                if codec == "pcm":
+                    audio = torch.from_numpy(sample[...])
+                    if audio.dim() == 1:
+                        audio.unsqueeze_(0)
+                else:
+                    audio = load_encoded(sample, codec)
+                if SLEEP_MS > 0:
+                    sleep(SLEEP_MS / 1000)
+                rows.append(compute_score_audio(audio, sr, fname=n))
 
     df = pd.DataFrame(rows)
     if args.csv_file:
@@ -303,9 +312,10 @@ def eval_ds(args):
     print_csv(df)
 
 
-def print_csv(df: Union[pd.DataFrame, str]):
-    if isinstance(df, str):
-        df = pd.read_csv(df)
+def print_csv(df: Union[pd.DataFrame, List[str]]):
+    if isinstance(df, list):
+        df = [pd.read_csv(f) for f in df]
+        df = pd.concat(df)
     print(df.describe())
     print(
         np.mean(df["SIG"]),
@@ -326,7 +336,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="subparser_name")
     mn_parser = subparsers.add_parser("mean", aliases=["m"])
-    mn_parser.add_argument("csv_file", type=str)
+    mn_parser.add_argument("csv_file", type=str, nargs="+")
     eval_sample_parser = subparsers.add_parser("eval-sample")
     eval_sample_parser.add_argument("file", type=str)
     eval_sample_parser.add_argument("--target_mos", "-t", type=float, nargs="*")
@@ -340,7 +350,7 @@ if __name__ == "__main__":
     eval_dir_parser.add_argument("--cpu", help="Only run on CPU", action="store_true")
     eval_dir_parser.add_argument("--num-workers", type=int, default=1)
     eval_ds_parser = subparsers.add_parser("eval-ds")
-    eval_ds_parser.add_argument("ds", help="Path to the hdf5 dataset file")
+    eval_ds_parser.add_argument("ds", help="Path to the hdf5 dataset file", nargs="+")
     eval_ds_parser.add_argument("--use-torch", action="store_true")
     eval_ds_parser.add_argument(
         "-o", "--csv-file", help="If you want the scores in a CSV file provide the full path"

@@ -503,12 +503,16 @@ class DnsMos5Metric(NoisyMetric):
     def __init__(self, sr: int, pool: Pool):
         name = dnsmos5.NAMES
         super().__init__(name, pool=pool, source_sr=sr, target_sr=16000)
+        primary_model_path, p808_model_path = dnsmos5.download_onnx_models()
+        self.compute_score = dnsmos5.ComputeScore(primary_model_path, p808_model_path)
 
     def compute_metric(self, degraded) -> Union[float, np.ndarray]:
         assert self.sr is not None
         with NamedTemporaryFile(suffix=".wav") as nf:
             save_audio(nf.name, degraded, self.sr, dtype=torch.float32)
-            scores = dnsmos5.eval_sample_dnsmos(nf.name, log=False)
+            scores = dnsmos5.eval_sample_dnsmos(
+                nf.name, log=False, compute_score=self.compute_score
+            )
             return np.asarray([scores[n] for n in self.name])
 
 
