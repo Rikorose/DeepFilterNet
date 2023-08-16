@@ -1,5 +1,5 @@
-torch
-torchaudio
+torch=2.0
+torchaudio=2.0
 deepfilterlib
 icecream>=2
 loguru>=0.5
