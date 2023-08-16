@@ -2,6 +2,7 @@ use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::env;
 use std::ffi::OsStr;
 use std::fmt;
+use std::fmt::Display;
 #[cfg(feature = "timings")]
 use std::fmt::Write as _;
 use std::fs;
@@ -9,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter};
 #[cfg(feature = "vorbis")]
 use std::io::{Cursor, Read, Seek};
+use std::marker::Copy;
 use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr;
@@ -651,7 +653,7 @@ impl DatasetBuilder {
                     .with_sr(self.sr),
             ),
             Box::new(
-                RandResample::default_with_prob(get_env("DF_P_LFILT").unwrap_or(0.1))
+                RandResample::default_with_prob(get_env("DF_P_RESAMPLE").unwrap_or(0.1))
                     .with_sr(self.sr),
             ),
         ]);
@@ -696,13 +698,14 @@ impl DatasetBuilder {
                     .with_sr(self.sr),
             ),
             Box::new(
-                RandResample::default_with_prob(get_env("DF_P_LFILT").unwrap_or(0.1))
+                RandResample::default_with_prob(get_env("DF_P_RESAMPLE").unwrap_or(0.1))
                     .with_sr(self.sr),
             ),
         ]);
         if ds_split == Split::Train {
+            let p_clipping: f32 = get_env("DF_P_CLIPPING_NOISE").unwrap_or(0.1);
             ns_augmentations.push(Box::new(
-                RandClipping::default_with_prob(0.1).with_c(0.01..0.5),
+                RandClipping::default_with_prob(p_clipping).with_c(0.01..0.5),
             ))
         }
         let p_reverb = self.p_reverb.unwrap_or(0.);
@@ -715,8 +718,15 @@ impl DatasetBuilder {
         let seed = self.seed.unwrap_or(0);
         // 5% of noises used for mixing will contain randomly generated noise.
         // This has the advantage that the noise will actually contain frequencies up 24 kHz.
-        let noise_generator =
-            NoiseGenerator::new(self.sr, if ds_split == Split::Train { 0.05 } else { 0.0 });
+        let p_noise_gen = get_env("DF_P_NOISE_GEN").unwrap_or(0.05);
+        let noise_generator = NoiseGenerator::new(
+            self.sr,
+            if ds_split == Split::Train {
+                p_noise_gen
+            } else {
+                0.0
+            },
+        );
         let bw_limiter = if let Some(p) = self.p_bandwidth_ext {
             if p > 0. {
                 Some(BandwidthLimiterAugmentation::new(p, self.sr))
@@ -2064,12 +2074,16 @@ fn mix_audio_signal(
 
 fn get_env<T, K>(var: K) -> Option<T>
 where
-    K: AsRef<OsStr>,
-    T: FromStr,
+    K: AsRef<OsStr> + Display + Copy,
+    T: FromStr + Display,
     <T as std::str::FromStr>::Err: std::fmt::Debug,
 {
     match env::var(var) {
-        Ok(e) => Some(e.parse::<T>().expect("Failed to parse env {var}: {e}")),
+        Ok(e) => {
+            let e = e.parse::<T>().expect("Failed to parse env {var}: {e}");
+            log::debug!("Running with env '{}={}'", var, e);
+            Some(e)
+        }
         Err(_) => None,
     }
 }

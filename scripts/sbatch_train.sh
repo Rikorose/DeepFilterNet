@@ -45,6 +45,18 @@ elif [ "$DEBUG" -eq 0 ]; then
   DEBUG="--no-debug"
 fi
 
+if [ "$DF_DISABLE_AUG" -eq 1 ]; then
+  export DF_P_REMVOE_DC=0.0
+  export DF_P_LFILT=0.0
+  export DF_P_BIQUAD=0.0
+  export DF_P_RESAMPLE=0.0
+  export DF_P_CLIPPING=0.0
+  export DF_P_CLIPPING_NOISE=0.0
+  export DF_P_ZEROING=0.0
+  export DF_P_AIR_AUG=0.0
+  export DF_P_NOISE_GEN=0.0
+fi
+
 echo "Started sbatch script at $(date) in $(pwd)"
 
 echo "Found cuda devices: $CUDA_VISIBLE_DEVICES"

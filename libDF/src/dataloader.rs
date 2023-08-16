@@ -354,6 +354,8 @@ impl DataLoader {
             self.current_split,
             epoch_seed
         );
+        #[cfg(feature = "timings")]
+        log::trace!("Logging timings");
         self.drained = false;
         Ok(())
     }
