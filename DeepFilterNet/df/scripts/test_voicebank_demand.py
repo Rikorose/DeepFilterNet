@@ -26,6 +26,7 @@ def main(args):
     clean_files = sorted(glob.glob(clean_dir + "/*.wav"))
     noisy_files = sorted(glob.glob(noisy_dir + "/*.wav"))
     if args.output_dir is not None:
+        logger.debug(f"Setting up output dir: {args.output_dir}")
         os.makedirs(args.output_dir, exist_ok=True)
 
     def save_audio_callback(cleanfn: str, enh: Tensor):
@@ -46,7 +47,7 @@ def main(args):
     )
     for k, v in metrics.items():
         logger.info(f"{k}: {v}")
-    print("".join(f"{m}," for k, m in metrics.items() if not "SSNR" in k)[:-1])
+    print("".join(f"{m}," for k, m in metrics.items() if "SSNR" not in k)[:-1])
 
 
 if __name__ == "__main__":
