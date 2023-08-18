@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 
 import h5py
 import torch
