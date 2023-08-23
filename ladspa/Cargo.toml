@@ -1,6 +1,6 @@
 [package]
 name = "deep-filter-ladspa"
-version = "0.5.4-pre"
+version = "0.5.4"
 authors = ["Hendrik Schröter"]
 edition = "2021"
 license = "MIT/Apache-2.0"
