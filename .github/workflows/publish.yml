@@ -67,24 +67,35 @@ jobs:
             tag: "311"
             abi: "311"
         df_wheel: ["pyDF", "pyDF-data"]
-        os: ["ubuntu-22.04", "macos-13", "windows-2022"]
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
-          - os: ubuntu-22.04
+          - build: linux-x86
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_x86_64:latest
-          - os: ubuntu-22.04
+          - build: linux-arm-v7
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_aarch64:latest
-          - os: macos-13
+          - build: linux-arm-aarch64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            container: quay.io/pypa/manylinux_2_28_armv7l:latest
+          - build: macos-x86
+            os: macos-13
             target: x86_64-apple-darwin
-          - os: macos-13
+          - build: macos-aarch64
+            os: macos-13
             target: aarch64-apple-darwin
-          - os: windows-2022
+          - build: win-msvc
+            os: windows-2022
             target: x86_64-pc-windows-msvc
         exclude:
-          - os: windows-2022
+          - build: win-msvc
             df_wheel: pyDF-data
-          - os: macos-13
+          - build: macos-x86
+            df_wheel: pyDF-data
+          - build: macos-aarch64
             df_wheel: pyDF-data
     defaults:
       run:
@@ -401,12 +412,12 @@ jobs:
             libname: libdeep_filter_ladspa
             libext: so
           - build: macos-x86
-            os: macos-13
+            os: macos-x86
             target: x86_64-apple-darwin
             libname: libdeep_filter_ladspa
             libext: dylib
           - build: macos-aarch64
-            os: macos-13
+            os: macos-aarch64
             target: aarch64-apple-darwin
             libname: libdeep_filter_ladspa
             libext: dylib
