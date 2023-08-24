@@ -48,8 +48,8 @@ jobs:
 
   build-libdf-wheels:
     needs: ['create-release']
-    runs-on: ${{ matrix.build.os }}
-    container: ${{ matrix.build.container }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +110,7 @@ jobs:
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
 
       - name: Install HDF5
-        if: runner.os == 'linux' && matrix.build.df_wheel == 'pyDF-data'
+        if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
         run: |
           dnf install -y epel-release
           dnf install -y hdf5-devel
@@ -135,14 +135,14 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          target: ${{ matrix.build.target }}
+          target: ${{ matrix.target }}
 
       - name: Build source distributio
         run: |
           mkdir -p target/wheels
           maturin build --profile=release-lto \
-            --target=${{ matrix.build.target }} \
-            -m ${{ matrix.build.df_wheel }}/Cargo.toml \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
             --sdist \
             -i python${{ matrix.python.version }} \
             -o target/wheels/
@@ -152,8 +152,8 @@ jobs:
         run: |
           mkdir -p target/wheels
           maturin build --profile=release-lto \
-            --target=${{ matrix.build.target }} \
-            -m ${{ matrix.build.df_wheel }}/Cargo.toml \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
             -i python${{ matrix.python.version }} \
             -o target/wheels/
 
@@ -162,8 +162,8 @@ jobs:
         run: |
           mkdir -p target/wheels target/repaired
           maturin build --profile=release-lto \
-            --target=${{ matrix.build.target }} \
-            -m ${{ matrix.build.df_wheel }}/Cargo.toml \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
             -i python.exe \
             -o target/wheels/
           pip install delvewheel wheel
@@ -430,7 +430,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          target: ${{ matrix.build.target }}
+          target: ${{ matrix.target }}
 
       - name: Show DF version
         run: |
@@ -441,22 +441,22 @@ jobs:
         run: |
           cargo install cross
           echo "CARGO=cross" >> $GITHUB_ENV
-          echo "TARGET_FLAGS=--target ${{ matrix.build.target }}" >> $GITHUB_ENV
-          echo "TARGET_DIR=./target/${{ matrix.build.target }}" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
 
       - name: Show command used for Cargo
         run: |
           echo "cargo command is: ${{ env.CARGO }}"
           echo "target flag is: ${{ env.TARGET_FLAGS }}"
           echo "target dir is: ${{ env.TARGET_DIR }}"
-          echo "DF_LADSPA_NAME=${{ matrix.build.libname }}-${{ env.DF_VERSION }}-${{ matrix.build.target }}.${{ matrix.build.libext }}" >> $GITHUB_ENV
+          echo "DF_LADSPA_NAME=${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}" >> $GITHUB_ENV
 
       - name: Build release binary
         run: ${{ env.CARGO }} build --profile=release-lto -p deep-filter-ladspa ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.build.target }}/release-lto/${{ matrix.build.libname }}.${{ matrix.build.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
+          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
 
       - uses: actions/upload-artifact@v3
         with:
