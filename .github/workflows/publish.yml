@@ -67,7 +67,7 @@ jobs:
             tag: "311"
             abi: "311"
         df_wheel: ["pyDF", "pyDF-data"]
-        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        build: [linux-x86, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
           - build: linux-x86
             os: ubuntu-22.04
@@ -388,7 +388,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, win-msvc] #, macos-x86, macos-aarch64
         include:
           - build: linux-x86
             os: ubuntu-22.04
