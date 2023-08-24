@@ -48,8 +48,8 @@ jobs:
 
   build-libdf-wheels:
     needs: ['create-release']
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
+    runs-on: ${{ matrix.build.os }}
+    container: ${{ matrix.build.container }}
     strategy:
       fail-fast: false
       matrix:
@@ -77,10 +77,6 @@ jobs:
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_aarch64:latest
-          # - build: linux-arm-v7
-            # os: ubuntu-22.04
-            # target: x86_64-unknown-linux-gnu
-            # container: quay.io/pypa/manylinux_2_28_armv7l:latest
           - build: macos-x86
             os: macos-13
             target: x86_64-apple-darwin
@@ -114,7 +110,7 @@ jobs:
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
 
       - name: Install HDF5
-        if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
+        if: runner.os == 'linux' && matrix.build.df_wheel == 'pyDF-data'
         run: |
           dnf install -y epel-release
           dnf install -y hdf5-devel
@@ -139,14 +135,14 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          target: ${{ matrix.target }}
+          target: ${{ matrix.build.target }}
 
       - name: Build source distributio
         run: |
           mkdir -p target/wheels
           maturin build --profile=release-lto \
-            --target=${{ matrix.target }} \
-            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            --target=${{ matrix.build.target }} \
+            -m ${{ matrix.build.df_wheel }}/Cargo.toml \
             --sdist \
             -i python${{ matrix.python.version }} \
             -o target/wheels/
@@ -156,8 +152,8 @@ jobs:
         run: |
           mkdir -p target/wheels
           maturin build --profile=release-lto \
-            --target=${{ matrix.target }} \
-            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            --target=${{ matrix.build.target }} \
+            -m ${{ matrix.build.df_wheel }}/Cargo.toml \
             -i python${{ matrix.python.version }} \
             -o target/wheels/
 
@@ -166,8 +162,8 @@ jobs:
         run: |
           mkdir -p target/wheels target/repaired
           maturin build --profile=release-lto \
-            --target=${{ matrix.target }} \
-            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            --target=${{ matrix.build.target }} \
+            -m ${{ matrix.build.df_wheel }}/Cargo.toml \
             -i python.exe \
             -o target/wheels/
           pip install delvewheel wheel
@@ -259,13 +255,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      - name: Install Rust (${{matrix.rust}})
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: ${{matrix.rust}}
-          override: true
-          target: ${{matrix.platform.target}}
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.platform.target }}
       - name: Set Python Version
         run: |
           echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
@@ -380,7 +374,7 @@ jobs:
 
   build-deepfilter-ladspa:
     needs: ['create-release']
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform.os }}
     env:
       # For some builds, we use cross to test on 32-bit and big-endian
       # systems.
@@ -411,6 +405,11 @@ jobs:
             target: aarch64-unknown-linux-gnu
             libname: libdeep_filter_ladspa
             libext: so
+          - build: win-msvc
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            libname: deep_filter_ladspa
+            libext: dll
           # - build: macos-x86
           #   os: macos-x86
           #   target: x86_64-apple-darwin
@@ -421,11 +420,6 @@ jobs:
           #   target: aarch64-apple-darwin
           #   libname: libdeep_filter_ladspa
           #   libext: dylib
-          - build: win-msvc
-            os: windows-2022
-            target: x86_64-pc-windows-msvc
-            libname: deep_filter_ladspa
-            libext: dll
     defaults:
       run:
         shell: bash
@@ -436,7 +430,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          target: ${{ matrix.target }}
+          target: ${{ matrix.build.target }}
 
       - name: Show DF version
         run: |
@@ -447,22 +441,22 @@ jobs:
         run: |
           cargo install cross
           echo "CARGO=cross" >> $GITHUB_ENV
-          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
-          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.build.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.build.target }}" >> $GITHUB_ENV
 
       - name: Show command used for Cargo
         run: |
           echo "cargo command is: ${{ env.CARGO }}"
           echo "target flag is: ${{ env.TARGET_FLAGS }}"
           echo "target dir is: ${{ env.TARGET_DIR }}"
-          echo "DF_LADSPA_NAME=${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}" >> $GITHUB_ENV
+          echo "DF_LADSPA_NAME=${{ matrix.build.libname }}-${{ env.DF_VERSION }}-${{ matrix.build.target }}.${{ matrix.build.libext }}" >> $GITHUB_ENV
 
       - name: Build release binary
         run: ${{ env.CARGO }} build --profile=release-lto -p deep-filter-ladspa ${{ env.TARGET_FLAGS }}
 
       - name: Rename to target
         run: |
-          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
+          mv "target/${{ matrix.build.target }}/release-lto/${{ matrix.build.libname }}.${{ matrix.build.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
 
       - uses: actions/upload-artifact@v3
         with:
