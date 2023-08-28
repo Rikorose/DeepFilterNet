@@ -49,7 +49,7 @@ jobs:
   build-libdf-wheels:
     needs: ['create-release']
     runs-on: ${{ matrix.os }}
-    # container: ${{ matrix.container }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,22 +67,20 @@ jobs:
             tag: "311"
             abi: "311"
         df_wheel: ["pyDF", "pyDF-data"]
-        build: [linux-x86, linux-arm-aarch64, linux-arm-v7, macos-x86, macos-aarch64, win-msvc]
+        build: [linux-x86, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
           - build: linux-x86
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            manylinux: 2_28
-            # container: quay.io/pypa/manylinux_2_28_x86_64:latest
+            container: quay.io/pypa/manylinux_2_28_x86_64:latest
           - build: linux-arm-aarch64
             os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
-            manylinux: 2_28
-            # container: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
-          - build: linux-arm-v7
-            os: ubuntu-22.04
-            target: armv7-unknown-linux-gnueabihf
-            manylinux: 2_28
+            # container: quay.io/pypa/manylinux_2_28_aarch64:latest
+            container: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
+          # - build: linux-arm-v7
+            # os: ubuntu-22.04
+            # target: armv7-unknown-linux-gnueabihf
             # container: ghcr.io/rust-cross/manylinux_2_28-cross:armv7
           - build: macos-x86
             os: macos-13
@@ -99,6 +97,8 @@ jobs:
           - build: macos-x86
             df_wheel: pyDF-data
           - build: macos-aarch64
+            df_wheel: pyDF-data
+          - build: linux-arm-aarch64
             df_wheel: pyDF-data
     defaults:
       run:
@@ -127,71 +127,75 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python.version }}
-      - name: Setup Python manylinux
-        if: runner.os == 'linux'
+      - name: Setup Python manylinux x86
+        if: matrix.build == 'linux-x86'
         run: |
           ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/"
           ls -l /etc/*release
           echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/" >> $GITHUB_PATH
+      - name: Setup Python manylinux arm
+        if: startsWith(matrix.build, 'linux-arm')
+        run: |
+          echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
+          echo "PYO3_CROSS_LIB_DIR=/opt/python/${{matrix.python.abi}}" >> $GITHUB_ENV
 
-      # - name: Install Maturin
-        # run: |
-          # python -m pip install maturin
+      - name: Install Maturin
+        run: |
+          python -m pip install maturin
 
-      # - name: Install Rust toolchain
-        # uses: dtolnay/rust-toolchain@master
-        # with:
-          # toolchain: stable
-          # target: ${{ matrix.target }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
 
-      # - name: Build source distributio
+      - name: Build source distributio
       #   uses: PyO3/maturin-action@v1
       #   with:
       #     target: ${{ matrix.target }}
       #     manylinux: ${{ matrix.manylinux }}
       #     args: --release -m ${{ matrix.df_wheel }}/Cargo.toml --sdist -i python${{ matrix.python.version }} -o target/wheels/
-        # args:
-        # run: |
-        #   mkdir -p target/wheels
-        #   maturin build --profile=release-lto \
-        #     --target=${{ matrix.target }} \
-        #     -m ${{ matrix.df_wheel }}/Cargo.toml \
-        #     --sdist \
-        #     -i python${{ matrix.python.version }} \
-        #     -o target/wheels/
+        run: |
+          mkdir -p target/wheels
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            --sdist \
+            -i python${{ matrix.python.version }} \
+            -o target/wheels/
 
       - name: Build wheel unix
-        if: runner.os != 'windows'
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          manylinux: ${{ matrix.manylinux }}
-          args: --release -m ${{ matrix.df_wheel }}/Cargo.toml -i python${{ matrix.python.version }} -o target/wheels/
-        # run: |
-        #   mkdir -p target/wheels
-        #   maturin build --profile=release-lto \
-        #     --target=${{ matrix.target }} \
-        #     -m ${{ matrix.df_wheel }}/Cargo.toml \
-        #     -i python${{ matrix.python.version }} \
-        #     -o target/wheels/
+        # if: runner.os != 'windows'
+        # uses: PyO3/maturin-action@v1
+        # with:
+        #   target: ${{ matrix.target }}
+        #   manylinux: ${{ matrix.manylinux }}
+        #   args: --release -m ${{ matrix.df_wheel }}/Cargo.toml -i python${{ matrix.python.version }} -o target/wheels/
+        run: |
+          mkdir -p target/wheels
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            -i python${{ matrix.python.version }} \
+            -o target/wheels/
 
       - name: Build wheel windows
         if: runner.os != 'windows'
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          manylinux: auto
-          args: --release -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe -o target/wheels/
-        # run: |
-        #   mkdir -p target/wheels target/repaired
-        #   maturin build --profile=release-lto \
-        #     --target=${{ matrix.target }} \
-        #     -m ${{ matrix.df_wheel }}/Cargo.toml \
-        #     -i python.exe \
-        #     -o target/wheels/
-        #   pip install delvewheel wheel
-        #   delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
-        #   mv target/repaired/* target/wheels/
+        # uses: PyO3/maturin-action@v1
+        # with:
+        #   target: ${{ matrix.target }}
+        #   manylinux: auto
+        #   args: --release -m ${{ matrix.df_wheel }}/Cargo.toml -i python.exe -o target/wheels/
+        run: |
+          mkdir -p target/wheels target/repaired
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            -i python.exe \
+            -o target/wheels/
+          pip install delvewheel wheel
+          delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
+          mv target/repaired/* target/wheels/
 
       - name: Repair wheel unix
         if: runner.os != 'windows'
