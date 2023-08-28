@@ -144,13 +144,12 @@ jobs:
           # toolchain: stable
           # target: ${{ matrix.target }}
 
-      - name: Build source distributio
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          manylinux: ${{ matrix.manylinux }}
-          args: --release -m ${{ matrix.df_wheel }}/Cargo.toml --sdist -i python${{ matrix.python.version }} -o target/wheels/
-
+      # - name: Build source distributio
+      #   uses: PyO3/maturin-action@v1
+      #   with:
+      #     target: ${{ matrix.target }}
+      #     manylinux: ${{ matrix.manylinux }}
+      #     args: --release -m ${{ matrix.df_wheel }}/Cargo.toml --sdist -i python${{ matrix.python.version }} -o target/wheels/
         # args:
         # run: |
         #   mkdir -p target/wheels
