@@ -56,16 +56,16 @@ jobs:
         python:
           - version: "3.8"
             tag: "38"
-            abi: "38"
+            abi: cp38-cp38
           - version: "3.9"
             tag: "39"
-            abi: "39"
+            abi: cp39-cp39
           - version: "3.10"
             tag: "310"
-            abi: "310"
+            abi: cp310-cp310
           - version: "3.11"
             tag: "311"
-            abi: "311"
+            abi: cp311-cp311
         df_wheel: ["pyDF", "pyDF-data"]
         build: [linux-x86, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
@@ -130,12 +130,13 @@ jobs:
       - name: Setup Python manylinux x86
         if: matrix.build == 'linux-x86'
         run: |
-          ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/"
+          ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.tag }}/bin/"
           ls -l /etc/*release
-          echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/" >> $GITHUB_PATH
+          echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.tag }}/bin/" >> $GITHUB_PATH
       - name: Setup Python manylinux arm
         if: startsWith(matrix.build, 'linux-arm')
         run: |
+          ls -l /opt/python/*
           echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
           echo "PYO3_CROSS_LIB_DIR=/opt/python/${{matrix.python.abi}}" >> $GITHUB_ENV
 
