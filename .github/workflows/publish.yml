@@ -149,7 +149,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
-      - name: Build source distributio
+      - name: Build source distribution
       #   uses: PyO3/maturin-action@v1
       #   with:
       #     target: ${{ matrix.target }}
@@ -165,7 +165,7 @@ jobs:
             -o target/wheels/
 
       - name: Build wheel unix
-        # if: runner.os != 'windows'
+        if: runner.os != 'windows'
         # uses: PyO3/maturin-action@v1
         # with:
         #   target: ${{ matrix.target }}
@@ -180,7 +180,7 @@ jobs:
             -o target/wheels/
 
       - name: Build wheel windows
-        if: runner.os != 'windows'
+        if: runner.os == 'windows'
         # uses: PyO3/maturin-action@v1
         # with:
         #   target: ${{ matrix.target }}
@@ -198,7 +198,7 @@ jobs:
           mv target/repaired/* target/wheels/
 
       - name: Repair wheel unix
-        if: runner.os != 'windows'
+        if: runner.os == 'windows'
         run: |
           pip install delvewheel wheel
           delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
