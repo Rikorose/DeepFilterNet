@@ -67,7 +67,7 @@ jobs:
             tag: "311"
             abi: "311"
         df_wheel: ["pyDF", "pyDF-data"]
-        build: [linux-x86, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        build: [linux-x86, linux-arm-aarch64, linux-arm-v7, macos-x86, macos-aarch64, win-msvc]
         include:
           - build: linux-x86
             os: ubuntu-22.04
@@ -75,8 +75,12 @@ jobs:
             container: quay.io/pypa/manylinux_2_28_x86_64:latest
           - build: linux-arm-aarch64
             os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            container: quay.io/pypa/manylinux_2_28_aarch64:latest
+            target: aarch64-unknown-linux-gnu
+            container: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
+          - build: linux-arm-v7
+            os: ubuntu-22.04
+            target: armv7-unknown-linux-gnueabihf
+            container: ghcr.io/rust-cross/manylinux_2_28-cross:armv7
           - build: macos-x86
             os: macos-13
             target: x86_64-apple-darwin
