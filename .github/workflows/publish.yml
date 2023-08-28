@@ -370,7 +370,7 @@ jobs:
       - name: Upload release archive
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: gh release upload v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+        run: gh release upload --clobber v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
   build-deepfilter-ladspa:
     needs: ['create-release']
