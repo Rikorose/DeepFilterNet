@@ -1,6 +1,6 @@
 [package]
 name = "df-demo"
-version = "0.5.4"
+version = "0.5.5-pre"
 edition = "2021"
 
 [[bin]]
