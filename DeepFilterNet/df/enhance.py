@@ -103,7 +103,7 @@ def init_df(
     post_filter: bool = False,
     log_level: str = "INFO",
     log_file: Optional[str] = "enhance.log",
-    config_allow_defaults: bool = False,
+    config_allow_defaults: bool = True,
     epoch: Union[str, int, None] = "best",
     default_model: str = DEFAULT_MODEL,
     mask_only: bool = False,
