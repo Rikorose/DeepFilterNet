@@ -21,7 +21,7 @@ jobs:
       upload_url: ${{ steps.release.outputs.upload_url }}
     steps:
       - name: Checkout DeepFilterNet
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -105,7 +105,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout DeepFilterNet
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Echo git tag
         run: |
@@ -196,7 +196,7 @@ jobs:
         python-version: ["3.10"] # wheel will be independent of python version
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
@@ -267,7 +267,7 @@ jobs:
       image: docker://messense/manylinux${{matrix.manylinux}}-cross:${{matrix.platform.arch}}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -335,7 +335,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -437,7 +437,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
