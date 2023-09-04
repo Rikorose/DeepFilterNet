@@ -473,13 +473,13 @@ files = [
 
 [[package]]
 name = "poethepoet"
-version = "0.22.0"
+version = "0.22.1"
 description = "A task runner that works well with poetry."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "poethepoet-0.22.0-py3-none-any.whl", hash = "sha256:f654e52c19b7c689d5293ab6a065787b21f125884c0b367650292df4f3cb508c"},
-    {file = "poethepoet-0.22.0.tar.gz", hash = "sha256:659d7678fd8b349bd40941e3de7d6d386171dab3e7c8babcdcd8ead288c9ea47"},
+    {file = "poethepoet-0.22.1-py3-none-any.whl", hash = "sha256:1da4cd00d3b2c44b811c91616a744cf71094a26a299ea9956025162d34eef1a5"},
+    {file = "poethepoet-0.22.1.tar.gz", hash = "sha256:e758bcac731fa9ac0b812389589541e32b825c4a1894e16fa90aeb1946ba2823"},
 ]
 
 [package.dependencies]
