@@ -69,11 +69,29 @@ pub(crate) fn rms_normalize(x: Array2<f32>) -> Array2<f32> {
     x / rms.to_shape([ch, 1]).unwrap()
 }
 
+pub(crate) struct FftTransform {
+    pub planer: RealFftPlanner<f32>,
+    pub scratch: Vec<Complex32>,
+}
+
+impl FftTransform {
+    pub fn new() -> Self {
+        FftTransform {
+            planer: RealFftPlanner::<f32>::new(),
+            scratch: Vec::new(),
+        }
+    }
+}
+
 pub fn fft(
     input: &mut Array2<f32>,
     fft_transform: &dyn RealToComplex<f32>,
-    scratch: &mut [Complex32],
+    scratch: &mut Vec<Complex32>,
 ) -> Result<Array2<Complex32>> {
+    let scratch_len = fft_transform.get_scratch_len();
+    if scratch.len() < scratch_len {
+        scratch.resize(scratch_len, Complex32::default());
+    }
     let mut output = Array2::zeros((input.len_of(Axis(0)), fft_transform.len() / 2 + 1));
     fft_with_output(input, fft_transform, scratch, &mut output)?;
     Ok(output)
@@ -99,10 +117,14 @@ pub fn fft_with_output(
 pub fn ifft(
     input: &mut Array2<Complex32>,
     fft_transform: &dyn ComplexToReal<f32>,
-    scratch: &mut [Complex32],
+    scratch: &mut Vec<Complex32>,
 ) -> Result<Array2<f32>> {
-    let mut output = Array2::zeros((input.len_of(Axis(0)), (fft_transform.len() - 1) * 2));
-    ifft_with_output(input, fft_transform, scratch, &mut output)?;
+    let scratch_len = fft_transform.get_scratch_len();
+    if scratch.len() < scratch_len {
+        scratch.resize(scratch_len, Complex32::default());
+    }
+    let mut output = Array2::zeros((input.len_of(Axis(0)), fft_transform.len()));
+    ifft_with_output(input, fft_transform, scratch, &mut output).unwrap();
     Ok(output)
 }
 
