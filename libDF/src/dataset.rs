@@ -714,7 +714,8 @@ impl DatasetBuilder {
         }
         let reverb = RandReverbSim::new(p_reverb, self.sr)
             .with_drr(get_env("DF_REVERB_DRR").unwrap_or(0.3))
-            .with_rt60(get_env("DF_REVERB_RT60").unwrap_or(0.5));
+            .with_rt60(get_env("DF_REVERB_RT60").unwrap_or(0.5))
+            .with_offset_late_reflections(get_env("DF_REVERB_OFFSET_LATE").unwrap_or(20));
         let seed = self.seed.unwrap_or(0);
         // 5% of noises used for mixing will contain randomly generated noise.
         // This has the advantage that the noise will actually contain frequencies up 24 kHz.
