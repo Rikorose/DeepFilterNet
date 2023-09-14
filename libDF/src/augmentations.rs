@@ -977,7 +977,12 @@ impl RandReverbSim {
             let speech_rms = rms(speech.iter());
             // self.pad(speech, pad_front, pad_back)?; // Pad since STFT will truncate at the end
             let mut speech_rev = speech.clone();
-            self.convolve(&mut speech_rev, rir_noise.clone(), &mut fft_t, Some(orig_len))?;
+            self.convolve(
+                &mut speech_rev,
+                rir_noise.clone(),
+                &mut fft_t,
+                Some(orig_len),
+            )?;
             // Speech should be a slightly dereverberant signal as target
             // TODO: Make dereverberation parameters configurable.
             //
@@ -989,7 +994,12 @@ impl RandReverbSim {
             rir_speech *= 1. / rir_e;
             // Generate target speech signal containing less reverberation
             let mut speech_little_rev = speech.clone();
-            self.convolve(&mut speech_little_rev, rir_speech, &mut fft_t, Some(orig_len))?;
+            self.convolve(
+                &mut speech_little_rev,
+                rir_speech,
+                &mut fft_t,
+                Some(orig_len),
+            )?;
             // Maybe mix in some original clean speech as target
             if let Some(f) = self.drr_f {
                 // speech.slice_axis_inplace(Axis(1), Slice::from(pad_front..pad_front + orig_len));
