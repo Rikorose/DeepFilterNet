@@ -12,6 +12,7 @@ use self::BiquadFilter::*;
 use crate::transforms::*;
 pub use crate::util::seed_from_u64;
 use crate::util::*;
+use crate::wav_utils::write_wav_iter;
 use crate::*;
 
 type Result<T> = std::result::Result<T, AugmentationError>;
@@ -814,6 +815,7 @@ pub(crate) struct RandReverbSim {
     prob_decay: f32,
     sr: usize,
     rt60: f32,
+    offset_late: usize,
     drr_f: Option<f32>, // Direct-to-Reverberant-Ratio
 }
 impl RandReverbSim {
@@ -858,9 +860,8 @@ impl RandReverbSim {
         rir.slice_collapse(s![.., ..idx]);
         Ok(rir)
     }
-    fn good_fft_size(&self, rir: &Array2<f32>) -> usize {
+    fn good_fft_size(&self, len: usize) -> usize {
         // Zero pad RIR for better FFT efficiency by finding prime factors up to a limit of 11.
-        let len = rir.len_of(Axis(1));
         let mut missing = len;
         let primes = [2, 3, 5, 7, 11];
         let mut factors = [0u32; 5];
@@ -891,22 +892,14 @@ impl RandReverbSim {
         Ok(())
     }
     pub fn transform_single(&self, sample: &mut Array2<f32>, mut rir: Array2<f32>) -> Result<()> {
-        let orig_len = sample.len_of(Axis(1));
+        let mut fft_t = FftTransform::new();
         let rir_mono = rir.mean_axis(Axis(0)).unwrap();
         let max_idx = argmax_abs(rir_mono.iter()).unwrap();
         // Normalize and flip RIR for convolution
         rir = self.trim(rir, max_idx)?;
         let rir_e = rir.map(|v| v * v).sum().sqrt();
-        let fft_size = self.good_fft_size(&rir);
-        let cur_len = rir.len_of(Axis(1));
-        let mut rir = rir / rir_e;
-        self.pad(&mut rir, 0, fft_size - cur_len)?;
-        let hop_size = fft_size / 4;
-        let mut state = DFState::new(self.sr, fft_size, hop_size, 1, 1);
-        let pad_back = fft_size / 4 + max_idx;
-        let pad_front = fft_size - pad_back;
-        self.pad(sample, pad_front, pad_back)?; // Pad since STFT will truncate at the end
-        *sample = self.convolve(sample, rir, &mut state, Some(orig_len))?;
+        let rir = rir / rir_e;
+        self.convolve(sample, rir, &mut fft_t, None)?;
         Ok(())
     }
     /// Applies random reverberation to either noise or speech or both.
@@ -950,13 +943,7 @@ impl RandReverbSim {
         }
         #[cfg(feature = "timings")]
         let t0 = Instant::now();
-        // Check if apply reverb to speech or noise
-        let mut rng = thread_rng()?;
-        let apply_speech = self.prob_speech > rng.uniform(0f32, 1f32);
-        let apply_noise = self.prob_noise > rng.uniform(0f32, 1f32);
-        if !(apply_speech || apply_noise) {
-            return Ok(None);
-        }
+        let mut fft_t = FftTransform::new();
         // Get room impulse response
         let mut rir = match rir_callback() {
             Ok(r) => r,
@@ -980,39 +967,32 @@ impl RandReverbSim {
             rir = self.supress_late(rir, self.sr, max_idx, rt60)?;
         }
         rir = self.trim(rir, max_idx)?;
+        write_wav_iter("../out/rir.wav", rir.iter(), self.sr as u32, 1).unwrap();
         // Normalize and flip RIR for convolution
         let rir_e = rir.map(|v| v * v).sum().sqrt();
-        let fft_size = self.good_fft_size(&rir);
-        let cur_len = rir.len_of(Axis(1));
-        let mut rir_noise = rir / rir_e;
-        self.pad(&mut rir_noise, 0, fft_size - cur_len)?;
-        // DF state for convolve FFT
-        let hop_size = fft_size / 4;
-        let mut state = DFState::new(self.sr, fft_size, hop_size, 1, 1);
+        let rir_noise = rir / rir_e;
 
         // speech_rev contains reverberant speech for mixing with noise
-        let pad_back = fft_size / 4 + max_idx;
-        let pad_front = fft_size - pad_back;
         let speech_rev = if apply_speech {
             let speech_rms = rms(speech.iter());
-            self.pad(speech, pad_front, pad_back)?; // Pad since STFT will truncate at the end
-            let speech_rev =
-                self.convolve(speech, rir_noise.clone(), &mut state, Some(orig_len))?;
+            // self.pad(speech, pad_front, pad_back)?; // Pad since STFT will truncate at the end
+            let mut speech_rev = speech.clone();
+            self.convolve(&mut speech_rev, rir_noise.clone(), &mut fft_t, Some(orig_len))?;
             // Speech should be a slightly dereverberant signal as target
             // TODO: Make dereverberation parameters configurable.
             //
-            // Add 5 ms extra offset since these are releveant for speech intelligibility
-            let offset = max_idx + 5 * self.sr / 1000;
+            // Add extra offset since these are releveant for speech intelligibility
+            let offset = max_idx + self.offset_late * self.sr / 1000;
             let mut rir_speech =
                 self.supress_late(rir_noise.clone(), self.sr, offset, self.rt60)?;
             let rir_e = rir_speech.map(|v| v * v).sum().sqrt();
             rir_speech *= 1. / rir_e;
             // Generate target speech signal containing less reverberation
-            let speech_little_rev =
-                self.convolve(speech, rir_speech, &mut state, Some(orig_len))?;
+            let mut speech_little_rev = speech.clone();
+            self.convolve(&mut speech_little_rev, rir_speech, &mut fft_t, Some(orig_len))?;
             // Maybe mix in some original clean speech as target
             if let Some(f) = self.drr_f {
-                speech.slice_axis_inplace(Axis(1), Slice::from(pad_front..pad_front + orig_len));
+                // speech.slice_axis_inplace(Axis(1), Slice::from(pad_front..pad_front + orig_len));
                 *speech *= f;
                 speech.scaled_add(1. - f, &speech_little_rev);
             } else {
@@ -1028,8 +1008,7 @@ impl RandReverbSim {
         };
         if apply_noise {
             // Noisy contains reverberant noise
-            self.pad(noise, pad_front, pad_back)?;
-            *noise = self.convolve(noise, rir_noise, &mut state, Some(orig_len))?;
+            self.convolve(noise, rir_noise, &mut fft_t, Some(orig_len))?;
             debug_assert_eq!(speech.len_of(Axis(1)), noise.len_of(Axis(1)));
         }
         #[cfg(feature = "timings")]
@@ -1040,38 +1019,26 @@ impl RandReverbSim {
     }
     fn convolve(
         &self,
-        x: &Array2<f32>,
+        x: &mut Array2<f32>,
         mut rir: Array2<f32>,
-        state: &mut DFState,
+        fft_transform: &mut FftTransform,
         truncate: Option<usize>,
-    ) -> Result<Array2<f32>> {
-        let mut x_ = stft(x.as_standard_layout().view(), state, true);
-        let len = state.fft_forward.get_scratch_len();
-        if len < state.analysis_scratch.len() {
-            state.analysis_scratch.resize(len, Complex32::default())
-        }
-        let rir = fft(
-            &mut rir,
-            state.fft_forward.as_ref(),
-            &mut state.analysis_scratch,
-        )?;
-        let rir: ArrayView3<Complex32> = match rir.broadcast(x_.shape()) {
-            Some(r) => r.into_dimensionality()?,
-            None => {
-                return Err(AugmentationError::DfError(format!(
-                    "Shape missmatch: {:?} {:?}",
-                    x_.shape(),
-                    rir.shape()
-                )));
-            }
-        };
-        x_ = x_ * rir;
-        let mut out = istft(x_.view_mut(), state, true);
-        out.slice_collapse(s![.., (state.window_size - state.frame_size)..]);
-        if let Some(max_len) = truncate {
-            out.slice_collapse(s![.., ..max_len]);
-        }
-        Ok(out)
+    ) -> Result<()> {
+        let x_len = x.len_of(Axis(1));
+        let rir_len = rir.len_of(Axis(1));
+        let fft_size = self.good_fft_size(rir.len_of(Axis(1)) + x.len_of(Axis(1)) - 1);
+        let forward = fft_transform.planer.plan_fft_forward(fft_size);
+        let inverse = fft_transform.planer.plan_fft_inverse(fft_size);
+        self.pad(x, 0, fft_size - x_len)?;
+        self.pad(&mut rir, 0, fft_size - rir_len)?;
+        let mut x_fd = fft(x, forward.as_ref(), &mut fft_transform.scratch)?;
+        let rir_fd = fft(&mut rir, forward.as_ref(), &mut fft_transform.scratch)?;
+        x_fd = x_fd * rir_fd / fft_size as f32;
+        ifft_with_output(&mut x_fd, inverse.as_ref(), &mut fft_transform.scratch, x)?;
+        let max_len = truncate.unwrap_or(x_len);
+        debug_assert!(max_len <= x_len);
+        x.slice_collapse(s![.., ..max_len]);
+        Ok(())
     }
     pub fn new(p: f32, sr: usize) -> Self
     where
@@ -1084,6 +1051,7 @@ impl RandReverbSim {
             prob_decay: p.max(0.5),
             sr,
             rt60: 0.5,
+            offset_late: 20,
             drr_f: None,
         }
     }
@@ -1097,6 +1065,18 @@ impl RandReverbSim {
     pub fn with_rt60(mut self, rt60: f32) -> Self {
         assert!(rt60 > 0.);
         self.rt60 = rt60;
+        self
+    }
+    pub fn with_offset_late_reflections(mut self, offset: usize) -> Self {
+        self.offset_late = offset;
+        self
+    }
+    pub fn with_prob_resample(mut self, p: f32) -> Self {
+        self.prob_resample = p;
+        self
+    }
+    pub fn with_prob_decay(mut self, p: f32) -> Self {
+        self.prob_decay = p;
         self
     }
 }
@@ -1411,7 +1391,10 @@ mod tests {
         noise.slice_axis_inplace(Axis(1), Slice::from(0..len));
         let rir = ReadWav::new("../assets/rir_sim_1001_w11.7_l2.6_h2.5_rt60_0.7919.wav")?
             .samples_arr2()?;
-        let reverb = RandReverbSim::new(1., sr).with_drr(0.2).with_rt60(0.1);
+        let reverb = RandReverbSim::new(1., sr)
+            .with_drr(0.2)
+            .with_rt60(0.1)
+            .with_offset_late_reflections(20);
         write_wav_arr2("../out/speech_noreverb.wav", speech.view(), sr as u32)?;
         write_wav_arr2("../out/noise_noreverb.wav", noise.view(), sr as u32)?;
         let speech_rev = reverb.transform(&mut speech, &mut noise, move || Ok(rir))?.unwrap();
