@@ -4,6 +4,7 @@ from typing import Final, List, Optional, Tuple
 import torch
 from loguru import logger
 from torch import Tensor, nn
+import torch.nn.functional as F
 
 import df.multiframe as MF
 from df.config import Csv, DfParams, config
@@ -48,6 +49,9 @@ class ModelParams(DfParams):
         )
         self.emb_num_layers: int = config(
             "EMB_NUM_LAYERS", cast=int, default=2, section=self.section
+        )
+        self.emb_gru_skip_enc: str = config(
+            "EMB_GRU_SKIP_ENC", default="none", section=self.section
         )
         self.emb_gru_skip: str = config("EMB_GRU_SKIP", default="none", section=self.section)
         self.df_hidden_dim: int = config(
@@ -99,6 +103,9 @@ class Encoder(nn.Module):
         self.erb_conv0 = Conv2dNormAct(
             1, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
         )
+        self.conv_buffer_size = p.conv_kernel_inp[0] - 1
+        self.conv_ch = p.conv_ch
+
         conv_layer = partial(
             Conv2dNormAct,
             in_ch=p.conv_ch,
@@ -110,8 +117,9 @@ class Encoder(nn.Module):
         self.erb_conv1 = conv_layer(fstride=2)
         self.erb_conv2 = conv_layer(fstride=2)
         self.erb_conv3 = conv_layer(fstride=1)
+        self.df_conv0_ch = p.conv_ch
         self.df_conv0 = Conv2dNormAct(
-            2, p.conv_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
+            2, self.df_conv0_ch, kernel_size=p.conv_kernel_inp, bias=False, separable=True
         )
         self.df_conv1 = conv_layer(fstride=2)
         self.erb_bins = p.nb_erb
@@ -128,13 +136,27 @@ class Encoder(nn.Module):
         else:
             self.combine = Add()
         self.emb_n_layers = p.emb_num_layers
+        if p.emb_gru_skip_enc == "none":
+            skip_op = None
+        elif p.emb_gru_skip_enc == "identity":
+            assert self.emb_in_dim == self.emb_out_dim, "Dimensions do not match"
+            skip_op = partial(nn.Identity)
+        elif p.emb_gru_skip_enc == "groupedlinear":
+            skip_op = partial(
+                GroupedLinearEinsum,
+                input_size=self.emb_out_dim,
+                hidden_size=self.emb_out_dim,
+                groups=p.lin_groups,
+            )
+        else:
+            raise NotImplementedError()
         self.emb_gru = SqueezedGRU_S(
             self.emb_in_dim,
             self.emb_dim,
             output_size=self.emb_out_dim,
             num_layers=1,
             batch_first=True,
-            gru_skip_op=None,
+            gru_skip_op=skip_op,
             linear_groups=p.lin_groups,
             linear_act_layer=partial(nn.ReLU, inplace=True),
         )
@@ -143,8 +165,8 @@ class Encoder(nn.Module):
         self.lsnr_offset = p.lsnr_min
 
     def forward(
-        self, feat_erb: Tensor, feat_spec: Tensor
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+        self, feat_erb: Tensor, feat_spec: Tensor, hidden: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         # Encodes erb; erb should be in dB scale + normalized; Fe are number of erb bands.
         # erb: [B, 1, T, Fe]
         # spec: [B, 2, T, Fc]
@@ -154,14 +176,14 @@ class Encoder(nn.Module):
         e2 = self.erb_conv2(e1)  # [B, C*4, T, F/4]
         e3 = self.erb_conv3(e2)  # [B, C*4, T, F/4]
         c0 = self.df_conv0(feat_spec)  # [B, C, T, Fc]
-        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc]
+        c1 = self.df_conv1(c0)  # [B, C*2, T, Fc/2]
         cemb = c1.permute(0, 2, 3, 1).flatten(2)  # [B, T, -1]
         cemb = self.df_fc_emb(cemb)  # [T, B, C * F/4]
-        emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F/4]
+        emb = e3.permute(0, 2, 3, 1).flatten(2)  # [B, T, C * F]
         emb = self.combine(emb, cemb)
-        emb, _ = self.emb_gru(emb)  # [B, T, -1]
+        emb, hidden = self.emb_gru(emb, hidden)  # [B, T, -1]
         lsnr = self.lsnr_fc(emb) * self.lsnr_scale + self.lsnr_offset
-        return e0, e1, e2, e3, emb, c0, lsnr
+        return e0, e1, e2, e3, emb, c0, lsnr, hidden
 
 
 class ErbDecoder(nn.Module):
@@ -221,16 +243,16 @@ class ErbDecoder(nn.Module):
             p.conv_ch, 1, kernel_size=p.conv_kernel, activation_layer=nn.Sigmoid
         )
 
-    def forward(self, emb, e3, e2, e1, e0) -> Tensor:
+    def forward(self, emb: Tensor, e3: Tensor, e2: Tensor, e1: Tensor, e0: Tensor, hidden: Tensor) -> Tuple[Tensor, Tensor]:
         # Estimates erb mask
         b, _, t, f8 = e3.shape
-        emb, _ = self.emb_gru(emb)
+        emb, hidden = self.emb_gru(emb, hidden)
         emb = emb.view(b, t, f8, -1).permute(0, 3, 1, 2)  # [B, C*8, T, F/8]
         e3 = self.convt3(self.conv3p(e3) + emb)  # [B, C*4, T, F/4]
         e2 = self.convt2(self.conv2p(e2) + e3)  # [B, C*2, T, F/2]
         e1 = self.convt1(self.conv1p(e1) + e2)  # [B, C, T, F]
         m = self.conv0_out(self.conv0p(e0) + e1)  # [B, 1, T, F]
-        return m
+        return m, hidden
 
 
 class DfOutputReshapeMF(nn.Module):
@@ -271,6 +293,7 @@ class DfDecoder(nn.Module):
 
         conv_layer = partial(Conv2dNormAct, separable=True, bias=False)
         kt = p.df_pathway_kernel_size_t
+        self.conv_buffer_size = kt - 1
         self.df_convp = conv_layer(layer_width, self.df_out_ch, fstride=1, kernel_size=(kt, 1))
 
         self.df_gru = SqueezedGRU_S(
@@ -299,16 +322,15 @@ class DfDecoder(nn.Module):
         self.df_out = nn.Sequential(df_out, nn.Tanh())
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
 
-    def forward(self, emb: Tensor, c0: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, emb: Tensor, c0: Tensor, hidden: Tensor) -> Tuple[Tensor, Tensor]:
         b, t, _ = emb.shape
-        c, _ = self.df_gru(emb)  # [B, T, H], H: df_n_hidden
+        c, hidden = self.df_gru(emb, hidden)  # [B, T, H], H: df_n_hidden
         if self.df_skip is not None:
             c = c + self.df_skip(emb)
         c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
-        alpha = self.df_fc_a(c)  # [B, T, 1]
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
         c = c.view(b, t, self.df_bins, self.df_out_ch) + c0  # [B, T, F, O*2]
-        return c, alpha
+        return c, hidden
 
 
 class DfNet(nn.Module):
@@ -333,12 +355,12 @@ class DfNet(nn.Module):
         self.emb_dim: int = layer_width * p.nb_erb
         self.erb_bins: int = p.nb_erb
         if p.conv_lookahead > 0:
-            assert p.conv_lookahead == p.df_lookahead
+            assert p.conv_lookahead >= p.df_lookahead
             self.pad_feat = nn.ConstantPad2d((0, 0, -p.conv_lookahead, p.conv_lookahead), 0.0)
         else:
             self.pad_feat = nn.Identity()
         if p.df_lookahead > 0:
-            self.pad_spec = nn.ConstantPad3d((0, 0, 0, 0, -p.df_lookahead, p.df_lookahead), 0.0)
+            self.pad_spec = nn.ConstantPad3d((0, 0, 0, 0, p.df_lookahead - 1, -p.df_lookahead + 1), 0.0)
         else:
             self.pad_spec = nn.Identity()
         self.register_buffer("erb_fb", erb_fb)
@@ -381,9 +403,11 @@ class DfNet(nn.Module):
         """
         feat_spec = feat_spec.squeeze(1).permute(0, 3, 1, 2)
 
-        feat_erb = self.pad_feat(feat_erb)
-        feat_spec = self.pad_feat(feat_spec)
-        e0, e1, e2, e3, emb, c0, lsnr = self.enc(feat_erb, feat_spec)
+        # feat_erb = self.pad_feat(feat_erb)
+        # feat_spec = self.pad_feat(feat_spec)
+        spec = self.pad_spec(spec)
+        
+        e0, e1, e2, e3, emb, c0, lsnr, _ = self.enc(feat_erb, feat_spec, hidden=None)
 
         if self.lsnr_droput:
             idcs = lsnr.squeeze() > -10.0
@@ -400,19 +424,21 @@ class DfNet(nn.Module):
 
         if self.run_erb:
             if self.lsnr_droput:
-                m[:, :, idcs] = self.erb_dec(emb, e3, e2, e1, e0)
+                m[:, :, idcs], _ = self.erb_dec(emb, e3, e2, e1, e0, hidden=None)
             else:
-                m = self.erb_dec(emb, e3, e2, e1, e0)
-            spec_m = self.mask(spec, m)
+                m, _ = self.erb_dec(emb, e3, e2, e1, e0, hidden=None)
+            
+            pad_spec = F.pad(spec, (0, 0, 0, 0, 1, -1, 0, 0), value=0)
+            spec_m = self.mask(pad_spec, m)
         else:
             m = torch.zeros((), device=spec.device)
             spec_m = torch.zeros_like(spec)
 
         if self.run_df:
             if self.lsnr_droput:
-                df_coefs[:, idcs] = self.df_dec(emb, c0)[0]
+                df_coefs[:, idcs], _ = self.df_dec(emb, c0, hidden=None)
             else:
-                df_coefs = self.df_dec(emb, c0)[0]
+                df_coefs, _ = self.df_dec(emb, c0, hidden=None)
             df_coefs = self.df_out_transform(df_coefs)
             spec = self.df_op(spec, df_coefs)
             spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]

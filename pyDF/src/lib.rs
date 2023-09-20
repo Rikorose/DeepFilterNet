@@ -3,17 +3,50 @@ use df::transforms::{
     TransformError,
 };
 use df::{Complex32, DFState, UNIT_NORM_INIT};
+
+use df::tract::*;
+
 use ndarray::{Array1, Array2, Array3, Array4, ArrayD, ArrayView4, Axis, ShapeError};
 use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayDyn, PyReadonlyArray1, PyReadonlyArray2,
-    PyReadonlyArray3, PyReadonlyArrayDyn,
+    PyReadonlyArray3, PyReadonlyArrayDyn
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
+
 #[pyclass]
 struct DF {
-    state: DFState,
+    state: DFState, 
+}
+
+#[pyclass(unsendable)]
+struct DFTractPy {
+    tract: DfTract,
+}
+
+#[pymethods]
+#[allow(clippy::upper_case_acronyms)]
+impl DFTractPy {
+    #[new]
+    fn new() -> Self {
+        DFTractPy { 
+            tract: Default::default() 
+        }
+    }
+
+    unsafe fn process<'py>(
+        &mut self,
+        py: Python<'py>,
+        input: &PyArray2<f32>
+    ) -> PyResult<&'py PyArray2<f32>> {
+        let channels = input.shape()[0];
+        let mut output = Array2::<f32>::zeros((channels, self.tract.hop_size));
+        let input = input.as_array(); // unsafe fn
+        let _ = self.tract.process(input, output.view_mut()).expect("Error during df::process");
+
+        Ok(output.into_pyarray(py))
+    }
 }
 
 #[pymethods]
@@ -138,6 +171,7 @@ impl DF {
 #[pymodule]
 fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<DF>()?;
+    m.add_class::<DFTractPy>()?;
 
     #[pyfn(m)]
     #[pyo3(name = "erb")]

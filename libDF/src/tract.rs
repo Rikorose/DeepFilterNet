@@ -586,9 +586,14 @@ impl DfTract {
         }
     }
 
-    pub fn set_spec_buffer(&mut self, spec: ArrayView2<f32>) -> Result<()> {
-        debug_assert_eq!(self.spec_buf.shape(), spec.shape());
-        let mut buf = self.spec_buf.to_array_view_mut()?.into_shape([self.ch, self.n_freqs])?;
+    pub fn set_spec_buffer(&mut self, spec: ArrayView2<Complex32>) -> Result<()> {
+        let mut buf = as_arrayview_mut_complex(
+            self.spec_buf.to_array_view_mut::<f32>().unwrap(),
+            &[self.ch, self.n_freqs],
+        );
+
+        debug_assert_eq!(buf.shape(), spec.shape());
+
         for (i_ch, mut b_ch) in spec.outer_iter().zip(buf.outer_iter_mut()) {
             for (&i, b) in i_ch.iter().zip(b_ch.iter_mut()) {
                 *b = i
@@ -645,7 +650,7 @@ fn df(
     debug_assert_eq!(ch, spec_out.shape()[0]);
     debug_assert!(spec.len() >= df_order);
     let mut o_f: ArrayViewMut2<Complex32> =
-        as_array_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
+        as_arrayview_mut_complex(spec_out.to_array_view_mut::<f32>()?, &[ch, n_freqs])
             .into_dimensionality()?;
     // Zero relevant frequency bins of output
     o_f.slice_mut(s![.., ..nb_df]).fill(Complex32::default());
@@ -913,6 +918,7 @@ pub fn as_slice_complex(buffer: &[f32]) -> &[Complex32] {
     }
 }
 
+#[allow(clippy::needless_pass_by_ref_mut)]
 pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut Complex32;
@@ -921,6 +927,7 @@ pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     }
 }
 
+#[allow(clippy::needless_pass_by_ref_mut)]
 pub fn as_slice_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut f32;
@@ -960,7 +967,7 @@ pub fn as_arrayview_complex<'a>(
         ArrayViewD::from_shape_ptr(shape, ptr)
     }
 }
-pub fn as_array_mut_complex<'a>(
+pub fn as_arrayview_mut_complex<'a>(
     buffer: ArrayViewMutD<'a, f32>,
     shape: &[usize], // having an explicit shape parameter allows to also squeeze axes.
 ) -> ArrayViewMutD<'a, Complex32> {

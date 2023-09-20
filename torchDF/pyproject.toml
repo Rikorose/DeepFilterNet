@@ -1,0 +1,78 @@
+[tool.poetry]
+name = "DeepFilterNet"
+version = "0.5.5"
+description = "Noise supression using deep filtering"
+authors = ["Hendrik Schröter"]
+repository = "https://github.com/Rikorose/DeepFilterNet"
+keywords = ["noise reduction", "neural network"]
+classifiers = [
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+  "Topic :: Utilities",
+  "Programming Language :: Rust",
+  "Programming Language :: Python",
+]
+license = "MIT"
+packages = [{ include = "../DeepFilterNet/df" }]
+include = [
+  { path = "pretrained_models/DeepFilterNet/config.ini" },
+  { path = "pretrained_models/DeepFilterNet/checkpoints/*" },
+  { path = "pretrained_models/DeepFilterNet2/config.ini" },
+  { path = "pretrained_models/DeepFilterNet2/checkpoints/*" },
+]
+
+[tool.poetry.dependencies]
+deepfilterdataloader = { path = "../pyDF-data/", optional = true }
+deepfilterlib = { path = "../pyDF" }
+python = ">=3.8,<4.0"
+numpy = ">=1.22,<2.0"
+loguru = ">=0.5"
+appdirs = "^1.4"
+requests = "^2.27"
+packaging = "^23.0"
+sympy = ">=1.6"
+soundfile = { version = ">=0.10,<0.13", optional = true }
+icecream = { version = ">=2,<3", optional = true }
+pystoi = { version = "^0.3", optional = true }
+pesq = { version = ">=0.0.3,<0.0.5", optional = true }
+scipy = { version = "^1", optional = true }
+onnxruntime = { version = "^1.15"}
+pytest = "^7.4.0"
+tqdm = "^4.65.0"
+onnx = "^1.14.0"
+onnxsim = "^0.4.33"
+
+[tool.poetry.extras]
+train = ["deepfilterdataloader", "icecream"]
+eval = ["pystoi", "pesq", "scipy"]
+soundfile = ["soundfile"]
+dnsmos-local = ["onnxruntime"]
+
+[tool.poetry.scripts]
+deepFilter = "df.enhance:run"
+deep-filter-py = "df.enhance:run"
+
+[tool.poetry.dev-dependencies]
+poethepoet = "^0.21"
+
+[tool.poe.tasks]
+install-torch-cuda11 = "python -m pip install torch==2.0.1 torchaudio==2.0.2 --extra-index-url https://download.pytorch.org/whl/cu113/"
+install-torch-cpu = "python -m pip install torch==1.13.1 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cpu/"
+install-eval-utils = "python -m pip install -r requirements_eval.txt"
+install-dnsmos-utils = "python -m pip install -r requirements_dnsmos.txt"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+known_first_party = ["df", "libdf", "libdfdata"]
