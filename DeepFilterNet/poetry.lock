@@ -473,13 +473,13 @@ files = [
 
 [[package]]
 name = "poethepoet"
-version = "0.22.1"
+version = "0.24.1"
 description = "A task runner that works well with poetry."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "poethepoet-0.22.1-py3-none-any.whl", hash = "sha256:1da4cd00d3b2c44b811c91616a744cf71094a26a299ea9956025162d34eef1a5"},
-    {file = "poethepoet-0.22.1.tar.gz", hash = "sha256:e758bcac731fa9ac0b812389589541e32b825c4a1894e16fa90aeb1946ba2823"},
+    {file = "poethepoet-0.24.1-py3-none-any.whl", hash = "sha256:3afa44b4fc7327df0dd912eda012604a072af2bb4d243fb0e41e8eca8dabf9ed"},
+    {file = "poethepoet-0.24.1.tar.gz", hash = "sha256:f5a386387c382f08890c273d13495938208a8ce91ab71536abf388c776c4f366"},
 ]
 
 [package.dependencies]
@@ -719,4 +719,4 @@ train = ["deepfilterdataloader", "icecream"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<4.0"
-content-hash = "f3e38f8339fa423b08cef97dc49c4e55657b48d8eb899a1ae8013123ba9b0aee"
+content-hash = "ee2e0a45b4ec96bbd1f01170b60080a7425c8ff18e85a8e17d94f8db08a2b184"
