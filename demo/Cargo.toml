@@ -19,10 +19,11 @@ default-model-ll = ["deep_filter/default-model-ll"]
 thresholds = []
 
 [dependencies]
-iced = { version = "0.9", features = [
+iced = { version = "0.10", features = [
   "image",
   "debug",
   "tokio",
+  "lazy",
 ], optional = true }
 itertools = "0.11"
 crossbeam-channel = "0.5"
@@ -35,8 +36,8 @@ deep_filter = { path = "../libDF/", default-features = false, features = [
   "use-jemalloc",
   "default-model",
 ] }
-rubato = "0.12"
 ndarray = "^0.15"
+rubato = "0.14"
 ringbuf = "0.3"
 env_logger = "0.10"
 log = { version = "0.4", features = ["std"] }
