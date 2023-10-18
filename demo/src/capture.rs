@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt::Display;
 use std::io::{self, stdout, Write};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, Device, SampleRate, Stream, StreamConfig};
+use cpal::{BufferSize, Device, SampleRate, Stream, StreamConfig, SupportedStreamConfigRange};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use df::{tract::*, Complex32};
 use ndarray::prelude::*;
@@ -80,36 +81,77 @@ unsafe fn get_frame_size() -> usize {
     df.hop_size
 }
 
-fn get_stream_config(device: &Device, sample_rate: u32) -> Option<StreamConfig> {
+#[derive(Clone, Copy)]
+enum StreamDirection {
+    Input,
+    Output,
+}
+impl Display for StreamDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StreamDirection::Input => write!(f, "input"),
+            StreamDirection::Output => write!(f, "output"),
+        }
+    }
+}
+
+fn get_all_configs(device: &Device, direction: StreamDirection) -> Vec<SupportedStreamConfigRange> {
+    match direction {
+        StreamDirection::Input => device
+            .supported_input_configs()
+            .expect("Failed to get input configs")
+            .map(|v| v)
+            .collect::<Vec<SupportedStreamConfigRange>>(),
+        StreamDirection::Output => device
+            .supported_output_configs()
+            .expect("Failed to get output configs")
+            .map(|v| v)
+            .collect::<Vec<SupportedStreamConfigRange>>(),
+    }
+}
+
+fn get_stream_config(
+    device: &Device,
+    sample_rate: u32,
+    direction: StreamDirection,
+) -> Option<StreamConfig> {
     let mut configs = Vec::new();
-    for c in device.supported_output_configs().expect("error while querying configs") {
-        log::trace!("Found audio source config: {:?}", &c);
+    let all_configs = get_all_configs(&device, direction);
+    for c in all_configs.iter() {
         if c.channels() == 1 && c.sample_format() == SAMPLE_FORMAT {
-            configs.push(c);
+            log::debug!("Found audio {} config: {:?}", direction, &c);
+            configs.push(c.clone());
         }
     }
-    // Further add stereo configs if no mono was found. The stereo signal will be downmixed later.
-    for c in device.supported_output_configs().expect("error while querying configs") {
-        log::trace!("Found audio source config: {:?}", &c);
-        if c.channels() == 2 && c.sample_format() == SAMPLE_FORMAT {
-            configs.push(c);
+    // Further add multi-channel configs if no mono was found. The signal will be downmixed later.
+    for c in all_configs.iter() {
+        if c.channels() >= 2 && c.sample_format() == SAMPLE_FORMAT {
+            log::debug!("Found audio source config: {:?}", &c);
+            configs.push(c.clone());
         }
     }
-    assert!(!configs.is_empty(), "No suitable audio input config found.");
+    assert!(
+        !configs.is_empty(),
+        "No suitable audio {} config found.",
+        direction
+    );
     let sr = SampleRate(sample_rate);
-    let mut config: Option<StreamConfig> = None;
     for c in configs.iter() {
-        if sr > c.min_sample_rate() && sr < c.max_sample_rate() {
+        if sr >= c.min_sample_rate() && sr <= c.max_sample_rate() {
             let mut c: StreamConfig = c.clone().with_sample_rate(sr).into();
             c.buffer_size = BufferSize::Fixed(unsafe { get_frame_size() } as u32);
-            config = Some(c);
-            break;
+            return Some(c);
         }
     }
-    if config.is_none() {
-        config = Some(configs.first().unwrap().clone().with_max_sample_rate().into());
+
+    if let Some(c) = configs.first() {
+        let mut c: StreamConfig = c.clone().with_max_sample_rate().into();
+        c.buffer_size =
+            BufferSize::Fixed(unsafe { get_frame_size() } as u32 * c.sample_rate.0 / sample_rate);
+        log::warn!("Using best matching config {:?}", c);
+        return Some(c);
     }
-    config
+    None
 }
 
 impl AudioSink {
@@ -123,10 +165,8 @@ impl AudioSink {
                 }
             }
         }
-        let config =
-            get_stream_config(&device, sample_rate).expect("No suitable audio input config found.");
-        assert_eq!(config.channels, 1);
-        dbg!(&config);
+        let config = get_stream_config(&device, sample_rate, StreamDirection::Output)
+            .expect("No suitable audio output config found.");
 
         Ok(Self {
             stream: None,
@@ -135,13 +175,24 @@ impl AudioSink {
         })
     }
     fn start(&mut self, mut rb: RbCons) -> Result<()> {
+        let ch = self.config.channels;
+        let needs_upmix = ch > 1;
         let stream = self.device.build_output_stream(
             &self.config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let len = data.len();
                 let mut n = 0;
                 while n < len {
-                    n += rb.pop_slice(&mut data[n..]);
+                    if needs_upmix {
+                        for (i, o) in rb.pop_iter().zip(data.chunks_mut(ch as usize)) {
+                            for o_ch in o {
+                                *o_ch = i;
+                            }
+                            n += 1;
+                        }
+                    } else {
+                        n += rb.pop_slice(&mut data[n..]);
+                    }
                 }
                 debug_assert_eq!(n, data.len());
             },
@@ -175,8 +226,8 @@ impl AudioSource {
                 }
             }
         }
-        let config =
-            get_stream_config(&device, sample_rate).expect("No suitable audio input config found.");
+        let config = get_stream_config(&device, sample_rate, StreamDirection::Input)
+            .expect("No suitable audio input config found.");
 
         Ok(Self {
             stream: None,
@@ -185,6 +236,8 @@ impl AudioSource {
         })
     }
     fn start(&mut self, mut rb: RbProd) -> Result<()> {
+        let ch = self.config.channels;
+        let needs_downmix = ch > 1;
         let stream = self.device.build_input_stream(
             &self.config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -198,7 +251,12 @@ impl AudioSource {
                 }
                 let mut n = 0;
                 while n < len {
-                    n += rb.push_slice(&data[n..]);
+                    if needs_downmix {
+                        let mut iter = data.chunks(ch as usize).map(|it| df::mean(it));
+                        rb.push_iter(&mut iter);
+                    } else {
+                        n += rb.push_slice(&data[n..]);
+                    }
                 }
                 rb.sync();
                 debug_assert_eq!(n, data.len());

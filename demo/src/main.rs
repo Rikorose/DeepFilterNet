@@ -1,5 +1,3 @@
-#![feature(slice_flatten, array_chunks, get_many_mut)]
-
 use std::env;
 use std::future::Future;
 use std::path::PathBuf;
