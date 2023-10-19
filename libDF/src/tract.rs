@@ -31,7 +31,7 @@ impl DfParams {
         let file = File::open(tar_file).context("Could not open model tar file.")?;
         Self::from_targz(file)
     }
-    pub fn from_bytes(tar_buf: &'static [u8]) -> Result<Self> {
+    pub fn from_bytes(tar_buf: &[u8]) -> Result<Self> {
         Self::from_targz(tar_buf)
     }
     fn from_targz<R: Read>(f: R) -> Result<Self> {
@@ -281,11 +281,13 @@ impl DfTract {
             calc_norm_alpha(sr, hop_size, tau)
         };
         let atten_lim = rp.atten_lim_db.abs();
-        let atten_lim = if atten_lim >= 100. {
+        let atten_lim = if atten_lim > 100. {
             None
-        } else if atten_lim < 0.01 {
+        } else if atten_lim < 0.0 {
             log::warn!("Attenuation limit too strong. No noise reduction will be performed");
-            Some(1.)
+            Some(1.0)
+        } else if atten_lim == 100.0 {
+            Some(0.0)
         } else {
             log::info!("Running with an attenuation limit of {:.0} dB", atten_lim);
             Some(10f32.powf(-atten_lim / 20.))

@@ -1,21 +1,23 @@
 use std::boxed::Box;
-use std::ffi::{c_char, c_float, c_uint, CStr};
-use std::path::PathBuf;
 
 use ndarray::prelude::*;
-use wasm_bindgen::prelude::*;
-
 use crate::tract::*;
 
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
 pub struct DFState(crate::tract::DfTract);
 
+#[wasm_bindgen]
 impl DFState {
-    fn new(model_path: &str, channels: usize, atten_lim: f32) -> Self {
+    fn new(model_bytes: &[u8], channels: usize, atten_lim: f32) -> Self {
         let r_params = RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
         let df_params =
-            DfParams::new(PathBuf::from(model_path)).expect("Could not load model from path");
+            DfParams::from_bytes(model_bytes).expect("Could not load model from path");
+
         let m =
             DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+        
         DFState(m)
     }
     fn boxed(self) -> Box<DFState> {
@@ -32,22 +34,18 @@ impl DFState {
 /// Returns:
 ///     - DF state doing the full processing: stft, DNN noise reduction, istft.
 #[wasm_bindgen]
-#[no_mangle]
-pub unsafe extern "C" fn df_create(
-    path: *const c_char,
+pub unsafe fn df_create(
+    model_bytes: &[u8],
     // channels: usize,
     atten_lim: f32,
 ) -> *mut DFState {
-    let c_str = CStr::from_ptr(path);
-    let path = c_str.to_str().unwrap();
-    let df = DFState::new(path, 1, atten_lim);
+    let df = DFState::new(model_bytes, 1, atten_lim);
     Box::into_raw(df.boxed())
 }
 
 /// Get DeepFilterNet frame size in samples.
 #[wasm_bindgen]
-#[no_mangle]
-pub unsafe extern "C" fn df_get_frame_length(st: *mut DFState) -> usize {
+pub unsafe fn df_get_frame_length(st: *mut DFState) -> usize {
     let state = st.as_mut().expect("Invalid pointer");
     state.0.hop_size
 }
@@ -57,8 +55,7 @@ pub unsafe extern "C" fn df_get_frame_length(st: *mut DFState) -> usize {
 /// Args:
 ///     - lim_db: New attenuation limit in dB.
 #[wasm_bindgen]
-#[no_mangle]
-pub unsafe extern "C" fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
+pub unsafe fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
     let state = st.as_mut().expect("Invalid pointer");
     state.0.set_atten_lim(lim_db)
 }
@@ -68,8 +65,7 @@ pub unsafe extern "C" fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
 /// Args:
 ///     - beta: Post filter attenuation. Suitable range between 0.05 and 0;
 #[wasm_bindgen]
-#[no_mangle]
-pub unsafe extern "C" fn df_set_post_filter_beta(st: *mut DFState, beta: f32) {
+pub unsafe fn df_set_post_filter_beta(st: *mut DFState, beta: f32) {
     let state = st.as_mut().expect("Invalid pointer");
     state.0.set_pf_beta(beta)
 }
@@ -84,15 +80,16 @@ pub unsafe extern "C" fn df_set_post_filter_beta(st: *mut DFState, beta: f32) {
 /// Returns:
 ///     - Local SNR of the current frame.
 #[wasm_bindgen]
-#[no_mangle]
-pub unsafe extern "C" fn df_process_frame(
+pub unsafe fn df_process_frame(
     st: *mut DFState,
-    input: *mut c_float,
-    output: *mut c_float,
-) -> c_float {
+    input: &[f32],
+) -> js_sys::Float32Array{
     let state = st.as_mut().expect("Invalid pointer");
-    let input = ArrayView2::from_shape_ptr((1, state.0.hop_size), input);
-    let output = ArrayViewMut2::from_shape_ptr((1, state.0.hop_size), output);
+    let input = ArrayView2::from_shape((1, state.0.hop_size), input).unwrap();
 
-    state.0.process(input, output).expect("Failed to process DF frame")
+    let mut output = Array2::zeros((1, state.0.hop_size));
+    let output_view = output.view_mut();
+    let _lsnr = state.0.process(input, output_view).expect("Failed to process DF frame");
+    
+    js_sys::Float32Array::from(output.as_slice().unwrap())
 }
