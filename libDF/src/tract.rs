@@ -285,9 +285,7 @@ impl DfTract {
             None
         } else if atten_lim < 0.0 {
             log::warn!("Attenuation limit too strong. No noise reduction will be performed");
-            Some(1.0)
-        } else if atten_lim == 100.0 {
-            Some(0.0)
+            Some(1.)
         } else {
             log::info!("Running with an attenuation limit of {:.0} dB", atten_lim);
             Some(10f32.powf(-atten_lim / 20.))
