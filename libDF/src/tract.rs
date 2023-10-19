@@ -283,7 +283,7 @@ impl DfTract {
         let atten_lim = rp.atten_lim_db.abs();
         let atten_lim = if atten_lim > 100. {
             None
-        } else if atten_lim < 0.0 {
+        } else if atten_lim < 0.01 {
             log::warn!("Attenuation limit too strong. No noise reduction will be performed");
             Some(1.)
         } else {
