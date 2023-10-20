@@ -539,6 +539,7 @@ struct DfDbusControlDummy {}
 #[dbus_interface(name = "org.deepfilter.DeepFilterLadspa")]
 impl DfDbusControlDummy {}
 
+#[cfg(feature = "dbus")]
 struct DfDbusControl {
     tx: ControlProd,
 }
