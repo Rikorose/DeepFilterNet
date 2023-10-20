@@ -100,12 +100,10 @@ fn get_all_configs(device: &Device, direction: StreamDirection) -> Vec<Supported
         StreamDirection::Input => device
             .supported_input_configs()
             .expect("Failed to get input configs")
-            .map(|v| v)
             .collect::<Vec<SupportedStreamConfigRange>>(),
         StreamDirection::Output => device
             .supported_output_configs()
             .expect("Failed to get output configs")
-            .map(|v| v)
             .collect::<Vec<SupportedStreamConfigRange>>(),
     }
 }
@@ -116,7 +114,7 @@ fn get_stream_config(
     direction: StreamDirection,
 ) -> Option<StreamConfig> {
     let mut configs = Vec::new();
-    let all_configs = get_all_configs(&device, direction);
+    let all_configs = get_all_configs(device, direction);
     for c in all_configs.iter() {
         if c.channels() == 1 && c.sample_format() == SAMPLE_FORMAT {
             log::debug!("Found audio {} config: {:?}", direction, &c);
@@ -259,7 +257,7 @@ impl AudioSource {
                 }
                 let mut n = 0;
                 if needs_downmix {
-                    let mut iter = data.chunks(ch as usize).map(|it| df::mean(it));
+                    let mut iter = data.chunks(ch as usize).map(df::mean);
                     while n < len {
                         n += rb.push_iter(&mut iter);
                     }
@@ -290,17 +288,46 @@ impl AudioSource {
     }
 }
 
+pub(crate) struct AtomicControls {
+    has_init: Arc<AtomicBool>,
+    should_stop: Arc<AtomicBool>,
+}
+impl AtomicControls {
+    pub fn into_inner(self) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
+        (self.has_init, self.should_stop)
+    }
+}
+pub(crate) struct GuiCom {
+    pub s_lsnr: Option<SendLsnr>,
+    pub s_spec: Option<(SendSpec, SendSpec)>,
+    pub r_opt: Option<RecvControl>,
+}
+impl GuiCom {
+    pub fn into_inner(
+        self,
+    ) -> (
+        Option<SendLsnr>,
+        Option<(SendSpec, SendSpec)>,
+        Option<RecvControl>,
+    ) {
+        (self.s_lsnr, self.s_spec, self.r_opt)
+    }
+}
+
 fn get_worker_fn(
     mut rb_in: RbCons,
     mut rb_out: RbProd,
     input_sr: usize,
     output_sr: usize,
-    has_init: Arc<AtomicBool>,
-    should_stop: Arc<AtomicBool>,
-    mut s_lsnr: Option<SendLsnr>,
-    mut s_spec: Option<(SendSpec, SendSpec)>,
-    mut r_opt: Option<RecvControl>,
+    controls: AtomicControls,
+    df_com: Option<GuiCom>,
 ) -> impl FnMut() {
+    let (has_init, should_stop) = controls.into_inner();
+    let (mut s_lsnr, mut s_spec, mut r_opt) = if let Some(df_com) = df_com {
+        df_com.into_inner()
+    } else {
+        (None, None, None)
+    };
     move || {
         let mut df = unsafe { MODEL.clone().unwrap() };
         debug_assert_eq!(df.ch, 1); // Processing for more channels are not implemented yet
@@ -341,7 +368,7 @@ fn get_worker_fn(
                 let n = rb_in.pop_slice(&mut buf[0]);
                 debug_assert_eq!(n, n_in);
                 debug_assert_eq!(n, r.input_frames_next());
-                r.process_into_buffer(&buf, &mut [inframe.as_slice_mut().unwrap()], None)
+                r.process_into_buffer(buf, &mut [inframe.as_slice_mut().unwrap()], None)
                     .unwrap();
             } else {
                 let n = rb_in.pop_slice(inframe.as_slice_mut().unwrap());
@@ -429,7 +456,7 @@ impl DeepFilterCapture {
         s_lsnr: Option<SendLsnr>,
         s_noisy: Option<SendSpec>,
         s_enh: Option<SendSpec>,
-        r_contr: Option<RecvControl>,
+        r_opt: Option<RecvControl>,
     ) -> Result<Self> {
         let ch = 1;
         let (sr, frame_size, freq_size) = init_df(model_path, ch);
@@ -444,20 +471,26 @@ impl DeepFilterCapture {
         let mut sink = AudioSink::new(sr as u32, None)?;
         let should_stop = Arc::new(AtomicBool::new(false));
         let has_init = Arc::new(AtomicBool::new(false));
-        let rb_spec = match (s_noisy, s_enh) {
+        let s_spec = match (s_noisy, s_enh) {
             (Some(n), Some(e)) => Some((n, e)),
             _ => None,
+        };
+        let controls = AtomicControls {
+            has_init: has_init.clone(),
+            should_stop: should_stop.clone(),
+        };
+        let df_com = GuiCom {
+            s_lsnr,
+            s_spec,
+            r_opt,
         };
         let worker_handle = Some(thread::spawn(get_worker_fn(
             in_cons,
             out_prod,
             source.sr() as usize,
             sink.sr() as usize,
-            has_init.clone(),
-            should_stop.clone(),
-            s_lsnr,
-            rb_spec,
-            r_contr,
+            controls,
+            Some(df_com),
         )));
         while !has_init.load(Ordering::Relaxed) {
             sleep(Duration::from_secs_f32(0.01));
