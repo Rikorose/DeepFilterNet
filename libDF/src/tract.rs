@@ -222,6 +222,7 @@ pub struct DfTract {
     m_zeros: Vec<f32>,    // Preallocated buffer for applying a zero mask
     rolling_spec_buf_y: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
+    skip_counter: usize,  // Increment when wanting to skip processing due to low RMS
 }
 
 #[cfg(all(not(feature = "capi"), feature = "default-model"))]
@@ -352,6 +353,7 @@ impl DfTract {
             df_states,
             post_filter: rp.post_filter,
             post_filter_beta: rp.post_filter_beta,
+            skip_counter: 0,
         };
         m.init()?;
         #[cfg(feature = "timings")]
@@ -509,6 +511,9 @@ impl DfTract {
         });
         let rms = e / noisy.len() as f32;
         if rms < 1e-7 {
+            self.skip_counter += 1
+        }
+        if self.skip_counter > 5 {
             enh.fill(0.);
             return Ok(-15.);
         }
@@ -565,6 +570,10 @@ impl DfTract {
                     );
                 }
             }
+            self.skip_counter = 0;
+        } else {
+            // gains are None => skipped due to LSNR
+            self.skip_counter += 1;
         }
 
         // This spectrum will only be used for the upper frequecies
