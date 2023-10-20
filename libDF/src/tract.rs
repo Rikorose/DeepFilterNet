@@ -511,7 +511,9 @@ impl DfTract {
         });
         let rms = e / noisy.len() as f32;
         if rms < 1e-7 {
-            self.skip_counter += 1
+            self.skip_counter += 1;
+        } else {
+            self.skip_counter = 0;
         }
         if self.skip_counter > 5 {
             enh.fill(0.);
