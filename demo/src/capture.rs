@@ -180,21 +180,29 @@ impl AudioSink {
         let stream = self.device.build_output_stream(
             &self.config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let len = data.len();
+                let len = data.len() / ch as usize;
                 let mut n = 0;
-                while n < len {
-                    if needs_upmix {
-                        for (i, o) in rb.pop_iter().zip(data.chunks_mut(ch as usize)) {
-                            for o_ch in o {
-                                *o_ch = i;
-                            }
+                if needs_upmix {
+                    let mut data_it = data.chunks_mut(ch as usize);
+                    while n < len {
+                        for (i, o) in rb.pop_iter().zip(&mut data_it) {
+                            o.fill(i);
                             n += 1;
                         }
-                    } else {
+                    }
+                } else {
+                    while n < len {
                         n += rb.pop_slice(&mut data[n..]);
                     }
                 }
-                debug_assert_eq!(n, data.len());
+                debug_assert_eq!(n, len);
+                if log::log_enabled!(log::Level::Trace) {
+                    log::trace!(
+                        "Returning data to audio sink with len: {}, rms: {}",
+                        len,
+                        df::rms(data.iter())
+                    );
+                }
             },
             move |err| log::error!("Error during audio output {:?}", err),
             None, // None=blocking, Some(Duration)=timeout
@@ -241,7 +249,7 @@ impl AudioSource {
         let stream = self.device.build_input_stream(
             &self.config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let len = data.len();
+                let len = data.len() / ch as usize;
                 if log::log_enabled!(log::Level::Trace) {
                     log::trace!(
                         "Got data from audio source with len: {}, rms: {}",
@@ -250,16 +258,18 @@ impl AudioSource {
                     );
                 }
                 let mut n = 0;
-                while n < len {
-                    if needs_downmix {
-                        let mut iter = data.chunks(ch as usize).map(|it| df::mean(it));
-                        rb.push_iter(&mut iter);
-                    } else {
+                if needs_downmix {
+                    let mut iter = data.chunks(ch as usize).map(|it| df::mean(it));
+                    while n < len {
+                        n += rb.push_iter(&mut iter);
+                    }
+                } else {
+                    while n < len {
                         n += rb.push_slice(&data[n..]);
                     }
                 }
                 rb.sync();
-                debug_assert_eq!(n, data.len());
+                debug_assert_eq!(n, len);
             },
             move |err| log::error!("Error during audio output {:?}", err),
             None, // None=blocking, Some(Duration)=timeout
@@ -293,32 +303,34 @@ fn get_worker_fn(
 ) -> impl FnMut() {
     move || {
         let mut df = unsafe { MODEL.clone().unwrap() };
+        debug_assert_eq!(df.ch, 1); // Processing for more channels are not implemented yet
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = inframe.clone();
         df.process(inframe.view(), outframe.view_mut())
             .expect("Failed to run DeepFilterNet");
         has_init.store(true, Ordering::Relaxed);
-        log::info!("Wokrer init");
-        let mut input_resampler = if input_sr != df.sr {
+        log::info!("Worker init");
+        let (mut input_resampler, n_in) = if input_sr != df.sr {
             let r = FftFixedOut::<f32>::new(input_sr, df.sr, df.hop_size, 1, 1)
                 .expect("Failed to init input resampler");
-            let buf = vec![0f32; r.input_frames_max()];
-            Some((r, buf))
+            let n_in = r.input_frames_max();
+            let buf = r.input_buffer_allocate(true);
+            (Some((r, buf)), n_in)
         } else {
-            None
+            (None, df.hop_size)
         };
-        let mut output_resampler = if output_sr != df.sr {
+        let (mut output_resampler, n_out) = if output_sr != df.sr {
             let r = FftFixedIn::<f32>::new(df.sr, output_sr, df.hop_size, 1, 1)
                 .expect("Failed to init output resampler");
-            let buf = vec![0f32; r.output_frames_max()];
-            Some((r, buf))
+            let n_out = r.output_frames_max();
+            let buf = r.output_buffer_allocate(true);
+            // let buf = vec![0.; n_out];
+            (Some((r, buf)), n_out)
         } else {
-            None
+            (None, df.hop_size)
         };
         while !should_stop.load(Ordering::Relaxed) {
-            let n_in_samples =
-                input_resampler.as_ref().map(|r| r.0.input_frames_next()).unwrap_or(df.hop_size);
-            if rb_in.len() < n_in_samples {
+            if rb_in.len() < n_in {
                 // Sleep for half a hop size
                 sleep(Duration::from_secs_f32(
                     df.hop_size as f32 / df.sr as f32 / 2.,
@@ -326,27 +338,31 @@ fn get_worker_fn(
                 continue;
             }
             if let Some((ref mut r, ref mut buf)) = input_resampler.as_mut() {
-                let n = rb_in.pop_slice(buf);
+                let n = rb_in.pop_slice(&mut buf[0]);
+                debug_assert_eq!(n, n_in);
                 debug_assert_eq!(n, r.input_frames_next());
-                r.process_into_buffer(
-                    &[buf],
-                    &mut [inframe.as_slice_mut().unwrap().to_vec()],
-                    None,
-                )
-                .unwrap();
+                r.process_into_buffer(&buf, &mut [inframe.as_slice_mut().unwrap()], None)
+                    .unwrap();
             } else {
                 let n = rb_in.pop_slice(inframe.as_slice_mut().unwrap());
-                debug_assert_eq!(n, df.hop_size * df.ch);
+                debug_assert_eq!(n, n_in);
             }
             let lsnr = df
                 .process(inframe.view(), outframe.view_mut())
                 .expect("Failed to run DeepFilterNet");
-            if let Some((ref mut r, ref buf)) = output_resampler.as_mut() {
-                r.process_into_buffer(&[outframe.as_slice().unwrap()], &mut [buf.to_vec()], None)
-                    .unwrap();
+            let mut n = 0;
+            if let Some((ref mut r, ref mut buf)) = output_resampler.as_mut() {
+                r.process_into_buffer(&[outframe.as_slice().unwrap()], buf, None).unwrap();
+                while n < n_out {
+                    n += rb_out.push_slice(&buf[0][n..]);
+                }
             } else {
-                rb_out.push_slice(outframe.as_slice().unwrap());
+                let buf = outframe.as_slice().unwrap();
+                while n < n_out {
+                    n += rb_out.push_slice(&buf[n..]);
+                }
             }
+            debug_assert_eq!(n, n_out);
             rb_out.sync();
             if let Some(ref mut s_lsnr) = s_lsnr.as_mut() {
                 s_lsnr.send(lsnr).expect("Failed to send to LSNR rb");
