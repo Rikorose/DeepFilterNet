@@ -1,11 +1,11 @@
 import os
 from typing import Any, Dict, Optional, Tuple, Union
-from packaging import version
 
 import torch
 import torchaudio as ta
 from loguru import logger
 from numpy import ndarray
+from packaging import version
 from torch import Tensor
 
 if version.parse(ta.__version__) >= version.parse("2.0"):
