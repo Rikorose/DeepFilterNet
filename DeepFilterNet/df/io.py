@@ -1,12 +1,23 @@
 import os
 from typing import Any, Dict, Optional, Tuple, Union
+from packaging import version
 
 import torch
 import torchaudio as ta
 from loguru import logger
 from numpy import ndarray
 from torch import Tensor
-from torchaudio.backend.common import AudioMetaData
+
+if version.parse(ta.__version__) >= version.parse("2.0"):
+    from torchaudio import AudioMetaData
+
+    TA_RESAMPLE_SINC = "sinc_interp_hann"
+    TA_RESAMPLE_KAISER = "sinc_interp_kaiser"
+else:
+    from torchaudio.backend.common import AudioMetaData
+
+    TA_RESAMPLE_SINC = "sinc_interpolation"
+    TA_RESAMPLE_KAISER = "kaiser_window"
 
 from df.logger import warn_once
 from df.utils import download_file, get_cache_dir, get_git_root
@@ -82,16 +93,16 @@ except ImportError:
 
 def get_resample_params(method: str) -> Dict[str, Any]:
     params = {
-        "sinc_fast": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 16},
-        "sinc_best": {"resampling_method": "sinc_interpolation", "lowpass_filter_width": 64},
+        "sinc_fast": {"resampling_method": TA_RESAMPLE_SINC, "lowpass_filter_width": 16},
+        "sinc_best": {"resampling_method": TA_RESAMPLE_SINC, "lowpass_filter_width": 64},
         "kaiser_fast": {
-            "resampling_method": "kaiser_window",
+            "resampling_method": TA_RESAMPLE_KAISER,
             "lowpass_filter_width": 16,
             "rolloff": 0.85,
             "beta": 8.555504641634386,
         },
         "kaiser_best": {
-            "resampling_method": "kaiser_window",
+            "resampling_method": TA_RESAMPLE_KAISER,
             "lowpass_filter_width": 16,
             "rolloff": 0.9475937167399596,
             "beta": 14.769656459379492,
