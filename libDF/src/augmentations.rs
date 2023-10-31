@@ -12,7 +12,6 @@ use self::BiquadFilter::*;
 use crate::transforms::*;
 pub use crate::util::seed_from_u64;
 use crate::util::*;
-use crate::wav_utils::write_wav_iter;
 use crate::*;
 
 type Result<T> = std::result::Result<T, AugmentationError>;
