@@ -636,7 +636,7 @@ def main(args):
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
 
-    torch_df = TorchDFPipeline(device=args.device)
+    torch_df = TorchDFPipeline(device=args.device, always_apply_all_stages=args.always_apply_all_stages)
 
     # torchaudio normalize=True, fp32 return
     noisy_audio, sr = torchaudio.load(args.audio_path, channels_first=True)
@@ -662,6 +662,9 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--device', type=str, default='cpu', choices=['cuda', 'cpu'], help='Device to run on'
+    )
+    parser.add_argument(
+        '--always-apply-all-stages', action='store_true'
     )
 
     main(parser.parse_args())    

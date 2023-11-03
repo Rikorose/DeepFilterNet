@@ -7,7 +7,7 @@ Installation:
 cd path/to/DeepFilterNet/
 pip install maturin poetry poethepoet
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-maturin develop --release -m pyDF/Cargo.toml
+maturin build --release -m pyDF/Cargo.toml
 
 cd DeepFilterNet
 export PYTHONPATH=$PWD
