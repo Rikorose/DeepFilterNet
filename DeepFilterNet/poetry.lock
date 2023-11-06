@@ -477,13 +477,13 @@ files = [
 
 [[package]]
 name = "poethepoet"
-version = "0.24.1"
+version = "0.24.2"
 description = "A task runner that works well with poetry."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "poethepoet-0.24.1-py3-none-any.whl", hash = "sha256:3afa44b4fc7327df0dd912eda012604a072af2bb4d243fb0e41e8eca8dabf9ed"},
-    {file = "poethepoet-0.24.1.tar.gz", hash = "sha256:f5a386387c382f08890c273d13495938208a8ce91ab71536abf388c776c4f366"},
+    {file = "poethepoet-0.24.2-py3-none-any.whl", hash = "sha256:affaf7669542f54df05ed1e2be3d24028c9f4bd2ea514813fae7f01c5ca6e686"},
+    {file = "poethepoet-0.24.2.tar.gz", hash = "sha256:f600ecdbf58b474f7dba273060b194242566ffccb41d75f5b0d1cb8f5aa8bf2e"},
 ]
 
 [package.dependencies]
@@ -718,10 +718,9 @@ dev = ["black (>=19.3b0)", "pytest (>=4.6.2)"]
 dnsmos-local = ["onnxruntime"]
 eval = ["pesq", "pystoi", "scipy"]
 soundfile = ["soundfile"]
-tract = ["Deepfilterlib", "deepfilterlib"]
 train = ["deepfilterdataloader", "icecream"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<4.0"
-content-hash = "2d2f3d09fbabea4f0583b7ac3ba9d278c4355fa1f3da113d4344d675e51cc297"
+content-hash = "ee2e0a45b4ec96bbd1f01170b60080a7425c8ff18e85a8e17d94f8db08a2b184"
