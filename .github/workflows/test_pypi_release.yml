@@ -52,6 +52,7 @@ jobs:
           DNS_AUTH_KEY: ${{ secrets.DNS_AUTH_KEY }}
         run: |
           mkdir ../out
+          python -c "import torch, torchaudio; print(torch.__version__); print(torchaudio.__version__)"
           deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet -o ../out
           deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet2 -o ../out
           deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet3 -o ../out
