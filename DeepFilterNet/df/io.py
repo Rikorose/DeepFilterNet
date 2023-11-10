@@ -5,15 +5,14 @@ import torch
 import torchaudio as ta
 from loguru import logger
 from numpy import ndarray
-from packaging import version
 from torch import Tensor
 
-if version.parse(ta.__version__) >= version.parse("2.0"):
+try:
     from torchaudio import AudioMetaData
 
     TA_RESAMPLE_SINC = "sinc_interp_hann"
     TA_RESAMPLE_KAISER = "sinc_interp_kaiser"
-else:
+except ImportError:
     from torchaudio.backend.common import AudioMetaData
 
     TA_RESAMPLE_SINC = "sinc_interpolation"
