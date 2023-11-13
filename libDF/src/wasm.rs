@@ -1,9 +1,10 @@
 use std::boxed::Box;
 
-use crate::tract::*;
 use ndarray::prelude::*;
 
 use wasm_bindgen::prelude::*;
+
+use crate::tract::*;
 
 #[wasm_bindgen]
 pub struct DFState(crate::tract::DfTract);
