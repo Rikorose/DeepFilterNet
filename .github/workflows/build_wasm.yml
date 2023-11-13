@@ -32,4 +32,10 @@ jobs:
 
       - name: Build wasm package
         run:
-          "wasm-pack build libDF --target no-modules --features wasm"
+          "wasm-pack build libDF --target no-modules --features wasm -O wasm_package"
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: wasm_lib
+          path: ./wasm_package
+          retention-days: 7
