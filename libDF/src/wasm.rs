@@ -1,7 +1,6 @@
 use std::boxed::Box;
 
 use ndarray::prelude::*;
-
 use wasm_bindgen::prelude::*;
 
 use crate::tract::*;
