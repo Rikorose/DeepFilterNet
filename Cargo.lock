@@ -1045,7 +1045,6 @@ dependencies = [
  "ctrlc",
  "env_logger",
  "flate2",
- "getrandom",
  "hdf5",
  "hound",
  "itertools 0.10.5",
@@ -1073,7 +1072,6 @@ dependencies = [
  "tract-hir",
  "tract-onnx",
  "tract-pulse",
- "wasm-bindgen",
 ]
 
 [[package]]
