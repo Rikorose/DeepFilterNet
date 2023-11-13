@@ -126,7 +126,7 @@ jemallocator = { version = "0.5.0", optional = true }
 wasm-bindgen = "0.2.87"
 getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = { version = "0.1.1", optional = true }
-js-sys = "0.3"
+js_sys = "0.3"
 
 [dev-dependencies]
 rand = "0.8"
