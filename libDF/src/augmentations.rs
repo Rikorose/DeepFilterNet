@@ -12,7 +12,6 @@ use self::BiquadFilter::*;
 use crate::transforms::*;
 pub use crate::util::seed_from_u64;
 use crate::util::*;
-use crate::wav_utils::write_wav_iter;
 use crate::*;
 
 type Result<T> = std::result::Result<T, AugmentationError>;
@@ -967,7 +966,6 @@ impl RandReverbSim {
             rir = self.supress_late(rir, self.sr, max_idx, rt60)?;
         }
         rir = self.trim(rir, max_idx)?;
-        write_wav_iter("../out/rir.wav", rir.iter(), self.sr as u32, 1).unwrap();
         // Normalize and flip RIR for convolution
         let rir_e = rir.map(|v| v * v).sum().sqrt();
         let rir_noise = rir / rir_e;

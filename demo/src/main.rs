@@ -1,5 +1,3 @@
-#![feature(slice_flatten, array_chunks, get_many_mut)]
-
 use std::env;
 use std::future::Future;
 use std::path::PathBuf;
@@ -70,6 +68,7 @@ pub fn main() -> iced::Result {
             .filter_module("wgpu_hal", log::LevelFilter::Error)
             .filter_module("naga", log::LevelFilter::Error)
             .filter_module("crossfont", log::LevelFilter::Error)
+            .filter_module("cosmic_text", log::LevelFilter::Error)
             .format(capture::log_format)
             .init();
     });
@@ -442,8 +441,8 @@ impl SpecView {
     }
     fn specs(&self) -> Container<Message> {
         container(column![
-            spec_view("Noisy", self.noisy_img.clone(), 1000, 350),
-            spec_view("DeepFilterNet Enhanced", self.enh_img.clone(), 1000, 350),
+            spec_view("Noisy", self.noisy_img.clone(), 1000, 250),
+            spec_view("DeepFilterNet Enhanced", self.enh_img.clone(), 1000, 250),
         ])
     }
 }
