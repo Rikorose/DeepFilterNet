@@ -27,12 +27,10 @@ jobs:
 
       # https://rustwasm.github.io/wasm-pack/installer/
       - name: Install wasm-pack
-        run:
-          "curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh"
+        run: cargo install wasm-pack
 
       - name: Build wasm package
-        run:
-          "wasm-pack build libDF --target no-modules --features wasm"
+        run: wasm-pack build libDF --target no-modules --features wasm
 
       - uses: actions/upload-artifact@v3
         with:
