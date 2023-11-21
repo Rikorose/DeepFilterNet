@@ -86,7 +86,7 @@ hdf5-static = ["hdf5?/static"]
 [dependencies]
 rustfft = "^6.1.0"
 realfft = "^3.1.0"
-itertools = "0.10"
+itertools = "0.12"
 num-complex = { version = "^0.4", features = ["serde"] }
 log = { version = "0.4", features = ["std"], optional = true }
 rand = { version = "0.8", optional = true }
