@@ -12,6 +12,7 @@ rust-version = "1.60"
 [lib]
 name = "df"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [[bin]]
 name = "sample-hdf5"
@@ -81,6 +82,15 @@ default-model = []  # Include default DFN3 model
 default-model-ll = []  # Include default DFN3 low latency model
 nightly-features = []
 capi = ["tract", "default-model", "dep:ndarray"]
+wasm = [
+  "tract", 
+  "default-model", 
+  "dep:ndarray", 
+  "dep:wasm-bindgen",
+  "dep:getrandom",
+  "dep:console_error_panic_hook",
+  "dep:js-sys"
+]
 hdf5-static = ["hdf5?/static"]
 
 [dependencies]
@@ -116,6 +126,11 @@ tract-pulse = { version = "^0.20.19", optional = true }
 tract-hir = { version = "^0.20.19", optional = true }
 flate2 = { version = "1.0.24", optional = true }
 tar = { version = "0.4.38", optional = true }
+wasm-bindgen = { version = "0.2.87", optional = true}
+getrandom = { version = "0.2", features = ["js"], optional = true}
+console_error_panic_hook = { version = "0.1.1", optional = true }
+js-sys = { version = "0.3", optional = true }
+
 
 [target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_env = "musl"), not(target_arch = "riscv64")))'.dependencies]
 jemallocator = { version = "0.5.0", optional = true }

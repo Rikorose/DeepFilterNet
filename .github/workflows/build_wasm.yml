@@ -1,0 +1,39 @@
+name: Build WASM Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    env:
+      RUST_LOG: info
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      # https://rustwasm.github.io/wasm-pack/installer/
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build wasm package
+        run: wasm-pack build libDF --target no-modules --features wasm
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: wasm_package
+          path: ./libDF/pkg
+          retention-days: 7

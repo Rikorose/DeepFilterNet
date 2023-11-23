@@ -31,7 +31,7 @@ impl DfParams {
         let file = File::open(tar_file).context("Could not open model tar file.")?;
         Self::from_targz(file)
     }
-    pub fn from_bytes(tar_buf: &'static [u8]) -> Result<Self> {
+    pub fn from_bytes(tar_buf: &[u8]) -> Result<Self> {
         Self::from_targz(tar_buf)
     }
     fn from_targz<R: Read>(f: R) -> Result<Self> {
