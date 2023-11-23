@@ -12,7 +12,7 @@ rust-version = "1.60"
 [lib]
 name = "df"
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [[bin]]
 name = "sample-hdf5"
