@@ -70,7 +70,7 @@ jobs:
 
       # Python and poetry install
       - name: Install Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
