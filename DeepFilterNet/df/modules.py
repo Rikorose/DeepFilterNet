@@ -690,7 +690,7 @@ class SqueezedGRU(nn.Module):
         else:
             self.linear_out = nn.Identity()
 
-    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+    def forward(self, input: Tensor, h: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         input = self.linear_in(input)
         x, h = self.gru(input, h)
         if self.gru_skip is not None:
@@ -729,7 +729,7 @@ class SqueezedGRU_S(nn.Module):
         else:
             self.linear_out = nn.Identity()
 
-    def forward(self, input: Tensor, h=None) -> Tuple[Tensor, Tensor]:
+    def forward(self, input: Tensor, h: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         x = self.linear_in(input)
         x, h = self.gru(x, h)
         x = self.linear_out(x)

@@ -170,7 +170,7 @@ class DF(MultiFrameModule):
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
         coefs = torch.view_as_complex(coefs)
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
+        coefs = coefs.view(coefs.shape[0], -1, self.frame_size, coefs.shape[2], coefs.shape[3])
         if self.conj:
             coefs = coefs.conj()
         spec_f = df(spec_f, coefs)

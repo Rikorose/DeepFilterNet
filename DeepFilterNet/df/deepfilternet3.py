@@ -242,7 +242,7 @@ class ErbDecoder(nn.Module):
             p.conv_ch, 1, kernel_size=p.conv_kernel, activation_layer=nn.Sigmoid
         )
 
-    def forward(self, emb, e3, e2, e1, e0) -> Tensor:
+    def forward(self, emb: Tensor, e3: Tensor, e2: Tensor, e1: Tensor, e0: Tensor) -> Tensor:
         # Estimates erb mask
         b, _, t, f8 = e3.shape
         emb, _ = self.emb_gru(emb)
