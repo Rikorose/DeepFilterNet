@@ -141,7 +141,7 @@ jobs:
         if: ${{ runner.os == 'macos' }}
         run: find ./staging
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: clib-${{ matrix.target }}
           path: ./staging

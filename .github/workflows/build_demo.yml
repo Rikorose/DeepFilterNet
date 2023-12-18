@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           cargo build -p df-demo --bin df-demo --features ui --release
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: demo-build-artifact-${{runner.os}}
           path: target/release/df-demo${{matrix.ext}}
