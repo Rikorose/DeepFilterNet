@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           cargo ${{matrix.command}} ${{matrix.args}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: matrix.command == 'test'
         with:
           name: test-artifacts
