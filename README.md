@@ -103,6 +103,7 @@ deepFilter path/to/noisy_audio.wav
 ### Manual Installation
 
 Install cargo via [rustup](https://rustup.rs/). Usage of a `conda` or `virtualenv` recommended.
+Please read the comments and only execute the commands that you need.
 
 Installation of python dependencies and libDF:
 ```bash
@@ -112,20 +113,22 @@ cd path/to/DeepFilterNet/  # cd into repository
 pip install torch torchaudio -f https://download.pytorch.org/whl/cpu/torch_stable.html
 # Install build dependencies used to compile libdf and DeepFilterNet python wheels
 pip install maturin poetry
+
+#  Install remaining DeepFilterNet python dependencies
+# *Option A:* Install DeepFilterNet python wheel globally within your environment. Do this if you want use
+# this repos as is, and don't want to develop within this repository.
+poetry -C DeepFilterNet install -E train -E eval
+# *Option B:* If you want to develop within this repo, install only dependencies and work with the repository version
+poetry -C DeepFilterNet install -E train -E eval --no-root
+export PYTHONPATH=$PWD/DeepFilterNet # And set the python path correctly
+
 # Build and install libdf python package required for enhance.py
 maturin develop --release -m pyDF/Cargo.toml
-# Optional: Install libdfdata python package with dataset and dataloading functionality for training
+# *Optional*: Install libdfdata python package with dataset and dataloading functionality for training
 # Required build dependency: HDF5 headers (e.g. ubuntu: libhdf5-dev)
 maturin develop --release -m pyDF-data/Cargo.toml
 # If you have troubles with hdf5 you may try to build and link hdf5 statically:
 maturin develop --release --features hdf5-static -m pyDF-data/Cargo.toml
-# Install remaining DeepFilterNet python dependencies
-cd DeepFilterNet
-poetry install -E train -E eval # Note: This globally installs DeepFilterNet in your environment
-# Alternatively for developement: Install only dependencies and work with the repository version
-poetry install -E train -E eval --no-root
-# You may need to set the python path
-export PYTHONPATH=$PWD
 ```
 
 ### Use DeepFilterNet from command line
