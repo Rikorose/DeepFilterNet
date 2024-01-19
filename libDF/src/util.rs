@@ -31,7 +31,7 @@ pub struct SeededRng {
 thread_local!(
     static THREAD_SEEDED_RNG: Rc<UnsafeCell<Xoshiro256PlusPlus>> =
         Rc::new(UnsafeCell::new(Xoshiro256PlusPlus::seed_from_u64(0)));
-    static SEEDED: RefCell<bool> = RefCell::new(false);
+    static SEEDED: RefCell<bool> = const { RefCell::new(false) };
 );
 
 pub fn seed_from_u64(x: u64) {
