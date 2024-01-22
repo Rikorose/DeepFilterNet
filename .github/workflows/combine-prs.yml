@@ -31,7 +31,7 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      - uses: actions/github-script@v6
+      - uses: actions/github-script@v7
         id: create-combined-pr
         name: Create Combined PR
         with:
