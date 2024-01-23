@@ -171,12 +171,15 @@ class DuplicateFilter:
 _duplicate_filter = DuplicateFilter()
 
 
-def log_model_summary(model: torch.nn.Module, verbose=False):
+def log_model_summary(model: torch.nn.Module, verbose=False, force=False):
     try:
         import ptflops
-    except ImportError:
-        logger.debug("Failed to import ptflops. Cannot print model summary.")
-        return
+    except ImportError as e:
+        if not force:
+            logger.debug("Failed to import ptflops. Cannot print model summary.")
+            return
+        else:
+            raise e
 
     from df.model import ModelParams
 
