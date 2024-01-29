@@ -21,6 +21,7 @@ class DF:
             min_nb_erb_freqs (int): Minimum number of frequency bands per ERB band. Defaults to 1.
         """
         ...
+
     def analysis(self, input: ndarray) -> ndarray:
         """Analysis of a time-domain signal.
 
@@ -32,6 +33,7 @@ class DF:
                 and T' the original time T divided by `hop_size`.
         """
         ...
+
     def synthesis(self, input: ndarray) -> ndarray:
         """Synthesis of a frequency-domain signal.
 
@@ -42,6 +44,7 @@ class DF:
             output (ndarray): 2D real-valued array of shape [C, T].
         """
         ...
+
     def erb_widths(self) -> ndarray: ...
     def fft_window(self) -> ndarray: ...
     def sr(self) -> int: ...
