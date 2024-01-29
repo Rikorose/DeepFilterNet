@@ -89,8 +89,8 @@ def _get_metric(name: str, sr: int):
 
 def _load_model(model_n: str, **kwargs):
     kwargs.setdefault("config_allow_defaults", True)
-    model, df_state, _ = init_df(model_n, **kwargs)
-    logger.info(f"Loaded model {model_n}")
+    model, df_state, _, epoch = init_df(model_n, **kwargs)
+    logger.info(f"Loaded model {model_n} with epoch {epoch}")
     return model, df_state
 
 

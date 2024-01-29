@@ -28,6 +28,8 @@ mod reexport_dataset_modules {
 pub use reexport_dataset_modules::*;
 #[cfg(any(cargo_c, feature = "capi"))]
 mod capi;
+#[cfg(feature = "logging")]
+pub mod logging;
 #[cfg(feature = "tract")]
 pub mod tract;
 

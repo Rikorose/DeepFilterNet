@@ -294,7 +294,7 @@ def main(args):
         exit(1)
 
     print(args)
-    model, df_state, _ = init_df(
+    model, df_state, _, epoch = init_df(
         args.model_base_dir,
         post_filter=args.pf,
         log_level=args.log_level,
@@ -307,7 +307,7 @@ def main(args):
     out_dir = Path("out")
     if out_dir.is_dir():
         # attempt saving enhanced audio
-        save_audio(out_dir / "enhanced.wav", enhanced, df_state.sr())
+        save_audio(os.path.join(out_dir, "enhanced.wav"), enhanced, df_state.sr())
     export_dir = Path(args.export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
     export(
@@ -324,12 +324,17 @@ def main(args):
             os.path.join(model_base_dir, "config.ini"),
             os.path.join(args.export_dir, "config.ini"),
         )
+    model_name = Path(model_base_dir).name
+    version_file = os.path.join(args.export_dir, "version.txt")
+    with open(version_file, "w") as f:
+        f.write(f"{model_name}_epoch_{epoch}")
     tar_name = export_dir / (Path(model_base_dir).name + "_onnx.tar.gz")
     with tarfile.open(tar_name, mode="w:gz") as f:
         f.add(os.path.join(args.export_dir, "enc.onnx"))
         f.add(os.path.join(args.export_dir, "erb_dec.onnx"))
         f.add(os.path.join(args.export_dir, "df_dec.onnx"))
         f.add(os.path.join(args.export_dir, "config.ini"))
+        f.add(os.path.join(args.export_dir, "version.txt"))
 
 
 if __name__ == "__main__":

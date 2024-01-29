@@ -45,7 +45,7 @@ class AudioDataset(Dataset):
 
 
 def main(args):
-    model, df_state, suffix = init_df(
+    model, df_state, suffix, epoch = init_df(
         args.model_base_dir,
         post_filter=args.pf,
         log_level=args.log_level,
@@ -107,7 +107,7 @@ def init_df(
     epoch: Union[str, int, None] = "best",
     default_model: str = DEFAULT_MODEL,
     mask_only: bool = False,
-) -> Tuple[nn.Module, DF, str]:
+) -> Tuple[nn.Module, DF, str, int]:
     """Initializes and loads config, model and deep filtering state.
 
     Args:
@@ -125,6 +125,7 @@ def init_df(
         df_state (DF): Deep filtering state for stft/istft/erb
         suffix (str): Suffix based on the model name. This can be used for saving the enhanced
             audio.
+        epoch (int): Epoch number of the loaded checkpoint.
     """
     try:
         from icecream import ic, install
@@ -183,7 +184,7 @@ def init_df(
         suffix += "_pf"
     logger.info("Running on device {}".format(get_device()))
     logger.info("Model loaded")
-    return model, df_state, suffix
+    return model, df_state, suffix, epoch
 
 
 def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor, Tensor, Tensor]:

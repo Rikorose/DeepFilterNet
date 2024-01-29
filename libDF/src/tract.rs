@@ -53,6 +53,10 @@ impl DfParams {
             } else if path.ends_with("config.ini") {
                 config =
                     Ini::read_from(&mut file).context("Could not load config from tar file.")?;
+            } else if path.ends_with("version.txt") {
+                let mut version = String::new();
+                file.read_to_string(&mut version).expect("Could not read version.txt");
+                log::info!("Loading model with id: {}", version);
             } else {
                 log::warn!("Found non-matching item in model tar file: {:?}", path)
             }

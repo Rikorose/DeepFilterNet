@@ -82,9 +82,7 @@ class Encoder(nn.Module):
         self.erb_conv2 = convkxf(
             layer_width * wf**1, layer_width * wf**2, k=k, lookahead=cl, **kwargs
         )
-        self.erb_conv3 = convkxf(
-            layer_width * wf**2, layer_width * wf**2, k=k, fstride=1, **kwargs
-        )
+        self.erb_conv3 = convkxf(layer_width * wf**2, layer_width * wf**2, k=k, fstride=1, **kwargs)
         self.df_conv0 = convkxf(
             2, layer_width, fstride=1, k=k0, lookahead=p.conv_lookahead, **kwargs
         )

@@ -1,10 +1,7 @@
 use std::cell::{RefCell, UnsafeCell};
 use std::rc::Rc;
-use std::sync::Once;
 use std::thread_local;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use log::{Level, Metadata, Record};
 use ndarray_rand::rand::distributions::{
     uniform::{SampleUniform, Uniform},
     Distribution,
@@ -13,6 +10,8 @@ use ndarray_rand::rand::{Error as RandError, Rng, RngCore};
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use thiserror::Error;
+
+pub use crate::logging::*;
 
 type Result<T> = std::result::Result<T, UtilsError>;
 
@@ -24,7 +23,6 @@ pub enum UtilsError {
     SetLoggerError(#[from] log::SetLoggerError),
 }
 
-static LOGGER_INIT: Once = Once::new();
 pub struct SeededRng {
     rng: Rc<UnsafeCell<Xoshiro256PlusPlus>>,
 }
@@ -97,49 +95,4 @@ where
         *x = dist.sample(&mut rng);
     }
     Ok(v)
-}
-
-pub type LogMessage = (Level, String, Option<String>, Option<u32>); // level, message, module, lineno
-pub struct DfLogger {
-    sender: Sender<LogMessage>,
-    level: Level,
-}
-
-impl DfLogger {
-    pub fn build(level: Level) -> (DfLogger, Receiver<LogMessage>) {
-        let (sender, receiver) = unbounded();
-        let logger = DfLogger { sender, level };
-        (logger, receiver)
-    }
-}
-
-impl log::Log for DfLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= self.level && metadata.target().starts_with("df:")
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            self.sender
-                .send((
-                    record.level(),
-                    format!("{}", record.args()),
-                    record.module_path().map(|f| f.replace("::reexport_dataset_modules:", "")),
-                    record.line(),
-                ))
-                .unwrap_or_else(|_| {
-                    println!("DfDataloader | {} | {}", record.level(), record.args())
-                });
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-pub fn init_logger(logger: DfLogger) {
-    LOGGER_INIT.call_once(|| {
-        let level = logger.level;
-        log::set_boxed_logger(Box::new(logger)).expect("Could not set logger");
-        log::set_max_level(level.to_level_filter());
-    });
 }
