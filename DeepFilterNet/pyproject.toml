@@ -30,7 +30,7 @@ numpy = ">=1.22,<2.0"
 loguru = ">=0.5"
 appdirs = "^1.4"
 requests = "^2.27"
-packaging = "^23.0"
+packaging = ">=23,<25"
 sympy = ">=1.6"
 soundfile = { version = ">=0.10,<0.13", optional = true }
 icecream = { version = ">=2,<3", optional = true }
