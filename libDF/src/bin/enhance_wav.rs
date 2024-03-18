@@ -39,13 +39,23 @@ struct Args {
     #[arg(short, long, default_value_t = 100.)]
     atten_lim_db: f32,
     /// Min dB local SNR threshold for running the decoder DNN side
-    #[arg(long, value_parser, default_value_t=-15.)]
+    #[arg(long, value_parser, allow_negative_numbers = true, default_value_t = -15.)]
     min_db_thresh: f32,
     /// Max dB local SNR threshold for running ERB decoder
-    #[arg(long, value_parser, default_value_t = 35.)]
+    #[arg(
+        long,
+        value_parser,
+        allow_negative_numbers = true,
+        default_value_t = 35.
+    )]
     max_db_erb_thresh: f32,
     /// Max dB local SNR threshold for running DF decoder
-    #[arg(long, value_parser, default_value_t = 35.)]
+    #[arg(
+        long,
+        value_parser,
+        allow_negative_numbers = true,
+        default_value_t = 35.
+    )]
     max_db_df_thresh: f32,
     /// If used with multiple channels, reduce the mask with max (1) or mean (2)
     #[arg(long, value_parser, default_value_t = 1)]
