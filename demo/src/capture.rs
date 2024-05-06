@@ -118,14 +118,14 @@ fn get_stream_config(
     for c in all_configs.iter() {
         if c.channels() == 1 && c.sample_format() == SAMPLE_FORMAT {
             log::debug!("Found audio {} config: {:?}", direction, &c);
-            configs.push(c.clone());
+            configs.push(*c);
         }
     }
     // Further add multi-channel configs if no mono was found. The signal will be downmixed later.
     for c in all_configs.iter() {
         if c.channels() >= 2 && c.sample_format() == SAMPLE_FORMAT {
             log::debug!("Found audio source config: {:?}", &c);
-            configs.push(c.clone());
+            configs.push(*c);
         }
     }
     assert!(
@@ -136,14 +136,14 @@ fn get_stream_config(
     let sr = SampleRate(sample_rate);
     for c in configs.iter() {
         if sr >= c.min_sample_rate() && sr <= c.max_sample_rate() {
-            let mut c: StreamConfig = c.clone().with_sample_rate(sr).into();
+            let mut c: StreamConfig = (*c).with_sample_rate(sr).into();
             c.buffer_size = BufferSize::Fixed(unsafe { get_frame_size() } as u32);
             return Some(c);
         }
     }
 
     if let Some(c) = configs.first() {
-        let mut c: StreamConfig = c.clone().with_max_sample_rate().into();
+        let mut c: StreamConfig = (*c).with_max_sample_rate().into();
         c.buffer_size =
             BufferSize::Fixed(unsafe { get_frame_size() } as u32 * c.sample_rate.0 / sample_rate);
         log::warn!("Using best matching config {:?}", c);
@@ -523,6 +523,8 @@ impl DeepFilterCapture {
 }
 
 #[allow(unused)]
+#[allow(unknown_lints)] // assigning_clones is clippy nightly only
+#[allow(clippy::assigning_clones)]
 pub fn main() -> Result<()> {
     INIT_LOGGER.call_once(|| {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))

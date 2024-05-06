@@ -26,7 +26,7 @@ mod reexport_dataset_modules {
 }
 #[cfg(feature = "dataset")]
 pub use reexport_dataset_modules::*;
-#[cfg(any(cargo_c, feature = "capi"))]
+#[cfg(feature = "capi")]
 mod capi;
 #[cfg(feature = "logging")]
 pub mod logging;
@@ -542,7 +542,7 @@ where
     I: IntoIterator<Item = &'a f32>,
 {
     let mut index = 0;
-    let mut high = std::f32::MIN;
+    let mut high = f32::MIN;
     vals.into_iter().enumerate().for_each(|(i, v)| {
         if v > &high {
             high = *v;
@@ -557,7 +557,7 @@ where
     I: IntoIterator<Item = &'a f32>,
 {
     let mut index = 0;
-    let mut high = std::f32::MIN;
+    let mut high = f32::MIN;
     vals.into_iter().enumerate().for_each(|(i, v)| {
         if v > &high {
             high = v.abs();

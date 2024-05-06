@@ -1761,11 +1761,11 @@ impl Hdf5Dataset {
         };
         let mut arr = self.match_ch(arr, 0, channel)?;
         match self.dtype {
-            Some(DType::I16) => arr /= std::i16::MAX as f32,
+            Some(DType::I16) => arr /= i16::MAX as f32,
             Some(DType::F32) => (),
             None => {
                 if ds.dtype()?.is::<i16>() {
-                    arr /= std::i16::MAX as f32
+                    arr /= i16::MAX as f32
                 }
             }
         }
@@ -1820,7 +1820,7 @@ impl Hdf5Dataset {
                 let mut out_ch = out.slice_mut(s![i, idx..idx + numel]);
                 debug_assert_eq!(out_ch.len(), next.channel(i as u32).len());
                 for (i_s, o_s) in next.channel(i as u32).iter().zip(out_ch.iter_mut()) {
-                    *o_s = *i_s as f32 / std::i16::MAX as f32
+                    *o_s = *i_s as f32 / i16::MAX as f32
                 }
             }
             idx += numel;
@@ -1944,7 +1944,7 @@ impl Hdf5Dataset {
         // Select channel
         let out = self.match_ch(out, 1, channel)?;
         // Transpose to channels first and convert to float
-        let out = out.t().mapv(|x| x as f32 / std::i16::MAX as f32);
+        let out = out.t().mapv(|x| x as f32 / i16::MAX as f32);
         Ok(out)
     }
 
