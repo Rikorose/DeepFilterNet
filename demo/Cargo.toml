@@ -37,7 +37,7 @@ deep_filter = { path = "../libDF/", default-features = false, features = [
   "default-model",
 ] }
 ndarray = "^0.15"
-rubato = "0.14"
+rubato = "0.15"
 ringbuf = "0.3"
 env_logger = "0.10"
 log = { version = "0.4", features = ["std"] }
