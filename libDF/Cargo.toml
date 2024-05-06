@@ -7,7 +7,7 @@ description = "Noise supression using deep filtering"
 repository = "https://github.com/Rikorose/DeepFilterNet"
 license = "MIT/Apache-2.0"
 readme = "../README.md"
-rust-version = "1.60"
+rust-version = "1.70"
 
 [lib]
 name = "df"
