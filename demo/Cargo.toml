@@ -19,7 +19,7 @@ default-model-ll = ["deep_filter/default-model-ll"]
 thresholds = []
 
 [dependencies]
-iced = { version = "0.10", features = [
+iced = { version = "0.12", features = [
   "image",
   "debug",
   "tokio",
