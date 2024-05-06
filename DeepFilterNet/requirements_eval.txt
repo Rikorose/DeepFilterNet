@@ -4,7 +4,7 @@ deepfilterlib
 icecream>=2
 loguru>=0.5
 numpy>=1.20
-ptflops==0.7.2.2
+ptflops==0.7.3
 requests
 packaging
 pystoi
