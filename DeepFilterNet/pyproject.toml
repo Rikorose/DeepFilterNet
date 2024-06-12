@@ -25,6 +25,8 @@ include = [
 [tool.poetry.dependencies]
 deepfilterlib = { path = "../pyDF/" }
 deepfilterdataloader = { path = "../pyDF-data/", optional = true }
+torch = ">=1.12,<2.1"
+torchaudio = ">=1.12,<2.1"
 python = ">=3.8,<4.0"
 numpy = ">=1.22,<2.0"
 loguru = ">=0.5"
