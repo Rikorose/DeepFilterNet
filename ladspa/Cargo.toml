@@ -21,7 +21,7 @@ deep_filter = { path = "../libDF", default-features = false, features = [
 ] }
 ladspa = "0.3.4"
 ndarray = "^0.15"
-env_logger = "0.10"
+env_logger = "0.11"
 uuid = { version = "1.2.1", features = ["v4", "fast-rng"] }
 log = { version = "0.4", features = ["std"] }
 zbus = { version = "3.6", optional = true }
