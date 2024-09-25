@@ -24,7 +24,14 @@ impl DFState {
         } else {
             None
         };
-        let r_params = RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
+        let mut r_params = RuntimeParams::default();
+        r_params = r_params.with_atten_lim(atten_lim).with_thresholds(
+            -15.0f32,  //min_db_thresh
+            35.0f32,   //max_db_erb_thresh
+            35.0f32,   //max_db_df_thresh
+        );
+        r_params = r_params.with_post_filter(0.0f32);  //post_filter_beta
+        r_params = r_params.with_mask_reduce(ReduceMask::MAX);  //reduce_mask
         let df_params =
             DfParams::new(PathBuf::from(model_path)).expect("Could not load model from path");
         let m =
