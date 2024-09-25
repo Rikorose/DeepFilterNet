@@ -24,7 +24,7 @@ impl DFState {
         } else {
             None
         };
-        let mut r_params = RuntimeParams::default();
+        let mut r_params = RuntimeParams::default_with_ch(channels); //channel
         r_params = r_params.with_atten_lim(atten_lim).with_thresholds(
             -15.0f32,  //min_db_thresh
             35.0f32,   //max_db_erb_thresh
