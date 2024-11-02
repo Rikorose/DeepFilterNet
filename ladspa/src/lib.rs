@@ -53,10 +53,7 @@ struct DfPlugin {
     control_tx: ControlProd,
     id: String,
     ch: usize,
-    sr: usize,
     frame_size: usize,
-    proc_delay: usize,
-    t_proc_change: usize,
     sleep_duration: Duration,
     control_hist: DfControlHistory,
     _h: JoinHandle<()>, // Worker thread handle
@@ -112,9 +109,12 @@ fn get_worker_fn(
 ) -> impl FnMut() {
     move || {
         let mut df = unsafe { MODEL.clone().unwrap() };
-        let mut inframe = Array2::zeros((df.ch, df.hop_size));
+
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
+
+        let mut inframe_bufs = vec![];
+
         loop {
             if let Ok((c, v)) = controls.try_recv() {
                 log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
@@ -127,28 +127,59 @@ fn get_worker_fn(
                     _ => (),
                 }
             }
-            let got_samples = {
+
+            let inframes = {
                 let mut q = inqueue.lock().unwrap();
-                if q[0].len() >= df.hop_size {
+                let mut inframes = vec![];
+                while q[0].len() >= df.hop_size {
+                    let mut inframe =
+                        inframe_bufs.pop().unwrap_or_else(|| Array2::zeros((df.ch, df.hop_size)));
+
                     for (i_q_ch, mut i_ch) in q.iter_mut().zip(inframe.outer_iter_mut()) {
                         for i in i_ch.iter_mut() {
                             *i = i_q_ch.pop_front().unwrap();
                         }
                     }
-                    true
-                } else {
-                    false
+
+                    inframes.push(inframe);
                 }
+                inframes
             };
-            if !got_samples {
+
+            if inframes.is_empty() {
                 sleep(sleep_duration);
                 continue;
             }
-            let t0 = Instant::now();
-            let lsnr = df
-                .process(inframe.view(), outframe.view_mut())
-                .expect("Error during df::process");
-            {
+
+            for (i, inframe) in inframes.into_iter().enumerate() {
+                let t0 = Instant::now();
+
+                if i < 5 {
+                    let lsnr = df
+                        .process(inframe.view(), outframe.view_mut())
+                        .expect("Error during df::process");
+
+                    let td_ms = t0.elapsed().as_secs_f32() * 1000.;
+
+                    log::debug!(
+                        "DF {} | Enhanced {:.1}ms frame. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
+                        id,
+                        t_audio_ms,
+                        lsnr,
+                        td_ms,
+                        td_ms / t_audio_ms
+                    );
+                } else {
+                    log::info!(
+                        "DF {} | Processing overloaded! Dropping {} samples",
+                        id,
+                        outframe.len_of(Axis(1))
+                    );
+                    outframe.fill(0.0);
+                }
+
+                inframe_bufs.push(inframe);
+
                 let mut o_q = outqueue.lock().unwrap();
                 for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
                     for &o in o_ch.iter() {
@@ -156,15 +187,6 @@ fn get_worker_fn(
                     }
                 }
             }
-            let td_ms = t0.elapsed().as_secs_f32() * 1000.;
-            log::debug!(
-                "DF {} | Enhanced {:.1}ms frame. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
-                id,
-                t_audio_ms,
-                lsnr,
-                td_ms,
-                td_ms / t_audio_ms
-            );
         }
     }
 }
@@ -241,11 +263,8 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             o_rx,
             control_tx,
             ch: channels,
-            sr: m_sr,
             id,
             frame_size,
-            proc_delay,
-            t_proc_change: 0,
             sleep_duration,
             control_hist: hist,
             _h: worker_handle,
@@ -378,8 +397,6 @@ impl Plugin for DfPlugin {
         }
     }
     fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
-        let t0 = Instant::now();
-
         let mut i = 0;
         let mut inputs = Vec::with_capacity(self.ch);
         let mut outputs = Vec::with_capacity(self.ch);
@@ -431,61 +448,11 @@ impl Plugin for DfPlugin {
             sleep(self.sleep_duration);
         }
 
-        let td = t0.elapsed();
-        let t_audio = sample_count as f32 / self.sr as f32;
-        let rtf = td.as_secs_f32() / t_audio;
-        if rtf >= 1. {
-            log::warn!(
-                "DF {} | Underrun detected (RTF: {:.2}). Processing too slow!",
-                self.id,
-                rtf
-            );
-            if self.proc_delay >= self.sr {
-                panic!(
-                    "DF {} | Processing too slow! Please upgrade your CPU. Try to decrease 'Max DF processing threshold (dB)'.",
-                    self.id,
-                );
-            }
-            self.proc_delay += self.frame_size;
-            self.t_proc_change = 0;
-            log::info!(
-                "DF {} | Increasing processing latency to {:.1}ms",
-                self.id,
-                self.proc_delay as f32 * 1000. / self.sr as f32
-            );
-            for o_ch in self.o_rx.lock().unwrap().iter_mut() {
-                for _ in 0..self.frame_size {
-                    o_ch.push_back(0f32)
-                }
-            }
-        } else if self.t_proc_change > 10 * self.sr / self.frame_size
-            && rtf < 0.5
-            && self.proc_delay
-                >= self.frame_size * (1 + self.control_hist.min_buffer_frames as usize)
-        {
-            // Reduce delay again
-            let dropped_samples = {
-                let o_q = &mut self.o_rx.lock().unwrap();
-                if o_q[0].len() < self.frame_size {
-                    false
-                } else {
-                    for o_q_ch in o_q.iter_mut().take(self.frame_size) {
-                        o_q_ch.pop_front().unwrap();
-                    }
-                    true
-                }
-            };
-            if dropped_samples {
-                self.proc_delay -= self.frame_size;
-                self.t_proc_change = 0;
-                log::info!(
-                    "DF {} | Decreasing processing latency to {:.1}ms",
-                    self.id,
-                    self.proc_delay as f32 * 1000. / self.sr as f32
-                );
+        for o_ch in self.o_rx.lock().unwrap().iter_mut() {
+            for _ in 0..self.frame_size {
+                o_ch.push_back(0f32)
             }
         }
-        self.t_proc_change += 1;
     }
 }
 
