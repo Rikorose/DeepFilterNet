@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, Write};
+use std::sync::Weak;
 use std::sync::{
     mpsc::{sync_channel, Receiver, SyncSender},
     Arc, Mutex, Once,
@@ -101,8 +102,8 @@ fn syslog_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> 
 }
 
 fn get_worker_fn(
-    inqueue: SampleQueue,
-    outqueue: SampleQueue,
+    inqueue: Weak<Mutex<Vec<VecDeque<f32>>>>,
+    outqueue: Weak<Mutex<Vec<VecDeque<f32>>>>,
     controls: ControlRecv,
     sleep_duration: Duration,
     id: String,
@@ -113,9 +114,15 @@ fn get_worker_fn(
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
 
-        let mut inframe_bufs = vec![];
-
         loop {
+            let Some(inqueue) = inqueue.upgrade() else {
+                break;
+            };
+
+            let Some(outqueue) = outqueue.upgrade() else {
+                break;
+            };
+
             if let Ok((c, v)) = controls.try_recv() {
                 log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
                 match c {
@@ -132,8 +139,7 @@ fn get_worker_fn(
                 let mut q = inqueue.lock().unwrap();
                 let mut inframes = vec![];
                 while q[0].len() >= df.hop_size {
-                    let mut inframe =
-                        inframe_bufs.pop().unwrap_or_else(|| Array2::zeros((df.ch, df.hop_size)));
+                    let mut inframe = Array2::zeros((df.ch, df.hop_size));
 
                     for (i_q_ch, mut i_ch) in q.iter_mut().zip(inframe.outer_iter_mut()) {
                         for i in i_ch.iter_mut() {
@@ -160,7 +166,6 @@ fn get_worker_fn(
                         .expect("Error during df::process");
 
                     let td_ms = t0.elapsed().as_secs_f32() * 1000.;
-
                     log::debug!(
                         "DF {} | Enhanced {:.1}ms frame. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
                         id,
@@ -177,8 +182,6 @@ fn get_worker_fn(
                     );
                     outframe.fill(0.0);
                 }
-
-                inframe_bufs.push(inframe);
 
                 let mut o_q = outqueue.lock().unwrap();
                 for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
@@ -246,8 +249,8 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
         let (control_tx, control_rx) = sync_channel(32);
 
         let worker_handle = thread::spawn(get_worker_fn(
-            Arc::clone(&i_tx),
-            Arc::clone(&o_rx),
+            Arc::downgrade(&i_tx),
+            Arc::downgrade(&o_rx),
             control_rx,
             sleep_duration,
             id.clone(),
@@ -446,12 +449,6 @@ impl Plugin for DfPlugin {
                 }
             }
             sleep(self.sleep_duration);
-        }
-
-        for o_ch in self.o_rx.lock().unwrap().iter_mut() {
-            for _ in 0..self.frame_size {
-                o_ch.push_back(0f32)
-            }
         }
     }
 }
