@@ -17,13 +17,19 @@ from df.config import config
 from df.model import ModelParams
 
 
-def get_device():
-    s = config("DEVICE", default="", section="train")
-    if s == "":
+def get_device(device: Optional[str] = None):
+    s = device or config("DEVICE", default="", section="train")
+    if not s:
         if torch.cuda.is_available():
-            DEVICE = torch.device("cuda:0")
-        else:
+            DEVICE = torch.device("cuda")
+        elif torch.mps.is_available():
+            DEVICE = torch.device("mps")
+        elif torch.xpu.is_available():
+            DEVICE = torch.device("xpu")
+        elif torch.cpu.is_available():
             DEVICE = torch.device("cpu")
+        else:
+            raise RuntimeError("No compute devices found")
     else:
         DEVICE = torch.device(s)
     return DEVICE
