@@ -45,6 +45,13 @@ cargo +nightly run -p df-demo --features ui --bin df-demo --release
 Download a pre-compiled deep-filter binary from the [release page](https://github.com/Rikorose/DeepFilterNet/releases/).
 You can use `deep-filter` to suppress noise in noisy .wav audio files. Currently, only wav files with a sampling rate of 48kHz are supported.
 
+#### Additional steps to follow after downloading the binary (MAC Only)
+1. Ensure the binary is executable: `chmod +x deep-filter-0.5.6-x86_64-apple-darwin`
+2. Either move the binary to a directory in your local path OR add the directory where you have downloaded the binary to your PATH. Step 3 does the former one, moves the binary to a directory in your local path
+3. `sudo mv deep-filter-0.5.6-x86_64-apple-darwin /usr/local/bin/deep-filter`: In addition to moving the binary to usr-local-bin, it also renames it to _deep-filter_.
+4. try doing `deep-filter -h` or `deep-filter --help`. If it says something like: _the developer cannot be verified_, try the following:
+5. Use the _xattr_ command to remove the quarantine attribute: `xattr -d com.apple.quarantine deep-filter`
+
 ```bash
 USAGE:
     deep-filter [OPTIONS] [FILES]...
