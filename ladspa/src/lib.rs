@@ -114,6 +114,20 @@ fn get_worker_fn(
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
 
+        {
+            let Some(outqueue) = outqueue.upgrade() else {
+                return;
+            };
+
+            // prefill buffer
+            let mut o_q = outqueue.lock().unwrap();
+            for o_q_ch in o_q.iter_mut() {
+                for _ in 0..df.hop_size {
+                    o_q_ch.push_back(0.0);
+                }
+            }
+        }
+
         loop {
             let Some(inqueue) = inqueue.upgrade() else {
                 break;
