@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, Write};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::Weak;
 use std::sync::{
     mpsc::{sync_channel, Receiver, SyncSender},
     Arc, Mutex, Once,
@@ -10,13 +12,13 @@ use std::time::{Duration, Instant};
 
 use df::tract::*;
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
-use ndarray::prelude::*;
+use ndarray::{prelude::*, OwnedRepr};
 use uuid::Uuid;
 
 static INIT_LOGGER: Once = Once::new();
 
-type SampleQueue = Arc<Mutex<Vec<VecDeque<f32>>>>;
-type ControlProd = SyncSender<(DfControl, f32)>;
+type AudioFrame = ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>>;
+type ControlProd = Sender<(DfControl, f32)>;
 type ControlRecv = Receiver<(DfControl, f32)>;
 #[cfg(feature = "dbus")]
 use ::{
@@ -48,25 +50,21 @@ const MIN_PROC_BUF_MIN: f32 = 0.;
 const MIN_PROC_BUF_MAX: f32 = 10.;
 
 struct DfPlugin {
-    i_tx: SampleQueue,
-    o_rx: SampleQueue,
+    raw_audio_queue: Vec<VecDeque<f32>>,
+    raw_audio_sender: SyncSender<AudioFrame>,
+    cleaned_audio_queue: Vec<VecDeque<f32>>,
+    cleaned_audio_receiver: Receiver<AudioFrame>,
     control_tx: ControlProd,
     id: String,
-    ch: usize,
-    sr: usize,
-    frame_size: usize,
-    proc_delay: usize,
-    t_proc_change: usize,
-    sleep_duration: Duration,
+    channel_count: usize,
+    hop_size: usize,
     control_hist: DfControlHistory,
-    _h: JoinHandle<()>, // Worker thread handle
     #[cfg(feature = "dbus")]
     _dbus: Option<(JoinHandle<()>, Arc<Event>)>, // dbus thread handle
 }
 
 const ID_MONO: u64 = 7843795;
 const ID_STEREO: u64 = 7843796;
-static mut MODEL: Option<DfTract> = None;
 
 fn log_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> io::Result<()> {
     let ts = buf.timestamp_millis();
@@ -103,20 +101,26 @@ fn syslog_format(buf: &mut env_logger::fmt::Formatter, record: &log::Record) -> 
     )
 }
 
+fn new_df_frame(df: &DfTract) -> AudioFrame {
+    Array2::zeros((df.ch, df.hop_size))
+}
+
 fn get_worker_fn(
-    inqueue: SampleQueue,
-    outqueue: SampleQueue,
+    raw_receiver: Receiver<AudioFrame>,
+    clean_sender: SyncSender<AudioFrame>,
+    channels: usize,
     controls: ControlRecv,
-    sleep_duration: Duration,
     id: String,
-) -> impl FnMut() {
+) -> impl FnMut() + Send {
     move || {
-        let mut df = unsafe { MODEL.clone().unwrap() };
-        let mut inframe = Array2::zeros((df.ch, df.hop_size));
-        let mut outframe = Array2::zeros((df.ch, df.hop_size));
+        let (mut df, _, _) = init_df(channels);
+
+        let mut outframe = new_df_frame(&df);
+
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
-        loop {
-            if let Ok((c, v)) = controls.try_recv() {
+
+        while let Ok(inframe) = raw_receiver.recv() {
+            while let Ok((c, v)) = controls.try_recv() {
                 log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
                 match c {
                     DfControl::AttenLim => df.set_atten_lim(v),
@@ -127,35 +131,13 @@ fn get_worker_fn(
                     _ => (),
                 }
             }
-            let got_samples = {
-                let mut q = inqueue.lock().unwrap();
-                if q[0].len() >= df.hop_size {
-                    for (i_q_ch, mut i_ch) in q.iter_mut().zip(inframe.outer_iter_mut()) {
-                        for i in i_ch.iter_mut() {
-                            *i = i_q_ch.pop_front().unwrap();
-                        }
-                    }
-                    true
-                } else {
-                    false
-                }
-            };
-            if !got_samples {
-                sleep(sleep_duration);
-                continue;
-            }
+
             let t0 = Instant::now();
+
             let lsnr = df
                 .process(inframe.view(), outframe.view_mut())
                 .expect("Error during df::process");
-            {
-                let mut o_q = outqueue.lock().unwrap();
-                for (o_ch, o_q_ch) in outframe.outer_iter().zip(o_q.iter_mut()) {
-                    for &o in o_ch.iter() {
-                        o_q_ch.push_back(o)
-                    }
-                }
-            }
+
             let td_ms = t0.elapsed().as_secs_f32() * 1000.;
             log::debug!(
                 "DF {} | Enhanced {:.1}ms frame. SNR: {:>5.1}, Processing time: {:>4.1}ms, RTF: {:.2}",
@@ -165,26 +147,25 @@ fn get_worker_fn(
                 td_ms,
                 td_ms / t_audio_ms
             );
+
+            if clean_sender.send(outframe).is_err() {
+                break;
+            }
+
+            outframe = inframe;
         }
+
+        println!("thread exiting")
     }
 }
 
 /// Initialize DF model and returns sample rate and frame size
-fn init_df(channels: usize) -> (usize, usize) {
-    unsafe {
-        if let Some(m) = MODEL.as_ref() {
-            if m.ch == channels {
-                return (m.sr, m.hop_size);
-            }
-        }
-    }
-
+fn init_df(channels: usize) -> (DfTract, usize, usize) {
     let df_params = DfParams::default();
     let r_params = RuntimeParams::default_with_ch(channels);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     let (sr, frame_size) = (df.sr, df.hop_size);
-    unsafe { MODEL = Some(df) };
-    (sr, frame_size)
+    (df, sr, frame_size)
 }
 
 fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
@@ -206,28 +187,21 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
                 .init();
         });
 
-        let (m_sr, hop) = init_df(channels);
+        let (_, m_sr, hop_size) = init_df(channels);
         assert_eq!(m_sr as u64, sample_rate, "Unsupported sample rate");
-        let i_tx = Arc::new(Mutex::new(vec![VecDeque::with_capacity(hop * 4); channels]));
-        let o_rx = Arc::new(Mutex::new(vec![VecDeque::with_capacity(hop * 4); channels]));
-        let frame_size = hop;
-        let proc_delay = hop;
-        // Add a buffer of 1 frame to compensate processing delays causing underruns
-        for o_ch in o_rx.lock().unwrap().iter_mut() {
-            for _ in 0..proc_delay {
-                o_ch.push_back(0f32)
-            }
-        }
-        let sleep_duration = Duration::from_secs_f32(hop as f32 / m_sr as f32 / 5.);
+
         let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
 
-        let (control_tx, control_rx) = sync_channel(32);
+        let (control_tx, control_rx) = channel();
 
-        let worker_handle = thread::spawn(get_worker_fn(
-            Arc::clone(&i_tx),
-            Arc::clone(&o_rx),
+        let (raw_tx, raw_rx) = sync_channel(128);
+        let (clean_tx, clean_rx) = sync_channel(128);
+
+        thread::spawn(get_worker_fn(
+            raw_rx,
+            clean_tx,
+            channels,
             control_rx,
-            sleep_duration,
             id.clone(),
         ));
         let hist = DfControlHistory::default();
@@ -236,19 +210,17 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
             &id,
             t0.elapsed().as_secs_f32() * 1000.
         );
+        dbg!(&channels);
         DfPlugin {
-            i_tx,
-            o_rx,
+            raw_audio_queue: vec![VecDeque::new(); channels],
+            cleaned_audio_queue: vec![VecDeque::from(vec![0.0; hop_size * 2]); channels],
+            raw_audio_sender: raw_tx,
+            cleaned_audio_receiver: clean_rx,
             control_tx,
-            ch: channels,
-            sr: m_sr,
+            channel_count: channels,
+            hop_size,
             id,
-            frame_size,
-            proc_delay,
-            t_proc_change: 0,
-            sleep_duration,
             control_hist: hist,
-            _h: worker_handle,
             #[cfg(feature = "dbus")]
             _dbus: None,
         }
@@ -357,6 +329,7 @@ impl Plugin for DfPlugin {
             log::debug!("dbus thread spawned")
         }
     }
+
     fn deactivate(&mut self) {
         log::info!("DF {} | deactivate", self.id);
         #[cfg(feature = "dbus")]
@@ -377,25 +350,24 @@ impl Plugin for DfPlugin {
             }
         }
     }
-    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
-        let t0 = Instant::now();
 
+    fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
         let mut i = 0;
-        let mut inputs = Vec::with_capacity(self.ch);
-        let mut outputs = Vec::with_capacity(self.ch);
-        for _ in 0..self.ch {
-            inputs.push(ports[i].unwrap_audio());
+        let mut input_ports = Vec::with_capacity(self.channel_count);
+        let mut output_ports = Vec::with_capacity(self.channel_count);
+        for _ in 0..self.channel_count {
+            input_ports.push(ports[i].unwrap_audio());
             i += 1;
         }
-        for _ in 0..self.ch {
-            outputs.push(ports[i].unwrap_audio_mut());
+        for _ in 0..self.channel_count {
+            output_ports.push(ports[i].unwrap_audio_mut());
             i += 1;
         }
         for p in ports[i..].iter() {
             let &v = p.unwrap_control();
             let c = DfControl::from_port_name(p.port.name);
             if c == DfControl::AttenLim && v >= 100. {
-                for (i_ch, o_ch) in inputs.iter().zip(outputs.iter_mut()) {
+                for (i_ch, o_ch) in input_ports.iter().zip(output_ports.iter_mut()) {
                     for (&i, o) in i_ch.iter().zip(o_ch.iter_mut()) {
                         *o = i
                     }
@@ -407,85 +379,56 @@ impl Plugin for DfPlugin {
             }
         }
 
-        {
-            let i_q = &mut self.i_tx.lock().unwrap();
-            for (i_ch, i_q_ch) in inputs.iter().zip(i_q.iter_mut()) {
-                for &i in i_ch.iter() {
-                    i_q_ch.push_back(i)
-                }
+        for (port_buffer, queue_buffer) in input_ports.iter().zip(self.raw_audio_queue.iter_mut()) {
+            assert_eq!(port_buffer.len(), sample_count);
+            for &i in port_buffer.iter() {
+                queue_buffer.push_back(i);
             }
         }
 
-        'outer: loop {
+        while self.raw_audio_queue[0].len() >= self.hop_size {
+            let mut frame = Array2::zeros((self.channel_count, self.hop_size));
+            for (mut frame_channel, queue_channel) in
+                frame.outer_iter_mut().zip(self.raw_audio_queue.iter_mut())
             {
-                let o_q = &mut self.o_rx.lock().unwrap();
-                if o_q[0].len() >= sample_count {
-                    for (o_q_ch, o_ch) in o_q.iter_mut().zip(outputs.iter_mut()) {
-                        for o in o_ch.iter_mut() {
-                            *o = o_q_ch.pop_front().unwrap();
-                        }
-                    }
-                    break 'outer;
+                for i in frame_channel.iter_mut() {
+                    *i = queue_channel.pop_front().unwrap();
                 }
             }
-            sleep(self.sleep_duration);
+            if let Err(e) = self.raw_audio_sender.try_send(frame) {
+                log::warn!(
+                    "DF {} | Processing thread is overloaded! Dropping frame",
+                    self.id,
+                );
+                dbg!(&e);
+                dbg!(self.hop_size);
+            }
         }
 
-        let td = t0.elapsed();
-        let t_audio = sample_count as f32 / self.sr as f32;
-        let rtf = td.as_secs_f32() / t_audio;
-        if rtf >= 1. {
-            log::warn!(
-                "DF {} | Underrun detected (RTF: {:.2}). Processing too slow!",
-                self.id,
-                rtf
-            );
-            if self.proc_delay >= self.sr {
-                panic!(
-                    "DF {} | Processing too slow! Please upgrade your CPU. Try to decrease 'Max DF processing threshold (dB)'.",
-                    self.id,
-                );
-            }
-            self.proc_delay += self.frame_size;
-            self.t_proc_change = 0;
-            log::info!(
-                "DF {} | Increasing processing latency to {:.1}ms",
-                self.id,
-                self.proc_delay as f32 * 1000. / self.sr as f32
-            );
-            for o_ch in self.o_rx.lock().unwrap().iter_mut() {
-                for _ in 0..self.frame_size {
-                    o_ch.push_back(0f32)
+        while let Ok(frame) = self.cleaned_audio_receiver.try_recv() {
+            for (frame_channel, queue_channel) in
+                frame.outer_iter().zip(self.cleaned_audio_queue.iter_mut())
+            {
+                for &o in frame_channel.iter() {
+                    queue_channel.push_back(o);
                 }
-            }
-        } else if self.t_proc_change > 10 * self.sr / self.frame_size
-            && rtf < 0.5
-            && self.proc_delay
-                >= self.frame_size * (1 + self.control_hist.min_buffer_frames as usize)
-        {
-            // Reduce delay again
-            let dropped_samples = {
-                let o_q = &mut self.o_rx.lock().unwrap();
-                if o_q[0].len() < self.frame_size {
-                    false
-                } else {
-                    for o_q_ch in o_q.iter_mut().take(self.frame_size) {
-                        o_q_ch.pop_front().unwrap();
-                    }
-                    true
-                }
-            };
-            if dropped_samples {
-                self.proc_delay -= self.frame_size;
-                self.t_proc_change = 0;
-                log::info!(
-                    "DF {} | Decreasing processing latency to {:.1}ms",
-                    self.id,
-                    self.proc_delay as f32 * 1000. / self.sr as f32
-                );
             }
         }
-        self.t_proc_change += 1;
+
+        for (queue_channel, port_channel) in
+            self.cleaned_audio_queue.iter_mut().zip(output_ports.iter_mut())
+        {
+            assert_eq!(port_channel.len(), sample_count);
+            for o in port_channel.iter_mut() {
+                *o = queue_channel.pop_front().unwrap_or_default();
+            }
+        }
+
+        while self.cleaned_audio_queue[0].len() > sample_count.max(self.hop_size) {
+            for channel in self.cleaned_audio_queue.iter_mut() {
+                channel.pop_front().unwrap();
+            }
+        }
     }
 }
 
