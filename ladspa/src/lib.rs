@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, Write};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Weak;
 use std::sync::{
     mpsc::{sync_channel, Receiver, SyncSender},
@@ -17,7 +18,7 @@ use uuid::Uuid;
 static INIT_LOGGER: Once = Once::new();
 
 type AudioFrame = ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>>;
-type ControlProd = SyncSender<(DfControl, f32)>;
+type ControlProd = Sender<(DfControl, f32)>;
 type ControlRecv = Receiver<(DfControl, f32)>;
 #[cfg(feature = "dbus")]
 use ::{
@@ -118,19 +119,19 @@ fn get_worker_fn(
 
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
 
-        if let Ok((c, v)) = controls.try_recv() {
-            log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
-            match c {
-                DfControl::AttenLim => df.set_atten_lim(v),
-                DfControl::PfBeta => df.set_pf_beta(v),
-                DfControl::MinThreshDb => df.min_db_thresh = v,
-                DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
-                DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
-                _ => (),
-            }
-        }
-
         while let Ok(inframe) = raw_receiver.recv() {
+            while let Ok((c, v)) = controls.try_recv() {
+                log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
+                match c {
+                    DfControl::AttenLim => df.set_atten_lim(v),
+                    DfControl::PfBeta => df.set_pf_beta(v),
+                    DfControl::MinThreshDb => df.min_db_thresh = v,
+                    DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
+                    DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                    _ => (),
+                }
+            }
+
             let t0 = Instant::now();
 
             let lsnr = df
@@ -191,7 +192,7 @@ fn get_new_df(channels: usize) -> impl Fn(&PluginDescriptor, u64) -> DfPlugin {
 
         let id = Uuid::new_v4().as_urn().to_string().split_at(33).1.to_string();
 
-        let (control_tx, control_rx) = sync_channel(32);
+        let (control_tx, control_rx) = channel();
 
         let (raw_tx, raw_rx) = sync_channel(128);
         let (clean_tx, clean_rx) = sync_channel(128);
