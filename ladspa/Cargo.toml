@@ -24,5 +24,5 @@ ndarray = "^0.15"
 env_logger = "0.10"
 uuid = { version = "1.2.1", features = ["v4", "fast-rng"] }
 log = { version = "0.4", features = ["std"] }
-zbus = { version = "3.6", optional = true }
+zbus = { version = "4.3", optional = true }
 event-listener = { version = "2.5", optional = true }
