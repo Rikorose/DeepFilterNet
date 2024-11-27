@@ -1,4 +1,4 @@
-librosa==0.10.2
+librosa==0.10.2.post1
 pandas
 tqdm
 soundfile
