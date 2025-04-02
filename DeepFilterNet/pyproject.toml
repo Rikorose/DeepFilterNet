@@ -23,10 +23,10 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-deepfilterlib = { path = "../pyDF/" }
-deepfilterdataloader = { path = "../pyDF-data/", optional = true }
-python = ">=3.8,<4.0"
-numpy = ">=1.22,<2.0"
+deepfilterlib = { url = "https://raw.githubusercontent.com/PedroRuizCode/DeepFilterNet/main/target/wheels/DeepFilterLib-0.5.7rc0-cp311-cp311-manylinux_2_35_x86_64.whl" }
+deepfilterdataloader = { url = "https://raw.githubusercontent.com/PedroRuizCode/DeepFilterNet/main/target/wheels/DeepFilterDataLoader-0.5.7rc0-cp311-cp311-manylinux_2_35_x86_64.whl", optional = true }
+python = ">=3.11,<4.0"
+numpy = ">=2.0,<2.5"
 loguru = ">=0.5"
 appdirs = "^1.4"
 requests = "^2.27"
