@@ -2,7 +2,7 @@
 name = "deep-filter-ladspa"
 version = "0.5.7-pre"
 authors = ["Hendrik Schröter"]
-edition = "2021"
+edition = "2024"
 license = "MIT/Apache-2.0"
 
 [lib]
@@ -19,7 +19,7 @@ deep_filter = { path = "../libDF", default-features = false, features = [
   "use-jemalloc",
   "default-model",
 ] }
-ladspa = "0.3.4"
+ladspa = {git = "https://github.com/xobs/ladspa.rs", branch = "bitflags-and-null-pointer-fix"}
 ndarray = "^0.15"
 env_logger = "0.10"
 uuid = { version = "1.2.1", features = ["v4", "fast-rng"] }

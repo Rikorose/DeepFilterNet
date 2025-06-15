@@ -43,7 +43,7 @@ impl DfParams {
         let mut config = Ini::new();
         for e in archive.entries().context("Could not extract models from tar file.")? {
             let mut file = e.context("Could not open model tar entry.")?;
-            let path = file.path().unwrap();
+            let path = file.path()?;
             if path.ends_with("enc.onnx") {
                 file.read_to_end(&mut enc)?;
             } else if path.ends_with("erb_dec.onnx") {
@@ -69,25 +69,30 @@ impl DfParams {
         })
     }
 }
+
 impl Default for DfParams {
-    #[allow(unreachable_code)]
     fn default() -> Self {
+        #[cfg(not(any(feature = "default-model-ll", feature = "default-model")))]
+        panic!("Not compiled with a default model");
         #[cfg(feature = "default-model-ll")]
         {
             log::debug!("Loading model DeepFilterNet3_ll_onnx.tar.gz");
-            return DfParams::from_bytes(include_bytes!(
-                "../../models/DeepFilterNet3_ll_onnx.tar.gz"
-            ))
-            .expect("Could not load model config");
+            match DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz"))
+            {
+                Ok(val) => return val,
+                Err(e) => {
+                    log::error!("Unable to load model: {e}");
+                    eprintln!("Unable to load model: {e}");
+                    panic!("Could not load model config");
+                }
+            }
         }
-        #[cfg(feature = "default-model")]
+        #[cfg(all(feature = "default-model", not(feature = "default-model-ll")))]
         {
             log::debug!("Loading model DeepFilterNet3_onnx.tar.gz");
             DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"))
                 .expect("Could not load model config")
         }
-        #[cfg(not(feature = "default-model"))]
-        panic!("Not compiled with a default model")
     }
 }
 
@@ -173,7 +178,7 @@ impl RuntimeParams {
         self.reduce_mask = red;
         self
     }
-    pub fn default_with_ch(channels: usize) -> Self {
+    pub const fn default_with_ch(channels: usize) -> Self {
         RuntimeParams {
             n_ch: channels,
             post_filter: false,
