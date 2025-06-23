@@ -22,7 +22,7 @@ class DF:
         """
         ...
 
-    def analysis(self, input: ndarray) -> ndarray:
+    def analysis(self, input: ndarray, reset: bool = True) -> ndarray:
         """Analysis of a time-domain signal.
 
         Args:
@@ -34,7 +34,7 @@ class DF:
         """
         ...
 
-    def synthesis(self, input: ndarray) -> ndarray:
+    def synthesis(self, input: ndarray, reset: bool = True) -> ndarray:
         """Synthesis of a frequency-domain signal.
 
         Args:
