@@ -91,6 +91,20 @@ wasm = [
   "dep:console_error_panic_hook",
   "dep:js-sys",
 ]
+
+ios = [
+  "tract",
+  "default-model",
+  "dep:ndarray",
+]
+
+android = [
+  "tract",
+  "default-model",
+  "dep:ndarray",
+  'dep:jni',
+  "dep:log",
+]
 hdf5-static = ["hdf5?/static"]
 
 [dependencies]
@@ -131,6 +145,8 @@ getrandom = { version = "0.2", features = ["js"], optional = true }
 console_error_panic_hook = { version = "0.1.1", optional = true }
 js-sys = { version = "0.3", optional = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21.1", optional = true }
 
 [target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_env = "musl"), not(target_arch = "riscv64")))'.dependencies]
 jemallocator = { version = "0.5.0", optional = true }

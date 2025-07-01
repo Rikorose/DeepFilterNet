@@ -1,0 +1,68 @@
+name: Build and upload Android artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    env:
+      RUST_LOG: info
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Install Cargo NDK
+        run: cargo install cargo-ndk
+
+      - name: Add Android targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+
+      - name: Build Android libraries
+        run: cargo ndk -t armeabi-v7a -t arm64-v8a -t x86 -t x86_64 -o android-libs-build build --features android --release
+        working-directory: ./libDF
+
+      - name: Verify built .so files 16 kb alignment
+        run: |
+          LLVM_READELF_PATH=$(find $ANDROID_NDK_HOME -name llvm-readelf | head -n 1)
+          $LLVM_READELF_PATH -l android-libs-build/arm64-v8a/libdf.so | grep 'R E' | grep '0x4000$' || (echo "Alignment check failed for arm64-v8a" && exit 1)
+        working-directory: ./libDF
+
+      - name: Upload native Android libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-android-libraries
+          path: | 
+            ./libDF/android-libs-build/arm64-v8a/libdf.so
+            ./libDF/android-libs-build/armeabi-v7a/libdf.so
+            ./libDF/android-libs-build/x86/libdf.so
+            ./libDF/android-libs-build/x86_64/libdf.so
+
+      - name: Copy and rename DeepFilter model
+        run: cp ./models/DeepFilterNet3_onnx_mobile.tar.gz ./models/deep-filter-mobile-model     
+
+      - name: Upload DeepFilter mobile model
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-filter-mobile-model
+          path: ./models/deep-filter-mobile-model
+          
+      - name: Clean up build artifacts
+        run: rm -rf ./libDF/android-libs-build
+
+      - name: Clean up temporary model file
+        run: rm -f ./models/deep-filter-mobile-model

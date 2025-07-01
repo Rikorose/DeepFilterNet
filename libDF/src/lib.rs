@@ -36,6 +36,12 @@ pub mod tract;
 #[cfg(feature = "wasm")]
 mod wasm;
 
+#[cfg(feature = "android")]
+mod android;
+
+#[cfg(feature = "ios")]
+mod ios;
+
 #[cfg(all(feature = "wav-utils", not(feature = "dataset")))]
 pub mod wav_utils;
 

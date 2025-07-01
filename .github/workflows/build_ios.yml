@@ -1,0 +1,47 @@
+name: Build as iOS xcframework
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Add iOS targets
+        run: |
+          rustup target add aarch64-apple-ios
+          rustup target add x86_64-apple-ios
+          rustup target add aarch64-apple-ios-sim
+
+      - name: Clean
+        working-directory: ./libDF
+        run: cargo clean
+
+      - name: Build iOS libraries
+        run: . ios_xcframework.sh
+        working-directory: ./libDF
+
+      - name: Zip XCFramework
+        working-directory: ./Binaries
+        run: |
+          zip -r DeepFilterNet.xcframework.zip DeepFilterNet.xcframework
+
+      - name: Upload framework
+        uses: actions/upload-artifact@v4
+        with:
+          name: Binaries
+          path: ./Binaries/DeepFilterNet.xcframework.zip
