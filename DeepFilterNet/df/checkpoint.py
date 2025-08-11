@@ -74,7 +74,7 @@ def read_cp(
         epoch = get_epoch(latest)
     if log:
         logger.info("Found checkpoint {} with epoch {}".format(latest, epoch))
-    latest = torch.load(latest, map_location="cpu")
+    latest = torch.load(latest, map_location="cpu", weights_only=False)
     latest = {k.replace("clc", "df"): v for k, v in latest.items()}
     if blacklist:
         reg = re.compile("".join(f"({b})|" for b in blacklist)[:-1])
