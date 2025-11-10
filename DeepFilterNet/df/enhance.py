@@ -188,7 +188,7 @@ def init_df(
 
 
 def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor, Tensor, Tensor]:
-    spec = df.analysis(audio.numpy())  # [C, Tf] -> [C, Tf, F]
+    spec = df.analysis(audio.detach().cpu().numpy()) # [C, Tf] -> [C, Tf, F]
     a = get_norm_alpha(False)
     erb_fb = df.erb_widths()
     with warnings.catch_warnings():
