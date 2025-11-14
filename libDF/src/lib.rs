@@ -1,43 +1,12 @@
-#![allow(dead_code)]
-
-use std::ops::MulAssign;
-use std::sync::Arc;
-use std::vec::Vec;
-
 use itertools::izip;
+pub use num_complex::Complex32;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
-
-pub type Complex32 = num_complex::Complex32;
+use std::{ops::MulAssign, sync::Arc, vec::Vec};
 
 pub const MEAN_NORM_INIT: [f32; 2] = [-60., -90.];
 pub const UNIT_NORM_INIT: [f32; 2] = [0.001, 0.0001];
 
-#[cfg(any(feature = "transforms", feature = "dataset"))]
-pub mod transforms;
-#[cfg(feature = "dataset")]
-#[path = ""]
-mod reexport_dataset_modules {
-    pub mod augmentations;
-    pub mod dataloader;
-    pub mod dataset;
-    pub mod hdf5_key_cache;
-    pub mod util;
-    pub mod wav_utils;
-}
-#[cfg(feature = "dataset")]
-pub use reexport_dataset_modules::*;
-#[cfg(feature = "capi")]
-mod capi;
-#[cfg(feature = "logging")]
-pub mod logging;
-#[cfg(feature = "tract")]
 pub mod tract;
-
-#[cfg(feature = "wasm")]
-mod wasm;
-
-#[cfg(all(feature = "wav-utils", not(feature = "dataset")))]
-pub mod wav_utils;
 
 pub(crate) fn freq2erb(freq_hz: f32) -> f32 {
     9.265 * (freq_hz / (24.7 * 9.265)).ln_1p()
@@ -153,11 +122,6 @@ impl DFState {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.analysis_mem.fill(0.);
-        self.synthesis_mem.fill(0.);
-    }
-
     pub fn process_frame(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), self.frame_size);
         debug_assert_eq!(output.len(), self.frame_size);
@@ -192,6 +156,7 @@ impl DFState {
         }
         self.mean_norm_state = state;
     }
+
     pub fn init_unit_norm_state(&mut self, nb_freqs: usize) {
         let min = UNIT_NORM_INIT[0];
         let max = UNIT_NORM_INIT[1];
@@ -216,10 +181,6 @@ impl DFState {
         band_unit_norm(output, &mut self.unit_norm_state, alpha)
     }
 
-    pub fn feat_cplx_t(&mut self, input: &[Complex32], alpha: f32, output: &mut [f32]) {
-        band_unit_norm_t(input, &mut self.unit_norm_state, alpha, output)
-    }
-
     pub fn apply_mask(&self, output: &mut [Complex32], gains: &[f32]) {
         apply_interp_band_gain(output, gains, &self.erb)
     }
@@ -228,16 +189,6 @@ impl DFState {
 impl Default for DFState {
     fn default() -> Self {
         Self::new(48000, 960, 480, 32, 2)
-    }
-}
-
-pub fn band_mean_norm_freq(xs: &[Complex32], xout: &mut [f32], state: &mut [f32], alpha: f32) {
-    debug_assert_eq!(xs.len(), state.len());
-    debug_assert_eq!(xout.len(), state.len());
-    for (x, s, xo) in izip!(xs.iter(), state.iter_mut(), xout.iter_mut()) {
-        let xabs = x.norm();
-        *s = xabs * (1. - alpha) + *s * alpha;
-        *xo = xabs - *s;
     }
 }
 
@@ -294,23 +245,6 @@ pub fn compute_band_corr(out: &mut [f32], x: &[Complex32], p: &[Complex32], erb_
     }
 }
 
-pub fn band_compr(out: &mut [f32], x: &[f32], erb_fb: &[usize]) {
-    for y in out.iter_mut() {
-        *y = 0.0;
-    }
-    debug_assert_eq!(erb_fb.len(), out.len());
-
-    let mut bcsum = 0;
-    for (&band_size, out_b) in erb_fb.iter().zip(out.iter_mut()) {
-        let k = 1. / band_size as f32;
-        for j in 0..band_size {
-            let idx = bcsum + j;
-            *out_b += x[idx] * k;
-        }
-        bcsum += band_size;
-    }
-}
-
 pub fn apply_interp_band_gain<T>(out: &mut [T], band_e: &[f32], erb_fb: &[usize])
 where
     T: MulAssign<f32>,
@@ -320,28 +254,6 @@ where
         for j in 0..band_size {
             let idx = bcsum + j;
             out[idx] *= b;
-        }
-        bcsum += band_size;
-    }
-}
-
-fn interp_band_gain(out: &mut [f32], band_e: &[f32], erb_fb: &[usize]) {
-    let mut bcsum = 0;
-    for (&band_size, &b) in erb_fb.iter().zip(band_e.iter()) {
-        for j in 0..band_size {
-            let idx = bcsum + j;
-            out[idx] = b;
-        }
-        bcsum += band_size;
-    }
-}
-
-fn apply_band_gain(out: &mut [Complex32], band_e: &[f32], erb_fb: &[usize]) {
-    let mut bcsum = 0;
-    for (&band_size, b) in erb_fb.iter().zip(band_e.iter()) {
-        for j in 0..band_size {
-            let idx = bcsum + j;
-            out[idx] *= *b;
         }
         bcsum += band_size;
     }
@@ -400,7 +312,7 @@ fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFSt
         .process_with_scratch(input, &mut x, &mut state.synthesis_scratch)
     {
         Err(realfft::FftError::InputValues(_, _)) => (),
-        Err(e) => panic!("Error during fft_inverse: {:?}", e),
+        Err(e) => panic!("Error during fft_inverse: {e:?}"),
         Ok(_) => (),
     }
     apply_window_in_place(&mut x, &state.window);
@@ -424,14 +336,6 @@ fn frame_synthesis(input: &mut [Complex32], output: &mut [f32], state: &mut DFSt
         // Override left shifted buffer
         *mem = xi;
     }
-}
-
-fn apply_window(xs: &[f32], window: &[f32]) -> Vec<f32> {
-    let mut out = vec![0.; window.len()];
-    for (&x, &w, o) in izip!(xs.iter(), window.iter(), out.iter_mut()) {
-        *o = x * w;
-    }
-    out
 }
 
 fn apply_window_in_place<'a, I>(xs: &mut [f32], window: I)
@@ -470,158 +374,21 @@ pub fn post_filter(noisy: &[Complex32], enh: &mut [Complex32], beta: f32) {
     }
 }
 
-pub(crate) struct NonNan(f32);
-
-impl NonNan {
-    fn new(val: f32) -> Option<NonNan> {
-        if val.is_nan() {
-            None
-        } else {
-            Some(NonNan(val))
-        }
-    }
-    fn get(&self) -> f32 {
-        self.0
-    }
-}
-
-pub fn find_max<'a, I>(vals: I) -> Option<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(f32::MIN, |acc, v| {
-        let nonnan: NonNan = match NonNan::new(*v) {
-            None => return None,
-            Some(x) => x,
-        };
-        Some(nonnan.get().max(acc))
-    })
-}
-
-pub fn find_max_abs<'a, I>(vals: I) -> Option<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(0., |acc, v| {
-        let nonnan: NonNan = match NonNan::new(v.abs()) {
-            None => return None,
-            Some(x) => x,
-        };
-        Some(nonnan.get().max(acc))
-    })
-}
-
-pub fn find_min<'a, I>(vals: I) -> Option<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(f32::MAX, |acc, v| {
-        let nonnan: NonNan = match NonNan::new(*v) {
-            None => return None,
-            Some(x) => x,
-        };
-        Some(nonnan.get().min(acc))
-    })
-}
-
-pub fn find_min_abs<'a, I>(vals: I) -> Option<f32>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    vals.into_iter().try_fold(0., |acc, v| {
-        let nonnan: NonNan = match NonNan::new(v.abs()) {
-            None => return None,
-            Some(x) => x,
-        };
-        Some(nonnan.get().min(acc))
-    })
-}
-
-pub fn argmax<'a, I>(vals: I) -> Option<usize>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut index = 0;
-    let mut high = f32::MIN;
-    vals.into_iter().enumerate().for_each(|(i, v)| {
-        if v > &high {
-            high = *v;
-            index = i;
-        }
-    });
-    Some(index)
-}
-
-pub fn argmax_abs<'a, I>(vals: I) -> Option<usize>
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut index = 0;
-    let mut high = f32::MIN;
-    vals.into_iter().enumerate().for_each(|(i, v)| {
-        if v > &high {
-            high = v.abs();
-            index = i;
-        }
-    });
-    Some(index)
-}
-
-pub fn rms<'a, I>(vals: I) -> f32
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut n = 0;
-    let pow_sum = vals.into_iter().fold(0., |acc, v| {
-        n += 1;
-        acc + v.powi(2)
-    });
-    (pow_sum / n as f32).sqrt()
-}
-pub fn rms_v<I>(vals: I) -> f32
-where
-    I: IntoIterator<Item = f32>,
-{
-    let mut n = 0;
-    let pow_sum = vals.into_iter().fold(0., |acc, v| {
-        n += 1;
-        acc + v.powi(2)
-    });
-    (pow_sum / n as f32).sqrt()
-}
-
-pub fn mean<'a, I>(vals: I) -> f32
-where
-    I: IntoIterator<Item = &'a f32>,
-{
-    let mut n = 0;
-    let sum = vals.into_iter().fold(0., |acc, v| {
-        n += 1;
-        acc + v
-    });
-    sum / n as f32
-}
-
-pub fn median<T>(x: &mut [T]) -> T
-where
-    T: PartialOrd<T> + Copy,
-{
-    if x.len() == 1 {
-        return x[0];
-    }
-    if x.is_empty() {
-        panic!("Empty input slice");
-    }
-    x.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = x.len() / 2;
-    x[mid]
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
     use rand::distributions::{Distribution, Uniform};
 
-    use super::*;
+    fn apply_band_gain(out: &mut [Complex32], band_e: &[f32], erb_fb: &[usize]) {
+        let mut bcsum = 0;
+        for (&band_size, b) in erb_fb.iter().zip(band_e.iter()) {
+            for j in 0..band_size {
+                let idx = bcsum + j;
+                out[idx] *= *b;
+            }
+            bcsum += band_size;
+        }
+    }
 
     #[test]
     fn test_erb_inout() {

@@ -1,22 +1,22 @@
-use std::fs::File;
-use std::io::{Cursor, Read};
-use std::path::{Path, PathBuf};
-#[cfg(feature = "timings")]
-use std::time::Instant;
-
-use anyhow::{bail, Context, Result};
+use crate::DFState;
+use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use ini::Ini;
 use ndarray::{prelude::*, Axis};
+use num_complex::Complex32;
+use std::{
+    fs::File,
+    io::{Cursor, Read},
+    path::PathBuf,
+};
 use tar::Archive;
-use tract_core::internal::tract_itertools::izip;
-use tract_core::internal::tract_smallvec::alloc::collections::VecDeque;
-use tract_core::ops;
-use tract_core::prelude::*;
+use tract_core::{
+    internal::{tract_itertools::izip, tract_smallvec::alloc::collections::VecDeque},
+    ops,
+    prelude::*,
+};
 use tract_onnx::{prelude::*, tract_hir::shapefactoid};
 use tract_pulse::{internal::ToDim, model::*};
-
-use crate::*;
 
 #[derive(Clone)]
 pub struct DfParams {
@@ -24,16 +24,25 @@ pub struct DfParams {
     enc: Vec<u8>,
     erb_dec: Vec<u8>,
     df_dec: Vec<u8>,
+    model_path: Option<PathBuf>,
 }
 
 impl DfParams {
-    pub fn new(tar_file: PathBuf) -> Result<Self> {
-        let file = File::open(tar_file).context("Could not open model tar file.")?;
-        Self::from_targz(file)
+    pub fn model_path(&self) -> Option<PathBuf> {
+        self.model_path.clone()
     }
+
+    pub fn new(tar_file: PathBuf) -> Result<Self> {
+        let file = File::open(&tar_file).context("Could not open model tar file.")?;
+        let mut params = Self::from_targz(file)?;
+        params.model_path = Some(tar_file);
+        Ok(params)
+    }
+
     pub fn from_bytes(tar_buf: &[u8]) -> Result<Self> {
         Self::from_targz(tar_buf)
     }
+
     fn from_targz<R: Read>(f: R) -> Result<Self> {
         let tar = GzDecoder::new(f);
         let mut archive = Archive::new(tar);
@@ -43,7 +52,7 @@ impl DfParams {
         let mut config = Ini::new();
         for e in archive.entries().context("Could not extract models from tar file.")? {
             let mut file = e.context("Could not open model tar entry.")?;
-            let path = file.path().unwrap();
+            let path = file.path()?;
             if path.ends_with("enc.onnx") {
                 file.read_to_end(&mut enc)?;
             } else if path.ends_with("erb_dec.onnx") {
@@ -56,51 +65,21 @@ impl DfParams {
             } else if path.ends_with("version.txt") {
                 let mut version = String::new();
                 file.read_to_string(&mut version).expect("Could not read version.txt");
-                log::info!("Loading model with id: {}", version);
+                log::debug!("Loading model with id: {version}");
             } else {
-                log::warn!("Found non-matching item in model tar file: {:?}", path)
+                log::warn!("Found non-matching item in model tar file: {path:?}")
             }
         }
-        Ok(Self {
-            config,
-            enc,
-            erb_dec,
-            df_dec,
-        })
-    }
-}
-impl Default for DfParams {
-    #[allow(unreachable_code)]
-    fn default() -> Self {
-        #[cfg(feature = "default-model-ll")]
-        {
-            log::debug!("Loading model DeepFilterNet3_ll_onnx.tar.gz");
-            return DfParams::from_bytes(include_bytes!(
-                "../../models/DeepFilterNet3_ll_onnx.tar.gz"
-            ))
-            .expect("Could not load model config");
-        }
-        #[cfg(feature = "default-model")]
-        {
-            log::debug!("Loading model DeepFilterNet3_onnx.tar.gz");
-            DfParams::from_bytes(include_bytes!("../../models/DeepFilterNet3_onnx.tar.gz"))
-                .expect("Could not load model config")
-        }
-        #[cfg(not(feature = "default-model"))]
-        panic!("Not compiled with a default model")
+        Ok(Self { config, enc, erb_dec, df_dec, model_path: None })
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum ReduceMask {
+    #[default]
     NONE = 0,
     MAX = 1,
     MEAN = 2,
-}
-impl Default for ReduceMask {
-    fn default() -> Self {
-        ReduceMask::NONE
-    }
 }
 impl TryFrom<i32> for ReduceMask {
     type Error = ();
@@ -134,7 +113,7 @@ impl RuntimeParams {
         max_db_df_thresh: f32,
         reduce_mask: ReduceMask,
     ) -> Self {
-        let post_filter = post_filter_beta > 0.;
+        let post_filter = post_filter_beta > 0.0;
         Self {
             n_ch,
             post_filter,
@@ -146,18 +125,21 @@ impl RuntimeParams {
             reduce_mask,
         }
     }
+
     pub fn with_post_filter(mut self, beta: f32) -> Self {
-        assert!(beta >= 0.); // Cannot be negative
-        if beta > 0. {
+        assert!(beta >= 0.0); // Cannot be negative
+        if beta > 0.0 {
             self.post_filter = true;
         }
         self.post_filter_beta = beta;
         self
     }
+
     pub fn with_atten_lim(mut self, atten_lim_db: f32) -> Self {
         self.atten_lim_db = atten_lim_db;
         self
     }
+
     pub fn with_thresholds(
         mut self,
         min_db_thresh: f32,
@@ -169,19 +151,20 @@ impl RuntimeParams {
         self.max_db_df_thresh = max_db_df_thresh;
         self
     }
+
     pub fn with_mask_reduce(mut self, red: ReduceMask) -> Self {
         self.reduce_mask = red;
         self
     }
-    pub fn default_with_ch(channels: usize) -> Self {
+    pub const fn default_with_ch(channels: usize) -> Self {
         RuntimeParams {
             n_ch: channels,
             post_filter: false,
             post_filter_beta: 0.02,
-            atten_lim_db: 100.,
-            min_db_thresh: -10.,
-            max_db_erb_thresh: 30.,
-            max_db_df_thresh: 20.,
+            atten_lim_db: 100.0,
+            min_db_thresh: -10.0,
+            max_db_erb_thresh: 30.0,
+            max_db_df_thresh: 20.0,
             reduce_mask: ReduceMask::MEAN,
         }
     }
@@ -223,25 +206,19 @@ pub struct DfTract {
     pub spec_buf: Tensor, // Real-valued spectrogram buffer of shape [n_ch, 1, 1, n_freqs, 2]
     erb_buf: TValue,      // Real-valued ERB feature buffer of shape [n_ch, 1, 1, n_erb]
     cplx_buf: TValue,     // Real-valued complex epectrum shape for DF of shape [n_ch, 1, nb_df, 2]
-    m_zeros: Vec<f32>,    // Preallocated buffer for applying a zero mask
+    _m_zeros: Vec<f32>,   // Preallocated buffer for applying a zero mask
     rolling_spec_buf_y: VecDeque<Tensor>, // Enhanced stage 1 spec buf
     rolling_spec_buf_x: VecDeque<Tensor>, // Noisy spec buf
     skip_counter: usize,  // Increment when wanting to skip processing due to low RMS
-}
-
-#[cfg(all(not(feature = "capi"), feature = "default-model"))]
-impl Default for DfTract {
-    fn default() -> Self {
-        let r_params = RuntimeParams::default();
-        let df_params = DfParams::default();
-        DfTract::new(df_params, &r_params).expect("Could not load DfTract")
-    }
+    model_path: Option<PathBuf>,
 }
 
 impl DfTract {
+    pub fn model_path(&self) -> Option<String> {
+        self.model_path.as_ref().map(|p| p.to_str().unwrap().to_string())
+    }
+
     pub fn new(dfp: DfParams, rp: &RuntimeParams) -> Result<Self> {
-        #[cfg(feature = "timings")]
-        let t0 = Instant::now();
         let config = dfp.config;
         let model_cfg = config.section(Some("deepfilternet")).unwrap();
         let df_cfg = config.section(Some("df")).unwrap();
@@ -260,8 +237,6 @@ impl DfTract {
         let enc = SimpleState::new(enc.into_runnable()?)?;
         let erb_dec = SimpleState::new(erb_dec.into_runnable()?)?;
         let df_dec = SimpleState::new(df_dec.into_runnable()?)?;
-        #[cfg(feature = "timings")]
-        let t1 = Instant::now();
 
         let sr = df_cfg.get("sr").unwrap().parse::<usize>()?;
         let hop_size = df_cfg.get("hop_size").unwrap().parse::<usize>()?;
@@ -292,7 +267,7 @@ impl DfTract {
             log::warn!("Attenuation limit too strong. No noise reduction will be performed");
             Some(1.)
         } else {
-            log::info!("Running with an attenuation limit of {:.0} dB", atten_lim);
+            log::debug!("Running with an attenuation limit of {atten_lim:.0} dB");
             Some(10f32.powf(-atten_lim / 20.))
         };
         let spec_shape = [1, 1, 1, n_freqs, 2];
@@ -303,21 +278,12 @@ impl DfTract {
         let cplx_buf = TValue::from(unsafe {
             Tensor::uninitialized_dt(f32::datum_type(), &[1, 1, nb_df, 2])?
         });
-        let m_zeros = vec![0.; nb_erb];
+        let _m_zeros = vec![0.0; nb_erb];
 
         let model_type = config.section(Some("train")).unwrap().get("model").unwrap();
-        let lookahead = match model_type {
-            "deepfilternet2" => bail!(
-                "DeepFilterNet2 models are deprecated. Please use version v0.3.1 for these models."
-            ),
-            "deepfilternet3" => conv_lookahead.max(df_lookahead),
-            _ => bail!("Unsupported model type {}", model_type),
-        };
-        log::info!(
-            "Running with model type {} lookahead {}",
-            model_type,
-            lookahead
-        );
+        let lookahead = conv_lookahead.max(df_lookahead);
+
+        log::debug!("Running with model type {model_type} lookahead {lookahead}");
 
         let rolling_spec_buf_y = VecDeque::with_capacity(df_order + lookahead);
         let rolling_spec_buf_x = VecDeque::with_capacity(lookahead.max(df_order));
@@ -351,21 +317,16 @@ impl DfTract {
             spec_buf,
             erb_buf,
             cplx_buf,
-            m_zeros,
+            _m_zeros,
             rolling_spec_buf_y,
             rolling_spec_buf_x,
             df_states,
             post_filter: rp.post_filter,
             post_filter_beta: rp.post_filter_beta,
             skip_counter: 0,
+            model_path: dfp.model_path,
         };
         m.init()?;
-        #[cfg(feature = "timings")]
-        log::info!(
-            "Init DfTract in {:.2}ms (models in {:.2}ms)",
-            t0.elapsed().as_secs_f32() * 1000.,
-            (t1 - t0).as_secs_f32() * 1000.
-        );
 
         Ok(m)
     }
@@ -373,14 +334,14 @@ impl DfTract {
     pub fn set_pf_beta(&mut self, beta: f32) {
         log::debug!("Setting post-filter beta to {beta}");
         self.post_filter_beta = beta;
-        if beta > 0. {
+        if beta > 0.0 {
             self.post_filter = true;
-        } else if beta == 0. {
+        } else if beta == 0.0 {
             self.post_filter = false;
         } else {
             log::warn!("Post-filter beta cannot be smaller than 0.");
             self.post_filter = false;
-            self.post_filter_beta = 0.;
+            self.post_filter_beta = 0.0;
         }
     }
 
@@ -392,7 +353,7 @@ impl DfTract {
             log::warn!("Attenuation limit too strong. No noise reduction will be performed");
             Some(1.)
         } else {
-            log::debug!("Setting attenuation limit to {:.1} dB", lim);
+            log::debug!("Setting attenuation limit to {lim:.1} dB");
             Some(10f32.powf(-lim / 20.))
         };
     }
@@ -403,11 +364,11 @@ impl DfTract {
         self.rolling_spec_buf_y.clear();
         for _ in 0..(self.df_order + self.conv_lookahead) {
             self.rolling_spec_buf_y
-                .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
+                .push_back(tensor0(0.0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
         for _ in 0..self.df_order.max(self.lookahead) {
             self.rolling_spec_buf_x
-                .push_back(tensor0(0f32).broadcast_scalar_to_shape(&spec_shape)?);
+                .push_back(tensor0(0.0f32).broadcast_scalar_to_shape(&spec_shape)?);
         }
         if ch > self.df_states.len() {
             for _ in self.df_states.len()..ch {
@@ -469,10 +430,8 @@ impl DfTract {
         let (apply_gains, apply_gain_zeros, apply_df) = self.apply_stages(lsnr);
 
         log::trace!(
-            "Enhancing frame with lsnr {:>5.1} dB. Applying stage 1: {} and stage 2: {}.",
-            lsnr,
-            apply_gains,
-            apply_df
+            "Enhancing frame with lsnr {lsnr:>5.1} dB. Applying stage 1: {apply_gains} and stage
+             2: {apply_df}."
         );
 
         let m = if apply_gains {
@@ -510,9 +469,8 @@ impl DfTract {
         debug_assert_eq!(noisy.len_of(Axis(0)), enh.len_of(Axis(0)));
         debug_assert_eq!(noisy.len_of(Axis(1)), enh.len_of(Axis(1)));
         debug_assert_eq!(noisy.len_of(Axis(1)), self.hop_size);
-        let (max_a, e) = noisy.iter().fold((0f32, 0f32), |acc, x| {
-            (acc.0.max(x.abs()), acc.1 + x.powi(2))
-        });
+        let (_max_a, e) =
+            noisy.iter().fold((0.0f32, 0.0f32), |acc, x| (acc.0.max(x.abs()), acc.1 + x.powi(2)));
         let rms = e / noisy.len() as f32;
         if rms < 1e-7 {
             self.skip_counter += 1;
@@ -520,11 +478,8 @@ impl DfTract {
             self.skip_counter = 0;
         }
         if self.skip_counter > 5 {
-            enh.fill(0.);
-            return Ok(-15.);
-        }
-        if max_a > 0.9999 {
-            log::warn!("Possible clipping detected ({:.3}).", max_a)
+            enh.fill(0.0);
+            return Ok(-15.0);
         }
 
         // Signal model: y = f(s + n) = f(x)
@@ -540,19 +495,16 @@ impl DfTract {
         }
         self.rolling_spec_buf_y.push_back(self.spec_buf.clone());
         self.rolling_spec_buf_x.push_back(self.spec_buf.clone());
-        if self.atten_lim.unwrap_or_default() == 1. {
+        if self.atten_lim.unwrap_or_default() == 1.0 {
             enh.assign(&noisy);
-            return Ok(35.);
+            return Ok(35.0);
         }
 
         let (lsnr, gains, coefs) = self.process_raw()?;
 
         let (apply_erb, _, _) = self.apply_stages(lsnr);
-        let mut spec = self
-            .rolling_spec_buf_y
-            .get_mut(self.df_order - 1)
-            .unwrap()
-            .to_array_view_mut()?;
+        let mut spec =
+            self.rolling_spec_buf_y.get_mut(self.df_order - 1).unwrap().to_array_view_mut()?;
         if let Some(gains) = gains {
             let mut gains = gains.into_array()?;
             if gains.shape()[0] < noisy.shape()[0] {
@@ -615,7 +567,7 @@ impl DfTract {
 
         // Run post filter
         if apply_erb && self.post_filter {
-            post_filter(
+            crate::post_filter(
                 spec_noisy.as_slice().unwrap(),
                 spec_enh.as_slice_mut().unwrap(),
                 self.post_filter_beta,
@@ -624,7 +576,7 @@ impl DfTract {
 
         // Limit noise attenuation by mixing back some of the noisy signal
         if let Some(lim) = self.atten_lim {
-            spec_enh.map_inplace(|x| *x *= 1. - lim);
+            spec_enh.map_inplace(|x| *x *= 1.0 - lim);
             spec_enh.scaled_add(lim.into(), &spec_noisy);
         }
 
@@ -673,16 +625,17 @@ impl DfTract {
 
     pub fn set_spec_buffer(&mut self, spec: ArrayView2<f32>) -> Result<()> {
         debug_assert_eq!(self.spec_buf.shape(), spec.shape());
-        let mut buf = self.spec_buf.to_array_view_mut()?.into_shape([self.ch, self.n_freqs])?;
+        let view = self.spec_buf.to_array_view_mut()?;
+        let mut buf = view.to_shape([self.ch, self.n_freqs])?;
         for (i_ch, mut b_ch) in spec.outer_iter().zip(buf.outer_iter_mut()) {
             for (&i, b) in i_ch.iter().zip(b_ch.iter_mut()) {
-                *b = i
+                *b = i;
             }
         }
         Ok(())
     }
 
-    pub fn get_spec_noisy(&self) -> ArrayView2<Complex32> {
+    pub fn get_spec_noisy(&'_ self) -> ArrayView2<'_, Complex32> {
         as_arrayview_complex(
             self.rolling_spec_buf_x
                 .get(self.lookahead.max(self.df_order) - self.lookahead - 1)
@@ -694,7 +647,8 @@ impl DfTract {
         .into_dimensionality::<Ix2>()
         .unwrap()
     }
-    pub fn get_spec_enh(&self) -> ArrayView2<Complex32> {
+
+    pub fn get_spec_enh(&'_ self) -> ArrayView2<'_, Complex32> {
         as_arrayview_complex(
             self.spec_buf.to_array_view::<f32>().unwrap(),
             &[self.ch, self.n_freqs],
@@ -702,7 +656,8 @@ impl DfTract {
         .into_dimensionality::<Ix2>()
         .unwrap()
     }
-    pub fn get_mut_spec_enh(&mut self) -> ArrayViewMut2<Complex32> {
+
+    pub fn get_mut_spec_enh(&'_ mut self) -> ArrayViewMut2<'_, Complex32> {
         as_arrayview_mut_complex(
             self.spec_buf.to_array_view_mut::<f32>().unwrap(),
             &[self.ch, self.n_freqs],
@@ -759,7 +714,7 @@ fn df(
         {
             // Apply DF for each frequency bin up to `nb_df`
             for (&s, &c, o) in izip!(s_ch, c_ch, o_ch.iter_mut()) {
-                *o += s * c
+                *o += s * c;
             }
         }
     }
@@ -772,7 +727,7 @@ fn init_encoder_impl(
     n_ch: usize,
 ) -> Result<TypedModel> {
     log::debug!("Start init encoder.");
-    let s = m.symbol_table.sym("S");
+    let s = m.symbols.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
@@ -795,13 +750,9 @@ fn init_encoder_impl(
 
     m.declutter()?;
     let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
-    log::info!("Init encoder");
+    log::debug!("Init encoder");
     let m = pulsed.into_typed()?.into_optimized()?;
     Ok(m)
-}
-fn init_encoder(m: &Path, df_cfg: &ini::Properties, n_ch: usize) -> Result<TypedModel> {
-    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
-    init_encoder_impl(m, df_cfg, n_ch)
 }
 
 fn init_encoder_from_read(
@@ -821,7 +772,7 @@ fn init_erb_decoder_impl(
     mask_reduction: Option<ReduceMask>,
 ) -> Result<TypedModel> {
     log::debug!("Start init ERB decoder.");
-    let s = m.symbol_table.sym("S");
+    let s = m.symbols.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
@@ -833,17 +784,15 @@ fn init_erb_decoder_impl(
     let e2 = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, e3f));
     let e1f = nb_erb / 2;
     let e1 = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, e1f));
-    let e0 = InferenceFact::dt_shape(
-        f32::datum_type(),
-        shapefactoid!(n_ch, layer_width, s, nb_erb),
-    );
+    let e0 =
+        InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, nb_erb));
     log::debug!(
         "ERB decoder input: \n emb [{:?}]\n e3  [{:?}]\n e2  [{:?}]\n e1  [{:?}]\n e0  [{:?}]",
         emb.shape,
         e3.shape,
         e2.shape,
         e1.shape,
-        e0.shape
+        e0.shape,
     );
     let mut output_name = "m".to_string();
 
@@ -863,7 +812,7 @@ fn init_erb_decoder_impl(
     m.declutter()?;
     let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
     let mut m = pulsed.into_typed()?;
-    log::info!("Init ERB decoder");
+    log::debug!("Init ERB decoder");
 
     if let Some(r) = mask_reduction {
         let outlets = m.output_outlets()?;
@@ -877,7 +826,7 @@ fn init_erb_decoder_impl(
                     ops::nn::Reduce::new(tvec!(ch_axis), ops::nn::Reducer::Max),
                     &[mask_outlet],
                 )?;
-            }
+            },
             ReduceMask::MEAN => {
                 let sum = m.wire_node(
                     "reduce_mask_sum".to_string(),
@@ -887,16 +836,12 @@ fn init_erb_decoder_impl(
                 let ch_i = m
                     .add_const(
                         "ch".to_string(),
-                        Tensor::from_shape(&[1, 1, 1, 1], &[1. / n_ch as f32])?,
+                        Tensor::from_shape(&[1, 1, 1, 1], &[1.0 / n_ch as f32])?,
                     )
                     .unwrap();
                 output_name = "reduce_mask_div_ch".to_string();
-                m.wire_node(
-                    "reduce_mask_div_ch",
-                    tract_core::ops::math::mul(),
-                    &[sum, ch_i],
-                )?;
-            }
+                m.wire_node("reduce_mask_div_ch", tract_core::ops::math::mul(), &[sum, ch_i])?;
+            },
             _ => (),
         }
     }
@@ -906,16 +851,7 @@ fn init_erb_decoder_impl(
 
     Ok(m)
 }
-fn init_erb_decoder(
-    m: &Path,
-    net_cfg: &ini::Properties,
-    df_cfg: &ini::Properties,
-    n_ch: usize,
-    mask_reduction: Option<ReduceMask>,
-) -> Result<TypedModel> {
-    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
-    init_erb_decoder_impl(m, net_cfg, df_cfg, n_ch, mask_reduction)
-}
+
 fn init_erb_decoder_from_read(
     m: &mut dyn Read,
     net_cfg: &ini::Properties,
@@ -934,7 +870,7 @@ fn init_df_decoder_impl(
     n_ch: usize,
 ) -> Result<TypedModel> {
     log::debug!("Start init DF decoder.");
-    let s = m.symbol_table.sym("S");
+    let s = m.symbols.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
@@ -942,16 +878,9 @@ fn init_df_decoder_impl(
     let n_hidden = layer_width * nb_erb / 4;
 
     let emb = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, s, n_hidden));
-    let c0 = InferenceFact::dt_shape(
-        f32::datum_type(),
-        shapefactoid!(n_ch, layer_width, s, nb_df),
-    );
+    let c0 = InferenceFact::dt_shape(f32::datum_type(), shapefactoid!(n_ch, layer_width, s, nb_df));
 
-    log::debug!(
-        "ERB decoder input: \n emb [{:?}]\n c0  [{:?}]",
-        emb.shape,
-        c0.shape,
-    );
+    log::debug!("ERB decoder input: \n emb [{:?}]\n c0  [{:?}]", emb.shape, c0.shape,);
     m = m
         .with_input_fact(0, emb)?
         .with_input_fact(1, c0)?
@@ -963,19 +892,11 @@ fn init_df_decoder_impl(
 
     m.declutter()?;
     let pulsed = PulsedModel::new(&m, s, &1.to_dim())?;
-    log::info!("Init DF decoder");
+    log::debug!("Init DF decoder");
     let m = pulsed.into_typed()?.into_optimized()?;
     Ok(m)
 }
-fn init_df_decoder(
-    m: &Path,
-    net_cfg: &ini::Properties,
-    df_cfg: &ini::Properties,
-    n_ch: usize,
-) -> Result<TypedModel> {
-    let m = tract_onnx::onnx().with_ignore_output_shapes(true).model_for_path(m)?;
-    init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
-}
+
 fn init_df_decoder_from_read(
     m: &mut dyn Read,
     net_cfg: &ini::Properties,
@@ -986,7 +907,7 @@ fn init_df_decoder_from_read(
     init_df_decoder_impl(m, net_cfg, df_cfg, n_ch)
 }
 
-fn calc_norm_alpha(sr: usize, hop_size: usize, tau: f32) -> f32 {
+pub fn calc_norm_alpha(sr: usize, hop_size: usize, tau: f32) -> f32 {
     let dt = hop_size as f32 / sr as f32;
     let alpha = f32::exp(-dt / tau);
     let mut a = 1.0;
@@ -1006,7 +927,6 @@ pub fn as_slice_complex(buffer: &[f32]) -> &[Complex32] {
     }
 }
 
-#[allow(clippy::needless_pass_by_ref_mut)]
 pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut Complex32;
@@ -1015,7 +935,6 @@ pub fn as_slice_mut_complex(buffer: &mut [f32]) -> &mut [Complex32] {
     }
 }
 
-#[allow(clippy::needless_pass_by_ref_mut)]
 pub fn as_slice_mut_real(buffer: &mut [Complex32]) -> &mut [f32] {
     unsafe {
         let ptr = buffer.as_ptr() as *mut f32;
@@ -1066,15 +985,15 @@ pub fn as_arrayview_mut_complex<'a>(
         ArrayViewMutD::from_shape_ptr(shape, ptr)
     }
 }
-pub fn tvalue_to_array_view_mut(x: &mut TValue) -> ArrayViewMutD<f32> {
+pub fn tvalue_to_array_view_mut(x: &'_ mut TValue) -> ArrayViewMutD<'_, f32> {
     unsafe {
         match x {
             TValue::Var(x) => {
                 ArrayViewMutD::from_shape_ptr(x.shape(), x.as_ptr_unchecked::<f32>() as *mut f32)
-            }
+            },
             TValue::Const(x) => {
                 ArrayViewMutD::from_shape_ptr(x.shape(), x.as_ptr_unchecked::<f32>() as *mut f32)
-            }
+            },
         }
     }
 }

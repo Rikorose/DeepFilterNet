@@ -1,165 +1,30 @@
 [package]
 name = "deep_filter"
 version = "0.5.7-pre"
-authors = ["Hendrik Schröter"]
+authors = ["Jackson Goode & Hendrik Schröter"]
 edition = "2021"
-description = "Noise supression using deep filtering"
-repository = "https://github.com/Rikorose/DeepFilterNet"
+description = "Noise suppression using deep filtering"
+repository = "https://github.com/tonarino/DeepFilterNet"
 license = "MIT/Apache-2.0"
-readme = "../README.md"
-rust-version = "1.70"
-
-[lib]
-name = "df"
-path = "src/lib.rs"
-crate-type = ["cdylib", "rlib", "staticlib"]
-
-[[bin]]
-name = "sample-hdf5"
-path = "src/bin/sample-hdf5.rs"
-required-features = ["dataset", "bin"]
-
-[[bin]]
-name = "sample-dataset"
-path = "src/bin/sample-dataset.rs"
-required-features = ["dataset", "bin"]
-
-[[bin]]
-name = "deep-filter"
-path = "src/bin/enhance_wav.rs"
-required-features = ["bin", "tract", "wav-utils", "transforms"]
-
-[features]
-default = ["default-model", "vorbis", "flac"]
-
-transforms = ["dep:thiserror", "dep:ndarray", "dep:rubato"]
-dataset = [
-  "dep:thiserror",
-  "dep:ndarray",
-  "dep:ndarray-rand",
-  "dep:rand_xoshiro",
-  "dep:hdf5",
-  "dep:rayon",
-  "dep:crossbeam-channel",
-  "dep:serde_json",
-  "dep:serde",
-  "dep:hound",
-  "dep:rubato",
-  "dep:roots",
-  "dep:log",
-  "dep:anyhow",
-]
-timings = []
-logging = ["dep:log", "dep:crossbeam-channel"]
-vorbis = ["dep:lewton", "dep:ogg"]
-flac = ["dep:claxon"]
-bin = [
-  "dep:clap",
-  "dep:anyhow",
-  "dep:ctrlc",
-  "dep:env_logger",
-  "dep:rand",
-  "dep:ndarray-rand",
-  "dep:rust-ini",
-  "logging",
-]
-wav-utils = ["dep:ndarray", "dep:hound"]
-use-jemalloc = ["dep:jemallocator"]
-tract = [
-  "transforms",
-  "logging",
-  "dep:tract-core",
-  "dep:tract-onnx",
-  "dep:tract-pulse",
-  "dep:tract-hir",
-  "dep:rust-ini",
-  "dep:ndarray",
-  "dep:anyhow",
-  "dep:flate2",
-  "dep:tar",
-]
-default-model = [] # Include default DFN3 model
-default-model-ll = [] # Include default DFN3 low latency model
-nightly-features = []
-capi = ["tract", "default-model", "dep:ndarray", "logging"]
-wasm = [
-  "tract",
-  "default-model",
-  "dep:ndarray",
-  "dep:wasm-bindgen",
-  "dep:getrandom",
-  "dep:console_error_panic_hook",
-  "dep:js-sys",
-]
-hdf5-static = ["hdf5?/static"]
+publish = false
+rust-version = "1.91"
 
 [dependencies]
-rustfft = "^6.1.0"
-realfft = "^3.1.0"
-itertools = "0.12"
-num-complex = { version = "^0.4", features = ["serde"] }
-log = { version = "0.4", features = ["std"], optional = true }
-rand = { version = "0.8", optional = true }
-rubato = { version = "0.14", optional = true }
-roots = { version = "0.0.7", optional = true }
-rand_xoshiro = { version = "0.6", optional = true }
-thiserror = { version = "1.0", optional = true }
-anyhow = { version = "1.0", optional = true, features = ["backtrace"] }
-ctrlc = { version = "3.2", optional = true }
-hound = { version = "3.4", optional = true }
-hdf5 = { optional = true, git = "https://github.com/aldanor/hdf5-rust.git", rev = "26046fb" }
-ndarray = { version = "^0.15", optional = true, features = ["serde"] }
-ndarray-rand = { version = "^0.14", optional = true }
-rayon = { version = "1.5", optional = true }
-crossbeam-channel = { version = "^0.5", optional = true }
-serde_json = { version = "1.0", optional = true }
-serde = { version = "1.0", features = ["derive"], optional = true }
-lewton = { version = "^0.10", optional = true }
-ogg = { version = "^0.8", optional = true }
-claxon = { version = "^0.4", optional = true }
-env_logger = { version = "0.11", optional = true }
-clap = { version = "4.0", optional = true, features = ["derive"] }
-rust-ini = { version = "^0.21", optional = true }
-tract-core = { version = "^0.21.4", optional = true }
-tract-onnx = { version = "^0.21.4", optional = true }
-tract-pulse = { version = "^0.21.4", optional = true }
-tract-hir = { version = "^0.21.4", optional = true }
-flate2 = { version = "1.0.24", optional = true }
-tar = { version = "0.4.38", optional = true }
-wasm-bindgen = { version = "0.2.87", optional = true }
-getrandom = { version = "0.2", features = ["js"], optional = true }
-console_error_panic_hook = { version = "0.1.1", optional = true }
-js-sys = { version = "0.3", optional = true }
-
-
-[target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_env = "musl"), not(target_arch = "riscv64")))'.dependencies]
-jemallocator = { version = "0.5.0", optional = true }
-
-[dev-dependencies]
-rand = "0.8"
-rstest = "0.19"
-env_logger = "0.11"
+anyhow = "1"
+flate2 = "1"
+itertools = "0.10"
 log = { version = "0.4", features = ["std"] }
 
-[package.metadata.capi.header]
-name = "deep_filter"
-subdirectory = "deep_filter"
-[package.metadata.capi.pkg_config]
-name = "libdeepfilter"
-filename = "deepfilter"
-[package.metadata.capi.library]
-name = "deepfilter"
+ndarray = "^0.16"
+num-complex = { version = "^0.4", features = ["serde"] }
+realfft = "^3.5"
+rust-ini = "^0.21"
+rustfft = "^6.4"
+tar = "^0.4"
+tract-core = "^0.22"
+tract-hir = "^0.22"
+tract-onnx = "^0.22"
+tract-pulse = "^0.22"
 
-[package.metadata.deb]
-assets = [
-  [
-    "LICENSE-MIT",
-    "usr/share/doc/deep_filter/",
-    "644",
-  ],
-  [
-    "LICENSE-APACHE",
-    "usr/share/doc/deep_filter/",
-    "644",
-  ],
-]
+[dev-dependencies]
+rand = "^0.8"
