@@ -38,6 +38,13 @@ cargo +nightly run -p df-demo --features ui --bin df-demo --release
   - Demo: https://huggingface.co/spaces/hshr/DeepFilterNet
   - Video Lecture: https://youtu.be/it90gBqkY6k
 
+### Community extensions
+
+  * DPDFNet (Dual-Path DeepFilterNet): DeepFilterNet2-derived extension that integrates causal Dual-Path RNN blocks into the encoder (real-time / edge-focused; includes released TFLite models).
+    * GitHub: https://github.com/ceva-ip/DPDFNet
+    * Paper (arXiv): https://arxiv.org/abs/2512.16420
+    * TFLite models (Hugging Face): https://huggingface.co/Ceva-IP/DPDFNet
+
 ## Usage
 
 ### deep-filter
