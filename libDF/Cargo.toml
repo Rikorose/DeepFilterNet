@@ -94,7 +94,11 @@ wasm = [
 hdf5-static = ["hdf5?/static"]
 
 [dependencies]
-rustfft = "^6.1.0"
+# `wasm_simd` is a no-op on non-wasm targets (cfg-gated inside rustfft), so
+# enabling it unconditionally is safe for the cdylib/staticlib/native bin
+# matrix. On `wasm32-unknown-unknown` with `+simd128` it lets rustfft's
+# `FftPlannerWasmSimd` use v128 butterflies instead of scalar fallback.
+rustfft = { version = "^6.1.0", features = ["wasm_simd"] }
 realfft = "^3.1.0"
 itertools = "0.12"
 num-complex = { version = "^0.4", features = ["serde"] }
