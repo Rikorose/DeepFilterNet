@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use ndarray::{prelude::*, Slice};
+use tract_core::ndarray::{self, prelude::*, Slice};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 

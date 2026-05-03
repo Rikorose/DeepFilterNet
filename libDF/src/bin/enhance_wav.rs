@@ -3,7 +3,7 @@ use std::{path::PathBuf, process::exit, time::Instant};
 use anyhow::Result;
 use clap::{Parser, ValueHint};
 use df::{tract::*, transforms::resample, wav_utils::*};
-use ndarray::{prelude::*, Axis};
+use tract_core::ndarray::{self, prelude::*, Axis};
 
 #[cfg(all(
     not(windows),

@@ -6,7 +6,7 @@ use std::{
 
 use hound::{WavReader, WavWriter};
 #[cfg(any(feature = "dataset", feature = "wav-utils"))]
-use ndarray::prelude::*;
+use tract_core::ndarray::{self, prelude::*};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

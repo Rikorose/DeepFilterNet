@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use ini::Ini;
-use ndarray::{prelude::*, Axis};
+use tract_core::ndarray::{self, prelude::*, Axis};
 use tar::Archive;
 use tract_core::internal::tract_itertools::izip;
 use tract_core::internal::tract_smallvec::alloc::collections::VecDeque;
@@ -772,7 +772,7 @@ fn init_encoder_impl(
     n_ch: usize,
 ) -> Result<TypedModel> {
     log::debug!("Start init encoder.");
-    let s = m.symbol_table.sym("S");
+    let s = m.symbols.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;
@@ -821,7 +821,7 @@ fn init_erb_decoder_impl(
     mask_reduction: Option<ReduceMask>,
 ) -> Result<TypedModel> {
     log::debug!("Start init ERB decoder.");
-    let s = m.symbol_table.sym("S");
+    let s = m.symbols.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let layer_width = net_cfg.get("conv_ch").unwrap().parse::<usize>()?;
@@ -934,7 +934,7 @@ fn init_df_decoder_impl(
     n_ch: usize,
 ) -> Result<TypedModel> {
     log::debug!("Start init DF decoder.");
-    let s = m.symbol_table.sym("S");
+    let s = m.symbols.sym("S");
 
     let nb_erb = df_cfg.get("nb_erb").unwrap().parse::<usize>()?;
     let nb_df = df_cfg.get("nb_df").unwrap().parse::<usize>()?;

@@ -1,6 +1,6 @@
 use std::boxed::Box;
 
-use ndarray::prelude::*;
+use tract_core::ndarray::{self, prelude::*};
 use wasm_bindgen::prelude::*;
 
 use crate::tract::*;
