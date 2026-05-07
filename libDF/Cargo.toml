@@ -94,8 +94,18 @@ wasm = [
 hdf5-static = ["hdf5?/static"]
 
 [dependencies]
-rustfft = "^6.1.0"
-realfft = "^3.1.0"
+# `rustfft` ships a comprehensive WASM SIMD path (`src/wasm_simd/`) but it's
+# gated behind a non-default `wasm_simd` feature flag — without it, FFTs fall
+# back to scalar on wasm32 even with `+simd128` enabled. The current lockfile-
+# resolved rustfft 6.2.0 already has the feature, so no version bump needed
+# here. The feature is a no-op on non-wasm targets.
+rustfft = { version = "^6.1.0", features = ["wasm_simd"] }
+# `realfft` (used by libDF for STFT) declares its rustfft dep with
+# `default-features = false` and exposes its OWN `wasm_simd` feature that
+# proxies to `rustfft/wasm_simd`. Both flags must be enabled for the SIMD
+# path to flow through realfft's API surface. The realfft `wasm_simd` feature
+# was first added in 3.5.0, so we bump the constraint here to ^3.5.
+realfft = { version = "^3.5", features = ["wasm_simd"] }
 itertools = "0.12"
 num-complex = { version = "^0.4", features = ["serde"] }
 log = { version = "0.4", features = ["std"], optional = true }
