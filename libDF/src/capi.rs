@@ -199,12 +199,12 @@ pub unsafe extern "C" fn df_process_frame_raw(
     let mut out_coefs =
         ArrayViewMut4::from_shape_ptr((1, state.m.df_order, state.m.nb_df, 2), *out_coefs_p);
     if let Some(gains) = gains {
-        out_gains.assign(&gains.to_array_view().unwrap());
+        out_gains.assign(&gains.to_plain_array_view().unwrap());
     } else {
         *out_gains_p = std::ptr::null_mut();
     }
     if let Some(coefs) = coefs {
-        out_coefs.assign(&coefs.to_array_view().unwrap());
+        out_coefs.assign(&coefs.to_plain_array_view().unwrap());
     } else {
         *out_coefs_p = std::ptr::null_mut();
     }
