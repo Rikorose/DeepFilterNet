@@ -330,11 +330,13 @@ def main(args):
         f.write(f"{model_name}_epoch_{epoch}")
     tar_name = export_dir / (Path(model_base_dir).name + "_onnx.tar.gz")
     with tarfile.open(tar_name, mode="w:gz") as f:
-        f.add(os.path.join(args.export_dir, "enc.onnx"))
-        f.add(os.path.join(args.export_dir, "erb_dec.onnx"))
-        f.add(os.path.join(args.export_dir, "df_dec.onnx"))
-        f.add(os.path.join(args.export_dir, "config.ini"))
-        f.add(os.path.join(args.export_dir, "version.txt"))
+        for name in ("enc.onnx", "erb_dec.onnx", "df_dec.onnx", "config.ini", "version.txt"):
+            # arcname, so the archive holds bare filenames. Without it every
+            # entry carries the exporter's own export_dir — "tmp/foo/enc.onnx",
+            # or on Windows "Users/<name>/AppData/Local/Temp/.../enc.onnx" —
+            # which recreates that tree on extraction and puts the builder's
+            # username in the released artefact.
+            f.add(os.path.join(args.export_dir, name), arcname=name)
 
 
 if __name__ == "__main__":
