@@ -210,6 +210,10 @@ def download_file(url: str, download_dir: str, extract: bool = False):
     import requests
 
     local_filename = url.split("/")[-1]
+    # get_cache_dir() names a directory but does not create it, so on a machine
+    # that has not downloaded anything before, the open() below raises
+    # FileNotFoundError instead of downloading.
+    os.makedirs(download_dir, exist_ok=True)
     local_filename = os.path.join(download_dir, local_filename)
     with requests.get(url, stream=True) as r:
         if r.status_code >= 400:

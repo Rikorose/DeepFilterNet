@@ -118,12 +118,14 @@ def resample(audio: Tensor, orig_sr: int, new_sr: int, method="sinc_fast"):
 
 def get_test_sample(sr: int = 48000) -> Tensor:
     dir = get_git_root()
-    file_path = os.path.join("assets", "clean_freesound_33711.wav")
+    rel_path = ("assets", "clean_freesound_33711.wav")
     if dir is None:
-        url = "https://github.com/Rikorose/DeepFilterNet/raw/main/" + file_path
+        # Join with "/" rather than os.path.join: on Windows the latter yields
+        # ".../raw/main/assets\clean_freesound_33711.wav", which 404s.
+        url = "https://github.com/Rikorose/DeepFilterNet/raw/main/" + "/".join(rel_path)
         save_dir = get_cache_dir()
         path = download_file(url, save_dir)
     else:
-        path = os.path.join(dir, file_path)
+        path = os.path.join(dir, *rel_path)
     sample, _ = load_audio(path, sr=sr)
     return sample
