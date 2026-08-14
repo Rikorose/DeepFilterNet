@@ -142,7 +142,9 @@ def get_git_root():
         git_local_dir = os.path.dirname(os.path.abspath(__file__))
         args = ["git", "-C", git_local_dir, "rev-parse", "--show-toplevel"]
         return subprocess.check_output(args).strip().decode()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, OSError):
+        # CalledProcessError: not inside a repository.
+        # OSError (FileNotFoundError): git is not installed at all.
         return None
 
 
@@ -154,8 +156,8 @@ def get_commit_hash():
             return None
         args = ["git", "-C", git_dir, "rev-parse", "--short", "--verify", "HEAD"]
         return subprocess.check_output(args).strip().decode()
-    except subprocess.CalledProcessError:
-        # probably not in git repo
+    except (subprocess.CalledProcessError, OSError):
+        # not in a git repo, or git is not installed
         return None
 
 
@@ -168,8 +170,8 @@ def get_branch_name():
         git_dir = os.path.dirname(os.path.abspath(__file__))
         args = ["git", "-C", git_dir, "rev-parse", "--abbrev-ref", "HEAD"]
         branch = subprocess.check_output(args).strip().decode()
-    except subprocess.CalledProcessError:
-        # probably not in git repo
+    except (subprocess.CalledProcessError, OSError):
+        # not in a git repo, or git is not installed
         branch = None
     return branch
 
