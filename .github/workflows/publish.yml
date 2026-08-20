@@ -480,3 +480,120 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: gh release upload v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
+
+  build-libdf:
+    needs: ['create-release']
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO: cargo
+      TARGET_FLAGS: ""
+      TARGET_DIR: ./target
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+       build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+       include:
+         - build: linux-x86
+           os: ubuntu-22.04
+           target: x86_64-unknown-linux-gnu
+         - build: linux-arm-v7
+           os: ubuntu-22.04
+           target: armv7-unknown-linux-gnueabihf
+           cargoc-feat: '--features=vendored-openssl'
+         - build: linux-arm-aarch64
+           os: ubuntu-22.04
+           target: aarch64-unknown-linux-gnu
+           cargoc-feat: '--features=vendored-openssl'
+         - build: macos-x86
+           os: macos-13
+           target: x86_64-apple-darwin
+         - build: macos-aarch64
+           os: macos-13
+           target: aarch64-apple-darwin
+         - build: win-msvc
+           os: windows-2022
+           target: x86_64-pc-windows-msvc
+           cargoc-feat: '--features=vendored-openssl'
+           cinstall-args: '--crt-static'
+    defaults:
+      run:
+       shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+       uses: dtolnay/rust-toolchain@master
+       with:
+         toolchain: nightly
+         target: ${{ matrix.target }}
+
+      - name: Rust cache
+       uses: Swatinem/rust-cache@v2
+       with:
+         key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+         cache-on-failure: true
+
+      - name: Install gcc-arm-linux-gnueabihf
+       if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
+       run: |
+         mkdir -p .cargo
+         sudo apt-get update
+         sudo apt-get install --no-install-recommends gcc-arm-linux-gnueabihf crossbuild-essential-armhf
+         echo -e "[target.${{ matrix.target }}]\nlinker=\"arm-linux-gnueabihf-gcc\"\n" > .cargo/config
+
+      - name: Install gcc-aarch64-linux-gnu
+       if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+       run: |
+         mkdir -p .cargo
+         sudo apt-get update
+         sudo apt-get install --no-install-recommends gcc-aarch64-linux-gnu crossbuild-essential-arm64
+         echo -e "[target.${{ matrix.target }}]\nlinker=\"aarch64-linux-gnu-gcc\"\n" > .cargo/config
+
+      - name: Install Perl on Windows
+       if: ${{ runner.os == 'windows' }}
+       uses: shogo82148/actions-setup-perl@v1
+       with:
+         perl-version: '5.34'
+
+      - name: Show DF version
+       run: |
+         echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+
+      - name: Install cargo-c
+       run: |
+         cargo install cargo-c ${{ matrix.cargoc-feat }}
+
+      - name: Setup target
+       run: |
+         echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+         echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Build release binary
+       run: |
+         ${{ env.CARGO }} cinstall --profile=release-lto -p deep_filter \
+           --destdir=${{ env.TARGET_DIR }} \
+           ${{ matrix.cinstall-args }} \
+           ${{ env.TARGET_FLAGS }}
+
+      - name: Rebuild header using the settings in cbindgen.toml
+       run: |
+         cbindgen --config cbindgen.toml --crate deep_filter --output ${{ env.TARGET_DIR }}/usr/local/include/deep_filter/deep_filter.h
+
+      - name: Package libdf
+       run: |
+         ARCHIVE_NAME="libdf-${{ env.DF_VERSION }}-${{ matrix.target }}"
+         echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+         mkdir -p staging
+         mv ${{ env.TARGET_DIR }}/usr staging/
+         tar czf "${ARCHIVE_NAME}.tar.gz" -C staging usr
+
+      - uses: actions/upload-artifact@v4
+       with:
+         name: ${{ env.ARCHIVE_NAME }}
+         path: ${{ env.ARCHIVE_NAME }}.tar.gz
+
+      - name: Upload release archive
+       env:
+         GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+       run: gh release upload --clobber v${{ env.DF_VERSION }} ${{ env.ARCHIVE_NAME }}.tar.gz
