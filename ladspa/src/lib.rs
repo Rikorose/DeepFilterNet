@@ -116,15 +116,24 @@ fn get_worker_fn(
         let mut outframe = Array2::zeros((df.ch, df.hop_size));
         let t_audio_ms = df.hop_size as f32 / df.sr as f32 * 1000.;
         loop {
-            if let Ok((c, v)) = controls.try_recv() {
-                log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
-                match c {
-                    DfControl::AttenLim => df.set_atten_lim(v),
-                    DfControl::PfBeta => df.set_pf_beta(v),
-                    DfControl::MinThreshDb => df.min_db_thresh = v,
-                    DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
-                    DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
-                    _ => (),
+            // Exit once the plugin instance is dropped (control_tx closed).
+            // Otherwise the worker would poll forever after the plugin is dropped.
+            match controls.try_recv() {
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::info!("DF {} | worker exiting", id);
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => (),
+                Ok((c, v)) => {
+                    log::info!("DF {} | Setting '{}' to {:.1}", id, c, v);
+                    match c {
+                        DfControl::AttenLim => df.set_atten_lim(v),
+                        DfControl::PfBeta => df.set_pf_beta(v),
+                        DfControl::MinThreshDb => df.min_db_thresh = v,
+                        DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
+                        DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                        _ => (),
+                    }
                 }
             }
             let got_samples = {
