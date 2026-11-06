@@ -100,6 +100,25 @@ To enhance noisy audio files using DeepFilterNet run
 deepFilter path/to/noisy_audio.wav
 ```
 
+### Load a model from the Hugging Face Hub
+
+A compatible model repository contains `config.ini` and a `checkpoints/` directory
+at its root. Replace `OWNER/MODEL` with the ID of a published model repository:
+
+```python
+from df import DeepFilterNet
+from df.io import load_audio, save_audio
+
+model = DeepFilterNet.from_pretrained("OWNER/MODEL", revision="main")
+audio, info = load_audio("noisy.wav")
+enhanced = model.enhance(audio, sample_rate=info.sample_rate)
+save_audio("enhanced.wav", enhanced, sr=info.sample_rate)
+```
+
+`from_pretrained` also accepts a local model directory. Hugging Face models are
+cached by `huggingface_hub`, and `revision`, `token`, `cache_dir`, and
+`local_files_only` can be used to control downloads.
+
 ### Manual Installation
 
 Install cargo via [rustup](https://rustup.rs/). Usage of a `conda` or `virtualenv` recommended.
